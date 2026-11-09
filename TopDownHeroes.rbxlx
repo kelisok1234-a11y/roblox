@@ -154,6 +154,37 @@ Config.Lobby = {
 	},
 }
 
+-- ============================================================ ABILITIES (Q / E / Z)
+-- Q and E are normal skills, Z is the ULTIMATE of every weapon.
+-- cd = cooldown in seconds. All damage is scaled by the weapon's upgraded damage.
+Config.Abilities = {
+	Swordsman = {
+		Q = { name = "Crimson Charge", cd = 7, icon = "💨", short = "Dash through enemies, slashing them",
+			desc = "Lunge forward, cutting through everything on the way. Ends with a 360 slash. You are invulnerable while charging." },
+		E = { name = "Blade Whirlwind", cd = 12, icon = "🌀", short = "Spin and shred everything near you",
+			desc = "Spin for 2.4s, hitting all nearby enemies 8 times and pushing them away." },
+		Z = { name = "Heaven's Verdict", cd = 50, icon = "⚔️", short = "ULT: giant sword crushes an area",
+			desc = "A colossal holy sword falls from the sky, crushing and stunning everything, followed by an aftershock.", ult = true },
+	},
+	Archer = {
+		Q = { name = "Arrow Fan", cd = 6, icon = "🏹", short = "Fire 9 arrows in a wide cone",
+			desc = "Release a fan of 9 arrows at once. Perfect against crowds." },
+		E = { name = "Frost Trap", cd = 11, icon = "❄️", short = "Freeze enemies in an area",
+			desc = "Throw a frost rune. After a moment it explodes, freezing enemies in place and leaving a slowing frost field." },
+		Z = { name = "Sunpiercer", cd = 55, icon = "☀️", short = "ULT: huge piercing beam of light",
+			desc = "Charge a radiant arrow and fire a gigantic beam that pierces every enemy in a line.", ult = true },
+	},
+	Mage = {
+		Q = { name = "Chain Lightning", cd = 6, icon = "⚡", short = "Lightning jumps between enemies",
+			desc = "A bolt of lightning strikes an enemy and jumps to up to 7 more." },
+		E = { name = "Arcane Blink", cd = 9, icon = "✨", short = "Teleport and blast both ends",
+			desc = "Teleport toward the cursor. Arcane explosions hit enemies where you leave and where you arrive." },
+		Z = { name = "Meteor Storm", cd = 55, icon = "☄️", short = "ULT: rain of burning meteors",
+			desc = "Call down a storm of 10 meteors over the target area. Each impact explodes and sets enemies on fire.", ult = true },
+	},
+}
+Config.AbilityKeys = { "Q", "E", "Z" }
+
 return Config
 ]]></ProtectedString>
 </Properties>
@@ -973,7 +1004,7 @@ local function stepBoss(run, e, dist, nx, nz, dt, now)
 	end
 end
 
-local function stepEnemy(run, e, dt, now)
+local function stepEnemyCore(run, e, dt, now)
 	local targets = run.targets
 	if #targets == 0 then return end
 	local best, bd = nil, math.huge
@@ -1010,6 +1041,25 @@ local function stepEnemy(run, e, dt, now)
 			damagePlayer(best.p, e.dmg)
 		end
 	end
+end
+
+-- wraps the AI step with status effects: burn (damage over time), stun and slow
+local function stepEnemy(run, e, dt, now)
+	if e.burn then
+		local b = e.burn
+		if now >= b.nextT then
+			b.nextT = now + 0.5
+			runFx(run, "Ember", e.x, e.z, e.r)
+			damageEnemy(run, e, b.dps * 0.5, b.owner, false)
+			if e.dead then return end
+		end
+		if now >= b.untilT then e.burn = nil end
+	end
+	if e.stunUntil and now < e.stunUntil then return end
+	local base = e.speed
+	if e.slowUntil and now < e.slowUntil then e.speed = base * (e.slowMul or 0.5) end
+	stepEnemyCore(run, e, dt, now)
+	e.speed = base
 end
 
 local projSeq = 0
@@ -1136,6 +1186,7 @@ local function playerAttack(p, aim)
 	if not c or h.Health <= 0 then return end
 	local now = os.clock()
 	if now < (st.nextAtk or 0) - 0.03 then return end
+	if now < (st.lockAtk or 0) then return end
 	local ws = Config.weaponStats(cls, d.upg[cls])
 	local cdef = Config.Classes[cls]
 	st.nextAtk = now + ws.cooldown
@@ -1326,6 +1377,9 @@ local function createRun(locId, diff, members)
 		st.zone = nil
 		st.party = nil
 		st.dead = false
+		st.abCd = {}
+		st.lockAtk = 0
+		st.lockCast = 0
 		table.insert(run.players, p)
 		run.gain[p] = { xp = 0, coins = 0, kills = 0 }
 		p:SetAttribute("InRun", true)
@@ -1463,12 +1517,441 @@ onDied = function(p, char)
 	end
 end
 
+-- ============================================================ ABILITIES (Q / E / Z)
+local abRng = Random.new()
+local function rnd() return 0.92 + abRng:NextNumber() * 0.16 end
+
+local function rot(dx, dz, a)
+	local c, s = math.cos(a), math.sin(a)
+	return dx * c - dz * s, dx * s + dz * c
+end
+
+local function aliveRun(run)
+	return run ~= nil and not run.over and not run.destroyed
+end
+
+-- delayed callback that is cancelled automatically when the run ends
+local function later(run, t, fn)
+	task.delay(t, function()
+		if not aliveRun(run) then return end
+		local ok, err = pcall(fn)
+		if not ok then warn("[ability] " .. tostring(err)) end
+	end)
+end
+
+local function clampXZ(run, x, z)
+	local info = run.info
+	if info then
+		local lim = info.half - 3
+		x = math.clamp(x, info.ox - lim, info.ox + lim)
+		z = math.clamp(z, -lim, lim)
+	end
+	return x, z
+end
+
+-- aim point limited to maxD studs from the caster, kept inside the arena
+local function clampTarget(run, px, pz, aim, maxD)
+	local tx, tz = aim.X - px, aim.Z - pz
+	local m = math.sqrt(tx * tx + tz * tz)
+	if m > maxD then tx, tz = tx / m * maxD, tz / m * maxD end
+	return clampXZ(run, px + tx, pz + tz)
+end
+
+local function pushEnemy(run, e, dx, dz, dist)
+	if e.dead or e.boss then return end
+	local m = math.sqrt(dx * dx + dz * dz)
+	if m < 0.001 then return end
+	moveEnemy(run, e, dx / m * dist, dz / m * dist)
+end
+
+-- crowd control: stun + slow (bosses cannot be stunned, only slowed)
+local function applyCC(e, stun, slow, mul)
+	local now = os.clock()
+	if stun and stun > 0 then
+		if e.boss then
+			slow = math.max(slow or 0, stun * 1.2)
+			mul = math.min(mul or 1, 0.6)
+		else
+			e.stunUntil = math.max(e.stunUntil or 0, now + stun)
+			e.nextAtk = math.max(e.nextAtk or 0, now + stun + 0.25)
+		end
+	end
+	if slow and slow > 0 then
+		local m = mul or 0.5
+		if e.slowUntil and now < e.slowUntil then m = math.min(m, e.slowMul or 1) end
+		e.slowUntil = math.max(e.slowUntil or 0, now + slow)
+		e.slowMul = m
+	end
+end
+
+local function applyBurn(e, dps, dur, owner)
+	local now = os.clock()
+	e.burn = { untilT = now + dur, dps = dps, owner = owner, nextT = now + 0.5 }
+end
+
+local ABIL = { Swordsman = {}, Archer = {}, Mage = {} }
+
+-- ---------------------------------------------------------------- SWORDSMAN
+-- Q: Crimson Charge - lunge through enemies, finish with a 360 slash
+ABIL.Swordsman.Q = function(run, p, st, ws, hrp, px, pz, dx, dz)
+	local dist, dur = 22, 0.22
+	local now = os.clock()
+	st.invUntil = now + dur + 0.2
+	st.lockAtk = now + dur + 0.25
+	swingWeapon(st, "Swordsman", 0.3)
+	ToClient:FireClient(p, "Lunge", dx, dz, dist / dur, dur)
+	runFx(run, "SwCharge", px, pz, dx, dz, dist, dur)
+	local hit = {}
+	local dmg = ws.damage * 2.3
+	task.spawn(function()
+		local t0 = os.clock()
+		while aliveRun(run) and os.clock() - t0 < dur + 0.06 do
+			local _, _, r = getChar(p)
+			if not r then return end
+			for _, e in ipairs(enemiesInCircle(run, r.Position.X, r.Position.Z, 4.4)) do
+				if not hit[e] then
+					hit[e] = true
+					damageEnemy(run, e, dmg * rnd(), p, false)
+					if not e.dead then
+						pushEnemy(run, e, dx, dz, 4)
+						applyCC(e, 0.5)
+					end
+					runFx(run, "Spark", e.x, e.z, 255, 90, 90)
+				end
+			end
+			task.wait()
+		end
+		local _, _, r = getChar(p)
+		if not r or not aliveRun(run) then return end
+		local ex, ez = r.Position.X, r.Position.Z
+		local rad = ws.range * 1.15
+		runFx(run, "Slash", ex, ez, dx, dz, rad, 360, true, st.swingDir or 1)
+		runFx(run, "Ring", ex, ez, rad * 2.2, 255, 90, 80)
+		for _, e in ipairs(enemiesInCircle(run, ex, ez, rad)) do
+			damageEnemy(run, e, ws.damage * 1.4 * rnd(), p, true)
+			if not e.dead then
+				pushEnemy(run, e, e.x - ex, e.z - ez, 3)
+				applyCC(e, 0.6)
+			end
+		end
+	end)
+end
+
+-- E: Blade Whirlwind - spin and shred everything around you
+ABIL.Swordsman.E = function(run, p, st, ws, hrp)
+	local dur, radius, ticks = 2.4, 10.5, 8
+	st.lockAtk = os.clock() + dur + 0.1
+	st.swingTok = (st.swingTok or 0) + 1
+	runFx(run, "SwSpin", p.UserId, dur, radius)
+	local w = st.weapon
+	task.spawn(function()
+		local t0 = os.clock()
+		local nextTick = 0
+		if w and w.trail then w.trail.Enabled = true end
+		while aliveRun(run) do
+			local t = os.clock() - t0
+			if t >= dur then break end
+			local _, hh, r = getChar(p)
+			if not r or hh.Health <= 0 then break end
+			if w and w.weld.Parent then
+				w.weld.C0 = CFrame.Angles(0, -t * 24, 0) * w.base
+			end
+			if t >= nextTick then
+				nextTick = nextTick + dur / ticks
+				local cx, cz = r.Position.X, r.Position.Z
+				for _, e in ipairs(enemiesInCircle(run, cx, cz, radius)) do
+					damageEnemy(run, e, ws.damage * 0.8 * rnd(), p, false)
+					if not e.dead then
+						pushEnemy(run, e, e.x - cx, e.z - cz, 1.1)
+						applyCC(e, 0, 0.3, 0.6)
+					end
+				end
+			end
+			task.wait()
+		end
+		if w and w.trail then w.trail.Enabled = false end
+		if w and w.weld.Parent then w.weld.C0 = w.base end
+	end)
+end
+
+-- Z: Heaven's Verdict - colossal sword from the sky + aftershock
+ABIL.Swordsman.Z = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
+	local R, fall = 15, 1.25
+	local tx, tz = clampTarget(run, px, pz, aim, 42)
+	st.lockAtk = os.clock() + fall + 0.3
+	st.invUntil = os.clock() + 0.3
+	swingWeapon(st, "Swordsman", 0.5)
+	runFx(run, "SwUlt", tx, tz, R, fall)
+	later(run, fall, function()
+		for _, e in ipairs(enemiesInCircle(run, tx, tz, R)) do
+			damageEnemy(run, e, ws.damage * 10 * rnd(), p, true)
+			if not e.dead then
+				pushEnemy(run, e, e.x - tx, e.z - tz, 4)
+				applyCC(e, 2.5, 3, 0.5)
+			end
+		end
+	end)
+	later(run, fall + 0.65, function()
+		for _, e in ipairs(enemiesInCircle(run, tx, tz, R * 1.35)) do
+			damageEnemy(run, e, ws.damage * 3.5 * rnd(), p, false)
+			if not e.dead then pushEnemy(run, e, e.x - tx, e.z - tz, 3) end
+		end
+	end)
+end
+
+-- ---------------------------------------------------------------- ARCHER
+-- Q: Arrow Fan - 9 arrows in a cone
+ABIL.Archer.Q = function(run, p, st, ws, hrp, px, pz, dx, dz)
+	local n, spread = 9, math.rad(64)
+	st.lockAtk = os.clock() + 0.25
+	swingWeapon(st, "Archer", 0.3)
+	for i = 1, n do
+		local a = (i - 1) / (n - 1) - 0.5
+		local ddx, ddz = rot(dx, dz, a * spread)
+		spawnProj(run, {
+			kind = "arrow", x = px + ddx * 2, z = pz + ddz * 2, dx = ddx, dz = ddz,
+			speed = Config.Classes.Archer.projSpeed * 1.15, range = ws.range,
+			dmg = ws.damage * 1.0 * rnd(), owner = p, crit = false, hitR = 0.9,
+		})
+	end
+	runFx(run, "Fan", px, pz, dx, dz, spread)
+end
+
+-- E: Frost Trap - rune that freezes everything in the area
+ABIL.Archer.E = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
+	local R, delay = 11.5, 0.75
+	local tx, tz = clampTarget(run, px, pz, aim, 48)
+	st.lockAtk = os.clock() + 0.25
+	swingWeapon(st, "Archer", 0.3)
+	runFx(run, "TrapSet", tx, tz, R, delay)
+	later(run, delay, function()
+		runFx(run, "Freeze", tx, tz, R, 2.6)
+		for _, e in ipairs(enemiesInCircle(run, tx, tz, R)) do
+			damageEnemy(run, e, ws.damage * 2.0 * rnd(), p, false)
+			if not e.dead then applyCC(e, 2.6, 3.5, 0.4) end
+		end
+	end)
+	-- lingering frost field keeps slowing + chips enemies
+	for k = 1, 8 do
+		later(run, delay + 0.45 * k, function()
+			for _, e in ipairs(enemiesInCircle(run, tx, tz, R)) do
+				applyCC(e, 0, 0.7, 0.4)
+				if k % 2 == 0 then damageEnemy(run, e, ws.damage * 0.25 * rnd(), p, false) end
+			end
+		end)
+	end
+end
+
+-- Z: Sunpiercer - charged piercing beam of light
+ABIL.Archer.Z = function(run, p, st, ws, hrp, px, pz, dx, dz)
+	local len, width, charge = 90, 4.2, 0.85
+	st.lockAtk = os.clock() + charge + 0.8
+	runFx(run, "BeamCharge", p.UserId, dx, dz, charge, len)
+	local ox, oz = px, pz
+	local function pulse(mult, stunT)
+		for _, e in ipairs(table.clone(run.enemies)) do
+			local ex, ez = e.x - ox, e.z - oz
+			local t = ex * dx + ez * dz
+			if t > -2 and t < len then
+				local perp = math.abs(ex * dz - ez * dx)
+				if perp <= width + e.r then
+					damageEnemy(run, e, ws.damage * mult * rnd(), p, mult > 5)
+					if not e.dead then applyCC(e, stunT, 1.5, 0.5) end
+				end
+			end
+		end
+	end
+	later(run, charge, function()
+		local _, _, r = getChar(p)
+		if r then ox, oz = r.Position.X, r.Position.Z end
+		swingWeapon(st, "Archer", 0.6)
+		runFx(run, "Beam", ox, oz, dx, dz, len, width, 0.75)
+		pulse(6.5, 1.2)
+	end)
+	later(run, charge + 0.25, function() pulse(2.5, 0) end)
+	later(run, charge + 0.5, function() pulse(2.5, 0) end)
+end
+
+-- ---------------------------------------------------------------- MAGE
+-- Q: Chain Lightning
+ABIL.Mage.Q = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
+	st.lockAtk = os.clock() + 0.3
+	swingWeapon(st, "Mage", 0.4)
+	local sx, sz = px + dx * 1.5, pz + dz * 1.5
+	local first, bd = nil, math.huge
+	for _, e in ipairs(run.enemies) do
+		local d2 = (e.x - aim.X) ^ 2 + (e.z - aim.Z) ^ 2
+		local dp = math.sqrt((e.x - px) ^ 2 + (e.z - pz) ^ 2)
+		if d2 < bd and dp < 55 then
+			bd = d2
+			first = e
+		end
+	end
+	if not first or math.sqrt(bd) > 30 then
+		runFx(run, "Chain", sx, sz, px + dx * 34, pz + dz * 34)
+		return
+	end
+	local chain, seen = { first }, { [first] = true }
+	local cur = first
+	for _ = 1, 7 do
+		local nxt, nd = nil, 18 * 18
+		for _, e in ipairs(run.enemies) do
+			if not seen[e] then
+				local d2 = (e.x - cur.x) ^ 2 + (e.z - cur.z) ^ 2
+				if d2 < nd then
+					nd = d2
+					nxt = e
+				end
+			end
+		end
+		if not nxt then break end
+		seen[nxt] = true
+		table.insert(chain, nxt)
+		cur = nxt
+	end
+	local flat = { sx, sz }
+	for _, e in ipairs(chain) do
+		table.insert(flat, e.x)
+		table.insert(flat, e.z)
+	end
+	runFx(run, "Chain", table.unpack(flat))
+	for i, e in ipairs(chain) do
+		later(run, (i - 1) * 0.07, function()
+			if e.dead then return end
+			damageEnemy(run, e, ws.damage * 2.1 * (0.92 ^ (i - 1)) * rnd(), p, false)
+			if not e.dead then applyCC(e, 0.7) end
+		end)
+	end
+end
+
+-- E: Arcane Blink
+ABIL.Mage.E = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
+	local want = math.clamp(math.sqrt((aim.X - px) ^ 2 + (aim.Z - pz) ^ 2), 8, 26)
+	local nx, nz = clampXZ(run, px + dx * want, pz + dz * want)
+	local info = run.info
+	if info then
+		for _, o in ipairs(info.obstacles) do
+			local ddx, ddz = nx - o.x, nz - o.z
+			local minD = o.r + 2.5
+			local d2 = ddx * ddx + ddz * ddz
+			if d2 < minD * minD then
+				local d = math.sqrt(d2)
+				if d < 0.01 then d = 0.01 ddx = 1 end
+				nx = o.x + ddx / d * minD
+				nz = o.z + ddz / d * minD
+			end
+		end
+	end
+	local now = os.clock()
+	st.invUntil = now + 0.6
+	st.lockAtk = now + 0.35
+	swingWeapon(st, "Mage", 0.4)
+	runFx(run, "Blink", px, pz, nx, nz)
+	ToClient:FireClient(p, "BlinkTo", nx, nz)
+	local R = 10
+	for _, e in ipairs(enemiesInCircle(run, px, pz, R)) do
+		damageEnemy(run, e, ws.damage * 1.6 * rnd(), p, false)
+		if not e.dead then
+			pushEnemy(run, e, e.x - px, e.z - pz, 5)
+			applyCC(e, 0.8)
+		end
+	end
+	later(run, 0.18, function()
+		for _, e in ipairs(enemiesInCircle(run, nx, nz, R)) do
+			damageEnemy(run, e, ws.damage * 1.6 * rnd(), p, false)
+			if not e.dead then
+				pushEnemy(run, e, e.x - nx, e.z - nz, 5)
+				applyCC(e, 0.8, 1.5, 0.6)
+			end
+		end
+	end)
+end
+
+-- Z: Meteor Storm
+ABIL.Mage.Z = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
+	local tx, tz = clampTarget(run, px, pz, aim, 50)
+	local count, scatter, fall, R = 10, 17, 1.15, 8.5
+	st.lockAtk = os.clock() + 0.6
+	swingWeapon(st, "Mage", 0.8)
+	for i = 1, count do
+		local ang = abRng:NextNumber() * math.pi * 2
+		local rad = (i == 1) and 0 or math.sqrt(abRng:NextNumber()) * scatter
+		local mx, mz = clampXZ(run, tx + math.cos(ang) * rad, tz + math.sin(ang) * rad)
+		local t0 = (i - 1) * 0.36
+		later(run, t0, function() runFx(run, "Meteor", mx, mz, fall, R) end)
+		later(run, t0 + fall, function()
+			for _, e in ipairs(enemiesInCircle(run, mx, mz, R)) do
+				damageEnemy(run, e, ws.damage * 3.8 * rnd(), p, false)
+				if not e.dead then
+					pushEnemy(run, e, e.x - mx, e.z - mz, 2.5)
+					applyBurn(e, ws.damage * 0.9, 4, p)
+				end
+			end
+		end)
+	end
+end
+
+local function castAbility(p, key)
+	local st = S[p]
+	if not st or type(key) ~= "string" then return end
+	local run = st.run
+	if not run or run.over or st.dead then
+		if not run and not st.dead then toast(p, "Abilities work inside dungeons only!", "ff9a3c", 2) end
+		return
+	end
+	local d = D[p]
+	local cls = d and d.class
+	if not cls then return end
+	local def = Config.Abilities[cls] and Config.Abilities[cls][key]
+	local fn = ABIL[cls] and ABIL[cls][key]
+	if not def or not fn then return end
+	local c, h, hrp = getChar(p)
+	if not c or h.Health <= 0 then return end
+	local now = os.clock()
+	st.abCd = st.abCd or {}
+	if now < (st.abCd[key] or 0) then return end
+	if now < (st.lockCast or 0) then return end
+	local aim = st.lastAim
+	if typeof(aim) ~= "Vector3" then aim = hrp.Position + hrp.CFrame.LookVector * 20 end
+	local ws = Config.weaponStats(cls, d.upg[cls])
+	local px, pz = hrp.Position.X, hrp.Position.Z
+	local dx, dz = aim.X - px, aim.Z - pz
+	local m = math.sqrt(dx * dx + dz * dz)
+	if m < 0.01 then
+		local lv = hrp.CFrame.LookVector
+		dx, dz = lv.X, lv.Z
+		m = math.sqrt(dx * dx + dz * dz)
+		if m < 0.01 then dx, dz, m = 0, -1, 1 end
+	end
+	dx, dz = dx / m, dz / m
+	st.abCd[key] = now + def.cd
+	st.lockCast = now + 0.3
+	local ok, err = pcall(fn, run, p, st, ws, hrp, px, pz, dx, dz, aim)
+	if not ok then
+		warn("[ability " .. cls .. key .. "] " .. tostring(err))
+		st.abCd[key] = 0
+		return
+	end
+	ToClient:FireClient(p, "AbCd", key, def.cd)
+	if def.ult then
+		ToClient:FireClient(p, "UltBanner", def.name, Config.Classes[cls].color)
+	end
+end
+
 -- ============================================================ REMOTES
 ToServer.OnServerEvent:Connect(function(p, action, a, b, c, d, e)
 	local st = S[p]
 	if not st or type(action) ~= "string" then return end
 	if action == "Attack" then
-		if typeof(a) == "Vector3" then playerAttack(p, a) end
+		if typeof(a) == "Vector3" then
+			st.lastAim = a
+			playerAttack(p, a)
+		end
+	elseif action == "Aim" then
+		if typeof(a) == "Vector3" then st.lastAim = a end
+	elseif action == "Ability" then
+		if typeof(b) == "Vector3" then st.lastAim = b end
+		castAbility(p, a)
 	elseif action == "Dash" then
 		local now = os.clock()
 		if now < (st.dashAt or 0) or st.dead then return end
@@ -3093,9 +3576,10 @@ local function showToast(text, color, dur)
 	end)
 end
 
-local hint = mkLabel(gui, "WASD - move   |   Mouse - aim   |   Hold LMB - attack   |   SPACE / SHIFT - dash   |   Wheel - zoom",
-	UDim2.new(0, 14, 1, -30), UDim2.fromOffset(700, 22), 14, C3(196, 202, 218))
+local hint = mkLabel(gui, "WASD - move   |   Mouse - aim   |   Hold LMB - attack   |   Q / E - skills   |   Z - ULTIMATE   |   SPACE / SHIFT - dash   |   Wheel - zoom",
+	UDim2.new(0, 14, 1, -66), UDim2.fromOffset(410, 56), 13, C3(196, 202, 218))
 hint.TextStrokeColor3 = INK
+hint.TextYAlignment = Enum.TextYAlignment.Bottom
 hint.TextStrokeTransparency = 0.5
 local downLabel = new("TextLabel", {
 	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.7, 0), Size = UDim2.fromOffset(700, 50), BackgroundTransparency = 1,
@@ -3353,7 +3837,7 @@ end
 local wgui = new("ScreenGui", { Name = "WeaponSelect", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 20 }, lp:WaitForChild("PlayerGui"))
 local wDim = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(6, 8, 14), BackgroundTransparency = 0.3, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false }, wgui)
 local wFrame = new("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(760, 430),
+	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(760, 500),
 	BackgroundColor3 = PANEL, BorderSizePixel = 0,
 }, wDim)
 corner(wFrame, 12)
@@ -3481,7 +3965,7 @@ for i, cls in ipairs(cardOrder) do
 	local cdef = Config.Classes[cls]
 	local ccol = tone(cdef.color)
 	local card = new("Frame", {
-		Position = UDim2.new(0, 20 + (i - 1) * 240, 0, 92), Size = UDim2.fromOffset(220, 322),
+		Position = UDim2.new(0, 20 + (i - 1) * 240, 0, 92), Size = UDim2.fromOffset(220, 392),
 		BackgroundColor3 = CARD, BorderSizePixel = 0,
 	}, wFrame)
 	corner(card, 10)
@@ -3506,6 +3990,16 @@ for i, cls in ipairs(cardOrder) do
 		corner(fill, 5)
 		mkLabel(card, sdef[3](cdef), UDim2.fromOffset(180, y), UDim2.fromOffset(34, 16), 12, TXT, Enum.TextXAlignment.Right)
 	end
+	-- ability list (Q / E / Z)
+	local abDefs = Config.Abilities[cls]
+	for k, key in ipairs(Config.AbilityKeys) do
+		local ad = abDefs[key]
+		local ay = 272 + (k - 1) * 22
+		local kb = new("Frame", { Position = UDim2.fromOffset(12, ay), Size = UDim2.fromOffset(22, 18), BackgroundColor3 = key == "Z" and GOLD or ccol, BorderSizePixel = 0 }, card)
+		corner(kb, 4)
+		mkLabel(kb, key, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 13, INK, Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
+		mkLabel(card, ad.name .. (ad.ult and "  (ULT)" or ""), UDim2.fromOffset(40, ay), UDim2.new(1, -48, 0, 18), 12, key == "Z" and GOLD or TXT, Enum.TextXAlignment.Left)
+	end
 	local btn = mkButton(card, "SELECT", UDim2.new(0, 14, 1, -52), UDim2.new(1, -28, 0, 40), cdef.color, function()
 		if data.class ~= cls then
 			ToServer:FireServer("ChooseClass", cls)
@@ -3522,7 +4016,7 @@ end
 -- scale the panel down on small screens
 local function fitWeaponPanel()
 	local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
-	local sc = math.clamp(math.min(vp.X / 800, vp.Y / 470), 0.5, 1.15)
+	local sc = math.clamp(math.min(vp.X / 800, vp.Y / 540), 0.5, 1.15)
 	wFrame:FindFirstChildOfClass("UIScale").Scale = sc
 end
 fitWeaponPanel()
@@ -4078,6 +4572,25 @@ H.DashFx = function(x, z)
 	burst(x, 1.2, z, C3(200, 205, 212), 10, 6, 14, 1.4, 0.5, C3(150, 154, 162), nil, nil, nil)
 end
 
+-- ability movement (server tells the owner to move; the client owns its character physics)
+H.Lunge = function(dx, dz, speed, dur)
+	local _, h, r = char()
+	if not h or h.Health <= 0 then return end
+	dashDir = Vector3.new(dx, 0, dz)
+	dashUntil = os.clock() + dur
+	h.WalkSpeed = speed
+	r.AssemblyLinearVelocity = Vector3.new(dx * speed, r.AssemblyLinearVelocity.Y, dz * speed)
+	task.delay(dur, function()
+		if h.Parent then h.WalkSpeed = lp:GetAttribute("WalkSpeed") or 20 end
+	end)
+end
+H.BlinkTo = function(x, z)
+	local _, _, r = char()
+	if not r then return end
+	r.CFrame = CFrame.new(x, r.Position.Y, z) * (r.CFrame - r.CFrame.Position)
+	r.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+end
+
 H.Hurt = function()
 	hurt.BackgroundColor3 = C3(150, 24, 24)
 	hurt.BackgroundTransparency = 0.78
@@ -4203,6 +4716,1196 @@ ToClient.OnClientEvent:Connect(function(name, ...)
 		if not ok then warn("[client] " .. name .. ": " .. tostring(err)) end
 	end
 end)
+]]></ProtectedString>
+</Properties>
+</Item>
+<Item class="LocalScript" referent="RBX12">
+<Properties>
+<string name="Name">AbilityClient</string>
+<ProtectedString name="Source"><![CDATA[-- AbilityClient: custom crosshair cursor, Q / E / Z ability bar + input, and all ability VFX
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local Debris = game:GetService("Debris")
+
+local lp = Players.LocalPlayer
+local Net = RS:WaitForChild("Net")
+local ToServer = Net:WaitForChild("ToServer")
+local ToClient = Net:WaitForChild("ToClient")
+local Config = require(RS:WaitForChild("Config"))
+local playerGui = lp:WaitForChild("PlayerGui")
+local C3 = Color3.fromRGB
+
+-- ============================================================ SMALL UI HELPERS
+local function new(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props or {}) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
+local function corner(o, r) return new("UICorner", { CornerRadius = UDim.new(0, r or 6) }, o) end
+local function tw(o, t, props, style, dir)
+	local tween = TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props)
+	tween:Play()
+	return tween
+end
+local function label(parent, text, size, color, font, pos, sz, align)
+	return new("TextLabel", {
+		Text = text, TextSize = size, TextColor3 = color or C3(255, 255, 255), Font = font or Enum.Font.GothamBold,
+		BackgroundTransparency = 1, Position = pos or UDim2.fromScale(0, 0), Size = sz or UDim2.fromScale(1, 1),
+		TextXAlignment = align or Enum.TextXAlignment.Center,
+	}, parent)
+end
+
+-- ============================================================ STATE
+local curClass = nil
+local cdEnd = { Q = 0, E = 0, Z = 0 }
+local cdTotal = { Q = 1, E = 1, Z = 1 }
+local kick = 0 -- crosshair recoil / pulse
+local attacking = false
+
+local function classColor()
+	local c = curClass and Config.Classes[curClass]
+	return c and c.color or C3(230, 230, 240)
+end
+
+-- ============================================================ CAMERA SHAKE
+local shakes = {}
+local function shake(amp, dur)
+	table.insert(shakes, { amp = amp, dur = dur, t = 0 })
+end
+local function shakeAt(x, z, amp, dur, radius)
+	local c = lp.Character
+	local r = c and c:FindFirstChild("HumanoidRootPart")
+	local d = 0
+	if r then d = math.sqrt((r.Position.X - x) ^ 2 + (r.Position.Z - z) ^ 2) end
+	local k = math.clamp(1 - d / (radius or 80), 0.15, 1)
+	shake(amp * k, dur)
+end
+RunService:BindToRenderStep("AbilityShake", Enum.RenderPriority.Camera.Value + 2, function(dt)
+	if #shakes == 0 then return end
+	local ox, oy = 0, 0
+	for i = #shakes, 1, -1 do
+		local s = shakes[i]
+		s.t = s.t + dt
+		if s.t >= s.dur then
+			table.remove(shakes, i)
+		else
+			local k = (1 - s.t / s.dur) ^ 2 * s.amp
+			ox = ox + (math.random() * 2 - 1) * k
+			oy = oy + (math.random() * 2 - 1) * k
+		end
+	end
+	local cam = workspace.CurrentCamera
+	cam.CFrame = cam.CFrame * CFrame.new(ox, oy, 0)
+end)
+
+-- ============================================================ SCREEN EFFECTS (flash / banner / letterbox)
+local fxGui = new("ScreenGui", { Name = "AbilityFX", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 8, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, playerGui)
+local flash = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(255, 255, 255), BackgroundTransparency = 1, BorderSizePixel = 0 }, fxGui)
+local barTop = new("Frame", { Size = UDim2.new(1, 0, 0, 0), BackgroundColor3 = C3(0, 0, 0), BorderSizePixel = 0, ZIndex = 2 }, fxGui)
+local barBot = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 0), BackgroundColor3 = C3(0, 0, 0), BorderSizePixel = 0, ZIndex = 2 }, fxGui)
+local bannerBox = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.27), Size = UDim2.fromOffset(900, 120), BackgroundTransparency = 1, ZIndex = 5 }, fxGui)
+local bannerScale = new("UIScale", { Scale = 1 }, bannerBox)
+local bannerSub = label(bannerBox, "- ULTIMATE -", 20, C3(255, 255, 255), Enum.Font.GothamBold, UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 26))
+bannerSub.TextTransparency = 1
+bannerSub.ZIndex = 5
+local bannerTxt = label(bannerBox, "", 52, C3(255, 255, 255), Enum.Font.GothamBlack, UDim2.fromOffset(0, 26), UDim2.new(1, 0, 0, 68))
+bannerTxt.TextTransparency = 1
+bannerTxt.TextStrokeColor3 = C3(10, 10, 16)
+bannerTxt.TextStrokeTransparency = 1
+bannerTxt.ZIndex = 5
+
+local function screenFlash(color, alpha, dur)
+	flash.BackgroundColor3 = color
+	flash.BackgroundTransparency = alpha
+	tw(flash, dur, { BackgroundTransparency = 1 })
+end
+
+local bannerTok = 0
+local function showBanner(text, color)
+	bannerTok = bannerTok + 1
+	local tok = bannerTok
+	bannerTxt.Text = string.upper(text)
+	bannerTxt.TextColor3 = color
+	bannerSub.TextColor3 = color
+	bannerScale.Scale = 1.7
+	bannerTxt.TextTransparency = 0
+	bannerTxt.TextStrokeTransparency = 0.1
+	bannerSub.TextTransparency = 0.1
+	tw(bannerScale, 0.28, { Scale = 1 }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	tw(barTop, 0.25, { Size = UDim2.new(1, 0, 0, 54) })
+	tw(barBot, 0.25, { Size = UDim2.new(1, 0, 0, 54) })
+	task.delay(1.5, function()
+		if tok ~= bannerTok then return end
+		tw(bannerTxt, 0.5, { TextTransparency = 1, TextStrokeTransparency = 1 })
+		tw(bannerSub, 0.5, { TextTransparency = 1 })
+		tw(barTop, 0.45, { Size = UDim2.new(1, 0, 0, 0) })
+		tw(barBot, 0.45, { Size = UDim2.new(1, 0, 0, 0) })
+	end)
+end
+
+-- ============================================================ CUSTOM CROSSHAIR CURSOR
+local cg = new("ScreenGui", { Name = "Crosshair", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 1000, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, playerGui)
+local chRoot = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 1 }, cg)
+local chScale = new("UIScale", { Scale = 1 }, chRoot)
+local chColored = {} -- every element that gets tinted by class / hover color
+
+local function chFrame(parent, size, pos, anchor, rotation)
+	local f = new("Frame", {
+		AnchorPoint = anchor or Vector2.new(0.5, 0.5), Position = pos or UDim2.fromOffset(0, 0), Size = size,
+		BackgroundColor3 = C3(255, 255, 255), BorderSizePixel = 0, Rotation = rotation or 0,
+	}, parent)
+	new("UIStroke", { Color = C3(8, 10, 16), Thickness = 1, Transparency = 0.35 }, f)
+	table.insert(chColored, f)
+	return f
+end
+
+-- soft shadow ring (contrast on bright ground)
+local shadow = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(46, 46), BackgroundTransparency = 1 }, chRoot)
+corner(shadow, 23)
+new("UIStroke", { Color = C3(0, 0, 0), Thickness = 5, Transparency = 0.7 }, shadow)
+
+-- main ring
+local ring = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(42, 42), BackgroundTransparency = 1 }, chRoot)
+corner(ring, 21)
+local ringStroke = new("UIStroke", { Color = C3(255, 255, 255), Thickness = 2, Transparency = 0.1 }, ring)
+
+-- four ticks that open up when you shoot
+local ticks = {}
+for i = 1, 4 do
+	local vertical = (i == 1 or i == 3)
+	ticks[i] = chFrame(chRoot, vertical and UDim2.fromOffset(3, 10) or UDim2.fromOffset(10, 3))
+end
+
+-- rotating square brackets
+local brackets = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(64, 64), BackgroundTransparency = 1 }, chRoot)
+local function bracket(ax, ay)
+	chFrame(brackets, UDim2.fromOffset(13, 3), UDim2.fromScale(ax, ay), Vector2.new(ax, ay))
+	chFrame(brackets, UDim2.fromOffset(3, 13), UDim2.fromScale(ax, ay), Vector2.new(ax, ay))
+end
+bracket(0, 0)
+bracket(1, 0)
+bracket(0, 1)
+bracket(1, 1)
+
+-- center dot
+local dot = chFrame(chRoot, UDim2.fromOffset(6, 6))
+corner(dot, 3)
+
+local chColor = C3(255, 255, 255)
+local function paintCrosshair(c)
+	ringStroke.Color = c
+	for _, f in ipairs(chColored) do f.BackgroundColor3 = c end
+end
+
+-- is the cursor over an enemy? (looks into the Run folders in workspace)
+local hover = false
+local hoverCheckAt = 0
+local function cursorWorld()
+	local cam = workspace.CurrentCamera
+	local m = UIS:GetMouseLocation()
+	local ray = cam:ViewportPointToRay(m.X, m.Y)
+	if math.abs(ray.Direction.Y) < 1e-4 then return nil end
+	local t = -ray.Origin.Y / ray.Direction.Y
+	return ray.Origin + ray.Direction * t
+end
+local function checkHover()
+	local aim = cursorWorld()
+	if not aim then return false end
+	for _, f in ipairs(workspace:GetChildren()) do
+		if f:IsA("Folder") and string.sub(f.Name, 1, 3) == "Run" then
+			local ef = f:FindFirstChild("Enemies")
+			if ef then
+				for _, m in ipairs(ef:GetChildren()) do
+					local pp = m:IsA("Model") and m.PrimaryPart
+					if pp then
+						local big = (m.Name == "Zombie Titan" or m.Name == "Goblin King")
+						local rr = big and 6.5 or 3.2
+						local dx, dz = pp.Position.X - aim.X, pp.Position.Z - aim.Z
+						if dx * dx + dz * dz < rr * rr then return true end
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+local spin = 0
+local smoothScale = 1
+RunService.RenderStepped:Connect(function(dt)
+	UIS.MouseIconEnabled = false
+	local m = UIS:GetMouseLocation()
+	chRoot.Position = UDim2.fromOffset(m.X, m.Y)
+
+	local now = os.clock()
+	if now > hoverCheckAt then
+		hoverCheckAt = now + 0.07
+		hover = checkHover()
+	end
+	if attacking then kick = math.max(kick, 0.3 + 0.12 * math.sin(now * 32)) end
+	kick = kick * math.exp(-dt * 9)
+
+	spin = spin + dt * (hover and 150 or 45)
+	brackets.Rotation = spin
+	local targetScale = 1 + kick * 0.22 + (hover and 0.14 or 0)
+	smoothScale = smoothScale + (targetScale - smoothScale) * (1 - math.exp(-dt * 20))
+	chScale.Scale = smoothScale
+
+	local spread = 24 + kick * 9 - (hover and 3 or 0)
+	ticks[1].Position = UDim2.fromOffset(0, -spread)
+	ticks[2].Position = UDim2.fromOffset(spread, 0)
+	ticks[3].Position = UDim2.fromOffset(0, spread)
+	ticks[4].Position = UDim2.fromOffset(-spread, 0)
+
+	local base = classColor():Lerp(C3(255, 255, 255), 0.35)
+	local target = hover and C3(255, 72, 72) or base
+	chColor = chColor:Lerp(target, 1 - math.exp(-dt * 16))
+	paintCrosshair(chColor)
+	ringStroke.Thickness = 2 + kick * 1.6
+end)
+
+-- ============================================================ ABILITY BAR
+local hudGui = new("ScreenGui", { Name = "AbilityHUD", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 6, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, playerGui)
+local group = new("CanvasGroup", {
+	AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -82), Size = UDim2.fromOffset(300, 112),
+	BackgroundTransparency = 1, Visible = false,
+}, hudGui)
+
+local slots = {}
+do
+	local layout = { { key = "Q", w = 64 }, { key = "E", w = 64 }, { key = "Z", w = 82 } }
+	local x = 32
+	for _, l in ipairs(layout) do
+		local w = l.w
+		local isUlt = l.key == "Z"
+		local f = new("Frame", {
+			Position = UDim2.fromOffset(x, 112 - w - 6), Size = UDim2.fromOffset(w, w),
+			BackgroundColor3 = C3(255, 255, 255), BorderSizePixel = 0,
+		}, group)
+		corner(f, 12)
+		new("UIGradient", { Color = ColorSequence.new(C3(52, 56, 78), C3(14, 16, 24)), Rotation = 90 }, f)
+		local sc = new("UIScale", { Scale = 1 }, f)
+		local st = new("UIStroke", { Color = C3(255, 255, 255), Thickness = isUlt and 3 or 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, f)
+		local icon = label(f, "", math.floor(w * 0.46), C3(255, 255, 255), Enum.Font.GothamBold, UDim2.fromOffset(0, 2), UDim2.new(1, 0, 1, -14))
+		local nm = label(f, "", 10, C3(220, 224, 236), Enum.Font.GothamBold, UDim2.new(0, 2, 1, -15), UDim2.new(1, -4, 0, 13))
+		nm.TextScaled = true
+		new("UITextSizeConstraint", { MinTextSize = 7, MaxTextSize = 11 }, nm)
+		local badge = new("Frame", { Position = UDim2.fromOffset(4, 4), Size = UDim2.fromOffset(20, 18), BackgroundColor3 = C3(255, 255, 255), BorderSizePixel = 0, ZIndex = 3 }, f)
+		corner(badge, 5)
+		local bl = label(badge, l.key, 13, C3(12, 14, 20), Enum.Font.GothamBlack)
+		bl.ZIndex = 4
+		local cd = new("Frame", { Size = UDim2.new(1, 0, 0, 0), BackgroundColor3 = C3(0, 0, 0), BackgroundTransparency = 0.38, BorderSizePixel = 0, ZIndex = 5 }, f)
+		corner(cd, 12)
+		local cdText = label(f, "", isUlt and 24 or 20, C3(255, 255, 255), Enum.Font.GothamBlack)
+		cdText.ZIndex = 6
+		cdText.TextStrokeColor3 = C3(0, 0, 0)
+		cdText.TextStrokeTransparency = 0.3
+		slots[l.key] = { frame = f, scale = sc, stroke = st, icon = icon, name = nm, badge = badge, cd = cd, cdText = cdText, ult = isUlt, was = false }
+		x = x + w + 12
+	end
+end
+
+local function refreshSlots()
+	local defs = curClass and Config.Abilities[curClass]
+	group.Visible = defs ~= nil
+	if not defs then return end
+	local col = classColor()
+	for key, s in pairs(slots) do
+		local d = defs[key]
+		s.icon.Text = d.icon
+		s.name.Text = d.name
+		s.stroke.Color = s.ult and C3(255, 206, 90) or col
+		s.badge.BackgroundColor3 = s.ult and C3(255, 206, 90) or col
+	end
+end
+
+local function readClass()
+	local raw = lp:GetAttribute("Data")
+	if not raw then return end
+	local ok, d = pcall(function() return HttpService:JSONDecode(raw) end)
+	if ok and type(d) == "table" and d.class ~= curClass then
+		curClass = d.class
+		refreshSlots()
+	end
+end
+lp:GetAttributeChangedSignal("Data"):Connect(readClass)
+readClass()
+
+lp:GetAttributeChangedSignal("InRun"):Connect(function()
+	cdEnd.Q, cdEnd.E, cdEnd.Z = 0, 0, 0
+end)
+
+local function readyPop(s)
+	s.scale.Scale = 1.18
+	tw(s.scale, 0.35, { Scale = 1 }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	local th = s.ult and 3 or 2
+	s.stroke.Thickness = th + 4
+	tw(s.stroke, 0.4, { Thickness = th })
+end
+
+local function denyPop(s)
+	s.frame.Rotation = 6
+	tw(s.frame, 0.3, { Rotation = 0 }, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+end
+
+RunService.RenderStepped:Connect(function()
+	if not group.Visible then return end
+	local inRun = lp:GetAttribute("InRun") == true
+	group.GroupTransparency = inRun and 0 or 0.55
+	local now = os.clock()
+	for key, s in pairs(slots) do
+		local left = cdEnd[key] - now
+		if left > 0 then
+			s.was = true
+			s.cd.Size = UDim2.new(1, 0, math.clamp(left / math.max(0.1, cdTotal[key]), 0, 1), 0)
+			s.cdText.Text = left >= 10 and tostring(math.ceil(left)) or string.format("%.1f", left)
+		else
+			s.cd.Size = UDim2.new(1, 0, 0, 0)
+			s.cdText.Text = ""
+			if s.was then
+				s.was = false
+				readyPop(s)
+			end
+			if s.ult and inRun then
+				local k = 0.5 + 0.5 * math.sin(now * 5)
+				s.stroke.Color = C3(255, 206, 90):Lerp(C3(255, 255, 255), k * 0.8)
+			end
+		end
+	end
+end)
+
+-- ============================================================ INPUT
+local KEYS = { [Enum.KeyCode.Q] = "Q", [Enum.KeyCode.E] = "E", [Enum.KeyCode.Z] = "Z" }
+
+UIS.InputBegan:Connect(function(input, gp)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 and not gp then
+		attacking = true
+		kick = math.max(kick, 0.9)
+		return
+	end
+	if gp then return end
+	local key = KEYS[input.KeyCode]
+	if not key or not curClass then return end
+	local s = slots[key]
+	if os.clock() < cdEnd[key] then
+		if s then denyPop(s) end
+		return
+	end
+	local c = lp.Character
+	local h = c and c:FindFirstChildOfClass("Humanoid")
+	if not h or h.Health <= 0 then return end
+	local aim = cursorWorld()
+	if not aim then return end
+	ToServer:FireServer("Ability", key, aim)
+	kick = 1.6
+end)
+UIS.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then attacking = false end
+end)
+
+-- ============================================================ VFX HELPERS
+local fxFolder = Instance.new("Folder")
+fxFolder.Name = "AbilityFX"
+fxFolder.Parent = workspace
+local NEON = Enum.Material.Neon
+local B, CY, BALL = Enum.PartType.Block, Enum.PartType.Cylinder, Enum.PartType.Ball
+
+local function fxPart(shape, size, cf, color, mat, trans)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Shape = shape
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color
+	p.Material = mat or NEON
+	p.Transparency = trans or 0
+	p.Parent = fxFolder
+	return p
+end
+local function fxDisc(d, x, y, z, color, trans, mat, thick)
+	return fxPart(CY, Vector3.new(thick or 0.2, d, d), CFrame.new(x, y, z) * CFrame.Angles(0, 0, math.pi / 2), color, mat, trans)
+end
+
+-- runs fn(alpha, elapsed) every frame for dur seconds
+local function animate(dur, fn, done)
+	task.spawn(function()
+		local t = 0
+		while t < dur do
+			local dt = RunService.Heartbeat:Wait()
+			t = t + dt
+			local ok = pcall(fn, math.min(1, t / dur), t)
+			if not ok then break end
+		end
+		if done then pcall(done) end
+	end)
+end
+
+local function ringFx(x, y, z, d0, d1, color, dur, thick, startTrans, endTrans)
+	local p = fxPart(B, Vector3.new(d0, 0.05, d0), CFrame.new(x, y, z), color, Enum.Material.SmoothPlastic, 1)
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Top
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+	sg.CanvasSize = Vector2.new(256, 256)
+	sg.LightInfluence = 0
+	sg.Brightness = 1.4
+	sg.Parent = p
+	local f = Instance.new("Frame")
+	f.Size = UDim2.fromScale(1, 1)
+	f.BackgroundTransparency = 1
+	f.BorderSizePixel = 0
+	f.Parent = sg
+	local uc = Instance.new("UICorner")
+	uc.CornerRadius = UDim.new(0.5, 0)
+	uc.Parent = f
+	local us = Instance.new("UIStroke")
+	us.Color = color
+	us.Thickness = thick or 8
+	us.Transparency = startTrans or 0.1
+	us.Parent = f
+	tw(p, dur, { Size = Vector3.new(d1, 0.05, d1) })
+	tw(us, dur, { Transparency = endTrans or 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	Debris:AddItem(p, dur + 0.1)
+	return p
+end
+
+local function burst(x, y, z, color, count, smin, smax, size, life, color2, dirX, dirZ, spread)
+	local cf = CFrame.new(x, y, z)
+	if dirX then
+		local pos = Vector3.new(x, y, z)
+		cf = CFrame.lookAt(pos, pos + Vector3.new(dirX, 0, dirZ)) * CFrame.Angles(-math.pi / 2, 0, 0)
+	end
+	local p = fxPart(B, Vector3.new(0.2, 0.2, 0.2), cf, color, Enum.Material.SmoothPlastic, 1)
+	local e = Instance.new("ParticleEmitter")
+	e.Enabled = false
+	e.Rate = 0
+	e.Color = ColorSequence.new(color, color2 or color)
+	e.LightEmission = 0.9
+	e.LightInfluence = 0
+	e.Lifetime = NumberRange.new(life * 0.6, life)
+	e.Speed = NumberRange.new(smin, smax)
+	e.SpreadAngle = spread and Vector2.new(spread, spread) or Vector2.new(180, 180)
+	e.Drag = 3
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, size), NumberSequenceKeypoint.new(1, 0) })
+	e.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(0.6, 0.25),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	e.Parent = p
+	e:Emit(count)
+	Debris:AddItem(p, life + 0.3)
+end
+
+local function addTrail(part, c0, c1, width, life, off)
+	local a0 = Instance.new("Attachment")
+	a0.Position = Vector3.new(-width / 2, 0, off or 0)
+	a0.Parent = part
+	local a1 = Instance.new("Attachment")
+	a1.Position = Vector3.new(width / 2, 0, off or 0)
+	a1.Parent = part
+	local t = Instance.new("Trail")
+	t.Attachment0 = a0
+	t.Attachment1 = a1
+	t.Lifetime = life
+	t.Color = ColorSequence.new(c0, c1)
+	t.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.15),
+		NumberSequenceKeypoint.new(0.6, 0.6),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	t.LightEmission = 0.8
+	t.LightInfluence = 0
+	t.MinLength = 0.04
+	t.FaceCamera = false
+	t.Parent = part
+	return t
+end
+
+local function addEmbers(part, c0, c1, rate, size, life, speed)
+	local e = Instance.new("ParticleEmitter")
+	e.Rate = rate
+	e.Color = ColorSequence.new(c0, c1)
+	e.LightEmission = 1
+	e.LightInfluence = 0
+	e.Lifetime = NumberRange.new(life * 0.6, life)
+	e.Speed = NumberRange.new(speed * 0.3, speed)
+	e.SpreadAngle = Vector2.new(180, 180)
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, size), NumberSequenceKeypoint.new(1, 0) })
+	e.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) })
+	e.Parent = part
+	return e
+end
+
+-- a glowing bar between two world points
+local function segment(a, b, w, h, color, trans, mat)
+	local mid = (a + b) / 2
+	local d = b - a
+	local len = d.Magnitude
+	local fwd = len > 0.01 and d.Unit or Vector3.new(0, 0, 1)
+	return fxPart(B, Vector3.new(w, h, math.max(len, 0.05)), CFrame.lookAt(mid, mid + fwd), color, mat or NEON, trans or 0)
+end
+
+-- vertical column of light
+local function pillar(x, z, w, h, color, dur, startTrans)
+	local p = fxPart(B, Vector3.new(w, h, w), CFrame.new(x, h / 2, z), color, NEON, startTrans or 0.3)
+	tw(p, dur, { Size = Vector3.new(0.1, h, 0.1), Transparency = 1 })
+	Debris:AddItem(p, dur + 0.1)
+	return p
+end
+
+local function heroPos(userId)
+	local pl = Players:GetPlayerByUserId(userId)
+	local c = pl and pl.Character
+	local r = c and c:FindFirstChild("HumanoidRootPart")
+	return r and r.Position or nil
+end
+
+local H = {}
+
+-- ============================================================ GENERIC
+H.AbCd = function(key, cd)
+	cdEnd[key] = os.clock() + cd
+	cdTotal[key] = cd
+end
+
+H.UltBanner = function(name, color)
+	local col = color or C3(255, 206, 90)
+	showBanner(name, col)
+	screenFlash(col:Lerp(C3(255, 255, 255), 0.6), 0.55, 0.45)
+	shake(1.2, 0.45)
+	local c = lp.Character
+	local r = c and c:FindFirstChild("HumanoidRootPart")
+	if r then
+		local x, z = r.Position.X, r.Position.Z
+		ringFx(x, 0.7, z, 3, 26, col, 0.55, 10)
+		ringFx(x, 0.8, z, 2, 16, C3(255, 255, 255), 0.4, 7)
+		pillar(x, z, 4, 70, col:Lerp(C3(255, 255, 255), 0.4), 0.6, 0.45)
+		burst(x, 1.5, z, col, 40, 14, 38, 1.0, 0.8, C3(255, 255, 255))
+	end
+end
+
+H.Spark = function(x, z, r, g, b)
+	local col = C3(r, g, b)
+	burst(x, 2.4, z, col, 9, 10, 24, 0.55, 0.3, C3(255, 255, 255))
+	ringFx(x, 1.0, z, 1, 5.5, col, 0.25, 6)
+end
+
+H.Ring = function(x, z, size, r, g, b)
+	local col = C3(r, g, b)
+	ringFx(x, 0.9, z, size * 0.3, size, col, 0.5, 10)
+	local d = fxDisc(size * 0.7, x, 1.0, z, col, 0.6, NEON, 0.15)
+	tw(d, 0.35, { Size = Vector3.new(0.1, size, size), Transparency = 1 })
+	Debris:AddItem(d, 0.45)
+end
+
+H.Ember = function(x, z, r)
+	burst(x + (math.random() - 0.5) * r, 2.4, z + (math.random() - 0.5) * r, C3(255, 170, 60), 3, 5, 12, 0.7, 0.55, C3(255, 60, 20))
+end
+
+-- ============================================================ SWORDSMAN
+-- Q: Crimson Charge
+H.SwCharge = function(px, pz, dx, dz, dist, dur)
+	local a = Vector3.new(px, 2.2, pz)
+	local b = Vector3.new(px + dx * dist, 2.2, pz + dz * dist)
+	local red, hot = C3(235, 54, 64), C3(255, 170, 150)
+	ringFx(px, 0.8, pz, 2, 10, red, 0.35, 8)
+	burst(px, 1.2, pz, C3(210, 190, 170), 14, 8, 20, 1.6, 0.5, C3(120, 110, 100), -dx, -dz, 60)
+	-- speed streak on the ground
+	local st = segment(a + Vector3.new(0, -1.2, 0), b + Vector3.new(0, -1.2, 0), 3.2, 0.1, red, 0.45)
+	tw(st, 0.5, { Transparency = 1, Size = Vector3.new(0.2, 0.1, st.Size.Z) })
+	Debris:AddItem(st, 0.6)
+	local st2 = segment(a + Vector3.new(0, -1.1, 0), b + Vector3.new(0, -1.1, 0), 1.0, 0.12, hot, 0.1)
+	tw(st2, 0.35, { Transparency = 1, Size = Vector3.new(0.1, 0.12, st2.Size.Z) })
+	Debris:AddItem(st2, 0.45)
+	-- red afterimages of the hero
+	for i = 1, 8 do
+		local f = i / 8
+		local pos = a:Lerp(b, f)
+		task.delay(f * dur, function()
+			local g = fxDisc(3.6, pos.X, 2.0, pos.Z, red, 0.35, NEON, 0.2)
+			tw(g, 0.4, { Size = Vector3.new(0.1, 6, 6), Transparency = 1 })
+			Debris:AddItem(g, 0.5)
+			ringFx(pos.X, 1.0, pos.Z, 2, 7, hot, 0.3, 5)
+			burst(pos.X, 2.2, pos.Z, hot, 3, 4, 12, 0.5, 0.3, red)
+		end)
+	end
+	-- glowing comet that races along the path
+	local comet = fxPart(B, Vector3.new(2.2, 0.4, 2.2), CFrame.lookAt(a, b), hot, NEON, 0.1)
+	addTrail(comet, hot, red, 3.2, 0.3, 0)
+	addEmbers(comet, hot, red, 60, 0.8, 0.4, 8)
+	animate(dur, function(al)
+		comet.CFrame = CFrame.lookAt(a:Lerp(b, al), b)
+	end, function()
+		comet:Destroy()
+		ringFx(b.X, 0.8, b.Z, 3, 16, red, 0.4, 9)
+		shakeAt(b.X, b.Z, 0.9, 0.3)
+	end)
+end
+
+-- E: Blade Whirlwind (follows the hero)
+H.SwSpin = function(uid, dur, radius)
+	local bladeCol, coreCol = C3(215, 70, 76), C3(255, 236, 232)
+	local parts = {}
+	local ARMS, GHOSTS = 3, 4
+	for k = 1, ARMS do
+		for g = 0, GHOSTS - 1 do
+			local tr = 0.2 + g * 0.2
+			local o = fxPart(B, Vector3.new(1.6 - g * 0.25, 0.25, radius * 0.72), CFrame.new(), bladeCol, NEON, tr + 0.1)
+			local c = fxPart(B, Vector3.new(0.5, 0.3, radius * 0.7), CFrame.new(), coreCol, NEON, tr)
+			table.insert(parts, { o = o, c = c, arm = k, ghost = g })
+		end
+	end
+	local glow = fxDisc(radius * 2, 0, 0.5, 0, C3(255, 90, 90), 0.88, NEON, 0.1)
+	local lastPulse = 0
+	local lastPos = heroPos(uid)
+	animate(dur, function(al, t)
+		local pos = heroPos(uid) or lastPos
+		if not pos then return end
+		lastPos = pos
+		local fade = al > 0.85 and (1 - (al - 0.85) / 0.15) or 1
+		local spinA = t * 24
+		for _, e in ipairs(parts) do
+			local ang = -(spinA - e.ghost * 0.4) + e.arm * (math.pi * 2 / ARMS)
+			local cf = CFrame.new(pos.X, 2.4, pos.Z) * CFrame.Angles(0, ang, 0) * CFrame.new(0, 0, -(radius * 0.4 + radius * 0.36))
+			e.o.CFrame = cf
+			e.c.CFrame = cf * CFrame.new(0, 0.05, 0)
+			local tr = 0.2 + e.ghost * 0.2
+			e.o.Transparency = math.min(1, (tr + 0.1) + (1 - fade) * 0.9)
+			e.c.Transparency = math.min(1, tr + (1 - fade) * 0.9)
+		end
+		glow.CFrame = CFrame.new(pos.X, 0.5, pos.Z) * CFrame.Angles(0, 0, math.pi / 2)
+		glow.Transparency = 0.88 + (1 - fade) * 0.12
+		if t - lastPulse > 0.3 then
+			lastPulse = t
+			ringFx(pos.X, 0.8, pos.Z, radius * 0.6, radius * 2.1, bladeCol, 0.4, 7)
+			burst(pos.X, 2.2, pos.Z, coreCol, 8, 16, 34, 0.6, 0.35, bladeCol)
+			shake(0.35, 0.15)
+		end
+	end, function()
+		for _, e in ipairs(parts) do
+			e.o:Destroy()
+			e.c:Destroy()
+		end
+		glow:Destroy()
+		if lastPos then
+			ringFx(lastPos.X, 0.8, lastPos.Z, radius, radius * 2.6, coreCol, 0.5, 9)
+		end
+	end)
+end
+
+-- Z: Heaven's Verdict
+H.SwUlt = function(tx, tz, R, fall)
+	local gold, white = C3(255, 205, 90), C3(255, 248, 225)
+	-- telegraph
+	local base = fxDisc(R * 2, tx, 0.3, tz, gold, 0.85, NEON, 0.05)
+	local fill = fxDisc(0.5, tx, 0.35, tz, C3(255, 226, 150), 0.6, NEON, 0.05)
+	tw(fill, fall, { Size = Vector3.new(0.05, R * 2, R * 2) }, Enum.EasingStyle.Linear)
+	ringFx(tx, 0.4, tz, R * 2, R * 2, gold, fall, 10, 0.05, 0.25)
+	ringFx(tx, 0.45, tz, R * 1.2, R * 1.2, white, fall, 5, 0.2, 0.4)
+	-- rune spokes
+	local spokes = {}
+	for i = 1, 8 do
+		local ang = i * math.pi / 4
+		local s = fxPart(B, Vector3.new(0.5, 0.05, R * 0.9), CFrame.new(tx, 0.42, tz) * CFrame.Angles(0, ang, 0) * CFrame.new(0, 0, -R * 0.5), gold, NEON, 0.55)
+		table.insert(spokes, s)
+	end
+	-- light beam from the sky grows as the sword approaches
+	local beam = fxPart(B, Vector3.new(0.6, 140, 0.6), CFrame.new(tx, 70, tz), white, NEON, 0.55)
+	tw(beam, fall, { Size = Vector3.new(R * 0.35, 140, R * 0.35), Transparency = 0.3 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+	-- the sword (tip points along -Z, origin at the hilt)
+	local dir = Vector3.new(-0.32, -1, 0.42).Unit
+	local L = 26
+	local endPos = Vector3.new(tx, 0, tz) - dir * L
+	local startPos = endPos - dir * 95
+	local sw = {}
+	local function sp(shape, size, off, color, mat, tr)
+		local p = fxPart(shape, size, CFrame.new(), color, mat, tr)
+		table.insert(sw, { p = p, off = off })
+		return p
+	end
+	local blade = sp(B, Vector3.new(4.4, 0.9, 20), CFrame.new(0, 0, -14), C3(214, 224, 240), Enum.Material.Metal, 0)
+	sp(B, Vector3.new(0.9, 1.05, 19), CFrame.new(0, 0, -14), white, NEON, 0)
+	sp(B, Vector3.new(0.5, 1.0, 20), CFrame.new(2.2, 0, -14), gold, NEON, 0)
+	sp(B, Vector3.new(0.5, 1.0, 20), CFrame.new(-2.2, 0, -14), gold, NEON, 0)
+	sp(B, Vector3.new(3.1, 0.9, 3.1), CFrame.new(0, 0, -24) * CFrame.Angles(0, math.pi / 4, 0), C3(214, 224, 240), Enum.Material.Metal, 0)
+	sp(B, Vector3.new(1.3, 1.05, 1.3), CFrame.new(0, 0, -24.3) * CFrame.Angles(0, math.pi / 4, 0), white, NEON, 0)
+	sp(B, Vector3.new(12, 1.5, 1.8), CFrame.new(0, 0, -4), C3(228, 178, 70), Enum.Material.Metal, 0)
+	sp(B, Vector3.new(12.4, 0.6, 0.8), CFrame.new(0, 0.5, -4), gold, NEON, 0.1)
+	sp(B, Vector3.new(1.4, 1.3, 5.5), CFrame.new(0, 0, 0.8), C3(86, 56, 40), Enum.Material.Fabric, 0)
+	sp(BALL, Vector3.new(2.4, 2.4, 2.4), CFrame.new(0, 0, 4), gold, NEON, 0)
+	sp(BALL, Vector3.new(14, 14, 14), CFrame.new(0, 0, -12), white, NEON, 0.88)
+	local tipPart = fxPart(B, Vector3.new(1, 0.4, 1), CFrame.new(), white, NEON, 1)
+	addTrail(tipPart, white, gold, 5.4, 0.45, 0)
+	local light = Instance.new("PointLight")
+	light.Color = gold
+	light.Range = 45
+	light.Brightness = 3
+	light.Parent = blade
+	addEmbers(blade, white, gold, 70, 1.2, 0.7, 14)
+	local function place(pos)
+		local cf = CFrame.lookAt(pos, pos + dir)
+		for _, e in ipairs(sw) do e.p.CFrame = cf * e.off end
+		tipPart.CFrame = cf * CFrame.new(0, 0, -23.5)
+	end
+	place(startPos)
+
+	animate(fall, function(al)
+		local a = al ^ 2.6
+		place(startPos:Lerp(endPos, a))
+	end, function()
+		place(endPos)
+		tipPart:Destroy()
+		-- IMPACT
+		base:Destroy()
+		fill:Destroy()
+		beam:Destroy()
+		for _, s in ipairs(spokes) do s:Destroy() end
+		shakeAt(tx, tz, 3.2, 0.8, 120)
+		screenFlash(white, 0.35, 0.5)
+		local fl = fxDisc(R * 1.6, tx, 2.5, tz, white, 0.0, NEON, 0.3)
+		tw(fl, 0.3, { Size = Vector3.new(0.3, R * 2.6, R * 2.6), Transparency = 1 })
+		Debris:AddItem(fl, 0.4)
+		local dsc = fxDisc(R * 1.2, tx, 1.2, tz, gold, 0.15, NEON, 0.3)
+		tw(dsc, 0.6, { Size = Vector3.new(0.3, R * 2.2, R * 2.2), Transparency = 1 })
+		Debris:AddItem(dsc, 0.7)
+		for i = 0, 3 do
+			task.delay(i * 0.07, function()
+				ringFx(tx, 0.6 + i * 0.05, tz, R * 0.4, R * (1.7 + i * 0.35), i % 2 == 0 and gold or white, 0.55 + i * 0.08, 12 - i * 2)
+			end)
+		end
+		pillar(tx, tz, R * 0.9, 120, white, 0.55, 0.15)
+		pillar(tx, tz, R * 0.5, 120, gold, 0.8, 0.2)
+		burst(tx, 2.5, tz, white, 50, 18, 56, 1.4, 0.9, gold)
+		burst(tx, 1.2, tz, C3(150, 140, 120), 20, 8, 24, 3.0, 1.1, C3(70, 66, 60))
+		-- cracks in the ground
+		for i = 1, 14 do
+			local ang = i * (math.pi * 2 / 14) + math.random() * 0.2
+			local ln = R * (0.55 + math.random() * 0.5)
+			local c = fxPart(B, Vector3.new(0.7, 0.08, ln), CFrame.new(tx, 0.5, tz) * CFrame.Angles(0, ang, 0) * CFrame.new(0, 0, -ln / 2), gold, NEON, 0.05)
+			tw(c, 1.3, { Transparency = 1, Size = Vector3.new(0.1, 0.08, ln) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			Debris:AddItem(c, 1.4)
+		end
+		local scorch = fxDisc(R * 1.8, tx, 0.28, tz, C3(40, 30, 20), 0.35, Enum.Material.SmoothPlastic, 0.1)
+		tw(scorch, 3, { Transparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		Debris:AddItem(scorch, 3.1)
+		-- flying stone chunks
+		for i = 1, 10 do
+			local ang = i * math.pi / 5 + math.random() * 0.4
+			local ch = fxDisc(1.1 + math.random(), tx, 1.5, tz, C3(120, 118, 124), 0, Enum.Material.Slate, 0.8)
+			tw(ch, 0.6, { Position = Vector3.new(tx + math.cos(ang) * R * 1.1, 1.5, tz + math.sin(ang) * R * 1.1), Transparency = 1 })
+			Debris:AddItem(ch, 0.7)
+		end
+		-- aftershock + sword shatters
+		task.delay(0.65, function()
+			shakeAt(tx, tz, 1.8, 0.5, 120)
+			ringFx(tx, 0.6, tz, R * 0.5, R * 2.7, gold, 0.6, 14)
+			ringFx(tx, 0.7, tz, R * 0.3, R * 2.0, white, 0.45, 8)
+			burst(tx, 2.5, tz, gold, 36, 20, 50, 1.2, 0.7, white)
+			local a2 = fxDisc(R * 1.5, tx, 1.0, tz, gold, 0.5, NEON, 0.2)
+			tw(a2, 0.5, { Size = Vector3.new(0.2, R * 2.7, R * 2.7), Transparency = 1 })
+			Debris:AddItem(a2, 0.6)
+			for _, e in ipairs(sw) do
+				tw(e.p, 0.4, { Transparency = 1 })
+				Debris:AddItem(e.p, 0.5)
+			end
+			burst(endPos.X + dir.X * 12, 3, endPos.Z + dir.Z * 12, white, 30, 10, 30, 1.2, 0.7, gold)
+		end)
+	end)
+end
+
+-- ============================================================ ARCHER
+-- Q: Arrow Fan
+H.Fan = function(px, pz, dx, dz, spread)
+	local col, core = C3(120, 235, 120), C3(240, 255, 232)
+	for i = 1, 9 do
+		local a = (i - 1) / 8 - 0.5
+		local ang = a * spread
+		local c, s = math.cos(ang), math.sin(ang)
+		local ddx, ddz = dx * c - dz * s, dx * s + dz * c
+		local p0 = Vector3.new(px + ddx * 3, 2.2, pz + ddz * 3)
+		local p1 = Vector3.new(px + ddx * 20, 2.2, pz + ddz * 20)
+		local l = segment(p0, p1, 0.5, 0.2, col, 0.25)
+		tw(l, 0.3, { Transparency = 1, Size = Vector3.new(0.05, 0.1, l.Size.Z) })
+		Debris:AddItem(l, 0.4)
+	end
+	burst(px + dx * 2.6, 2.2, pz + dz * 2.6, core, 16, 14, 34, 0.55, 0.3, col, dx, dz, 60)
+	local fl = fxDisc(4.5, px + dx * 2.5, 2.0, pz + dz * 2.5, col, 0.4, NEON, 0.1)
+	tw(fl, 0.2, { Size = Vector3.new(0.1, 8, 8), Transparency = 1 })
+	Debris:AddItem(fl, 0.3)
+	ringFx(px, 0.8, pz, 3, 9, col, 0.3, 6)
+end
+
+-- E: Frost Trap (rune appears, then bursts)
+H.TrapSet = function(x, z, R, delay)
+	local ice, white = C3(120, 210, 255), C3(235, 250, 255)
+	local base = fxDisc(R * 2, x, 0.3, z, ice, 0.88, NEON, 0.05)
+	ringFx(x, 0.4, z, R * 2, R * 2, ice, delay, 8, 0.05, 0.3)
+	ringFx(x, 0.42, z, R * 1.3, R * 1.3, white, delay, 4, 0.2, 0.5)
+	local runes = {}
+	for i = 1, 10 do
+		table.insert(runes, { p = fxPart(B, Vector3.new(0.8, 0.06, 2.4), CFrame.new(), white, NEON, 0.1), ang = i * math.pi * 2 / 10, rad = R * 0.82, spin = 1 })
+	end
+	for i = 1, 6 do
+		table.insert(runes, { p = fxPart(B, Vector3.new(0.6, 0.06, 1.8), CFrame.new(), ice, NEON, 0.15), ang = i * math.pi * 2 / 6, rad = R * 0.5, spin = -1.6 })
+	end
+	local arms = {}
+	for _ = 0, 2 do
+		table.insert(arms, fxPart(B, Vector3.new(0.5, 0.06, R * 0.9), CFrame.new(), white, NEON, 0.1))
+	end
+	animate(delay, function(al, t)
+		local grow = math.min(1, al * 5)
+		for _, r in ipairs(runes) do
+			local a = r.ang + t * 2.2 * r.spin
+			r.p.CFrame = CFrame.new(x, 0.45, z) * CFrame.Angles(0, -a, 0) * CFrame.new(0, 0, -r.rad * grow)
+		end
+		for i, p in ipairs(arms) do
+			p.CFrame = CFrame.new(x, 0.46, z) * CFrame.Angles(0, (i - 1) * math.pi / 3 - t * 1.5, 0)
+			p.Size = Vector3.new(0.5, 0.06, R * 0.9 * grow)
+		end
+	end, function()
+		base:Destroy()
+		for _, r in ipairs(runes) do r.p:Destroy() end
+		for _, p in ipairs(arms) do p:Destroy() end
+	end)
+end
+
+H.Freeze = function(x, z, R, dur)
+	local ice, white = C3(130, 214, 255), C3(240, 252, 255)
+	shakeAt(x, z, 1.0, 0.35)
+	screenFlash(C3(200, 235, 255), 0.82, 0.3)
+	local fl = fxDisc(R * 1.6, x, 2, z, white, 0.05, NEON, 0.3)
+	tw(fl, 0.35, { Size = Vector3.new(0.2, R * 2.4, R * 2.4), Transparency = 1 })
+	Debris:AddItem(fl, 0.45)
+	ringFx(x, 0.6, z, R * 0.5, R * 2.3, ice, 0.5, 12)
+	ringFx(x, 0.7, z, R * 0.3, R * 1.6, white, 0.35, 7)
+	burst(x, 2, z, white, 46, 12, 36, 1.0, 1.0, ice)
+	-- ground frost
+	local field = fxDisc(R * 2, x, 0.32, z, ice, 0.7, NEON, 0.08)
+	local mist = fxPart(B, Vector3.new(R * 1.8, 0.3, R * 1.8), CFrame.new(x, 0.8, z), white, Enum.Material.SmoothPlastic, 1)
+	local em = Instance.new("ParticleEmitter")
+	em.Rate = 26
+	em.Color = ColorSequence.new(white, ice)
+	em.LightEmission = 0.8
+	em.LightInfluence = 0
+	em.Lifetime = NumberRange.new(1.2, 2)
+	em.Speed = NumberRange.new(0.5, 2)
+	em.SpreadAngle = Vector2.new(180, 180)
+	em.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.8), NumberSequenceKeypoint.new(0.5, 2.2), NumberSequenceKeypoint.new(1, 0) })
+	em.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(1, 1) })
+	pcall(function() em.Shape = Enum.ParticleEmitterShape.Box end)
+	em.Parent = mist
+	-- ice crystals burst out of the ground
+	local crystals = {}
+	for _ = 1, 26 do
+		local ang = math.random() * math.pi * 2
+		local rad = math.sqrt(math.random()) * R * 0.95
+		local cx, cz = x + math.cos(ang) * rad, z + math.sin(ang) * rad
+		local h = 3.5 + math.random() * 5.5
+		local w = 0.9 + math.random() * 0.8
+		local tilt = CFrame.Angles((math.random() - 0.5) * 0.7, math.random() * math.pi, (math.random() - 0.5) * 0.7)
+		local cr = fxPart(B, Vector3.new(w, 0.1, w), CFrame.new(cx, 0.1, cz) * tilt, ice, Enum.Material.Ice, 0.1)
+		local core = fxPart(B, Vector3.new(w * 0.4, 0.1, w * 0.4), CFrame.new(cx, 0.1, cz) * tilt, white, NEON, 0.2)
+		table.insert(crystals, { cr, core })
+		task.delay(math.random() * 0.12, function()
+			tw(cr, 0.2, { Size = Vector3.new(w, h, w), CFrame = CFrame.new(cx, h / 2, cz) * tilt }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+			tw(core, 0.2, { Size = Vector3.new(w * 0.4, h * 0.95, w * 0.4), CFrame = CFrame.new(cx, h / 2, cz) * tilt }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		end)
+	end
+	local life = 3.4
+	task.delay(life, function()
+		for _, c in ipairs(crystals) do
+			tw(c[1], 0.5, { Transparency = 1, Size = Vector3.new(0.1, 0.1, 0.1) })
+			tw(c[2], 0.5, { Transparency = 1 })
+			Debris:AddItem(c[1], 0.6)
+			Debris:AddItem(c[2], 0.6)
+		end
+		tw(field, 0.6, { Transparency = 1 })
+		em.Enabled = false
+		Debris:AddItem(field, 0.7)
+		Debris:AddItem(mist, 2.2)
+	end)
+end
+
+-- Z: Sunpiercer - charge
+H.BeamCharge = function(uid, dx, dz, charge, len)
+	local gold, white = C3(255, 214, 96), C3(255, 250, 225)
+	local pos0 = heroPos(uid)
+	if not pos0 then return end
+	local ox, oz = pos0.X, pos0.Z
+	local mid = Vector3.new(ox + dx * len / 2, 0.35, oz + dz * len / 2)
+	local look = Vector3.new(ox + dx * len, 0.35, oz + dz * len)
+	local tele = fxPart(B, Vector3.new(0.4, 0.05, len), CFrame.lookAt(mid, look), gold, NEON, 0.7)
+	tw(tele, charge, { Size = Vector3.new(8.4, 0.05, len), Transparency = 0.82 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	local edge1 = fxPart(B, Vector3.new(0.4, 0.06, len), CFrame.lookAt(mid, look) * CFrame.new(4.2, 0, 0), gold, NEON, 0.4)
+	local edge2 = fxPart(B, Vector3.new(0.4, 0.06, len), CFrame.lookAt(mid, look) * CFrame.new(-4.2, 0, 0), gold, NEON, 0.4)
+	local orb = fxPart(BALL, Vector3.new(0.5, 0.5, 0.5), CFrame.new(ox, 3, oz), white, NEON, 0)
+	local halo = fxPart(BALL, Vector3.new(1, 1, 1), CFrame.new(ox, 3, oz), gold, NEON, 0.6)
+	local light = Instance.new("PointLight")
+	light.Color = gold
+	light.Range = 30
+	light.Brightness = 2
+	light.Parent = orb
+	local nextRing = 0
+	animate(charge, function(al, t)
+		local p = heroPos(uid)
+		if p then
+			local c = CFrame.new(p.X + dx * 2.5, 3, p.Z + dz * 2.5)
+			local s = 0.8 + al * 5.5 + math.sin(t * 40) * 0.25
+			orb.Size = Vector3.new(s, s, s)
+			orb.CFrame = c
+			halo.Size = Vector3.new(s * 2, s * 2, s * 2)
+			halo.CFrame = c
+			light.Brightness = 2 + al * 4
+			if t >= nextRing then
+				nextRing = t + 0.14
+				ringFx(p.X, 0.8, p.Z, 18, 2, gold, 0.28, 6, 0.6, 0.0)
+				burst(p.X + dx * 2.5, 3, p.Z + dz * 2.5, white, 3, 6, 14, 0.5, 0.3, gold)
+			end
+		end
+		edge1.Transparency = 0.4 + 0.3 * math.sin(t * 30)
+		edge2.Transparency = edge1.Transparency
+	end, function()
+		tele:Destroy()
+		edge1:Destroy()
+		edge2:Destroy()
+		orb:Destroy()
+		halo:Destroy()
+	end)
+end
+
+H.Beam = function(ox, oz, dx, dz, len, width, dur)
+	local gold, white = C3(255, 205, 80), C3(255, 252, 235)
+	local start = Vector3.new(ox + dx * 2.5, 2.4, oz + dz * 2.5)
+	local fin = Vector3.new(ox + dx * len, 2.4, oz + dz * len)
+	local layers = {
+		segment(start, fin, width * 2.4, 1.4, C3(255, 160, 50), 0.5),
+		segment(start, fin, width * 1.5, 1.8, gold, 0.2),
+		segment(start, fin, width * 0.75, 2.2, white, 0),
+	}
+	local widths = { width * 2.4, width * 1.5, width * 0.75 }
+	local baseTr = { 0.5, 0.2, 0 }
+	local lenZ = layers[1].Size.Z
+	shake(2.4, 0.9)
+	screenFlash(C3(255, 240, 200), 0.5, 0.5)
+	-- sparks along the beam
+	for i = 1, 16 do
+		local f = i / 16
+		local px, pz = ox + dx * len * f, oz + dz * len * f
+		task.delay(f * 0.12, function()
+			burst(px, 2.4, pz, white, 8, 10, 36, 0.9, 0.55, gold, -dz, dx, 90)
+			burst(px, 2.4, pz, gold, 6, 10, 30, 0.8, 0.5, white, dz, -dx, 90)
+		end)
+	end
+	-- flare at the bow + ring at the end
+	local fl = fxDisc(7, ox + dx * 2.5, 2.4, oz + dz * 2.5, white, 0.05, NEON, 0.3)
+	tw(fl, 0.5, { Size = Vector3.new(0.3, 15, 15), Transparency = 1 })
+	Debris:AddItem(fl, 0.6)
+	ringFx(ox, 0.8, oz, 4, 22, gold, 0.5, 10)
+	ringFx(ox + dx * len, 0.8, oz + dz * len, 4, 26, white, 0.55, 10)
+	-- burn mark on the ground
+	local lowS = start - Vector3.new(0, 2.05, 0)
+	local lowF = fin - Vector3.new(0, 2.05, 0)
+	local scorch = fxPart(B, Vector3.new(width * 1.9, 0.06, lenZ), CFrame.lookAt((lowS + lowF) / 2, lowF), C3(40, 28, 16), Enum.Material.SmoothPlastic, 0.3)
+	tw(scorch, 2.4, { Transparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	Debris:AddItem(scorch, 2.5)
+	animate(dur, function(al, t)
+		local pulse = 1 + 0.07 * math.sin(t * 70)
+		local shrink = al < 0.6 and 1 or (1 - (al - 0.6) / 0.4)
+		for i, l in ipairs(layers) do
+			l.Size = Vector3.new(math.max(0.05, widths[i] * pulse * shrink), l.Size.Y, lenZ)
+			l.Transparency = baseTr[i] + (1 - shrink) * (1 - baseTr[i])
+		end
+	end, function()
+		for _, l in ipairs(layers) do l:Destroy() end
+	end)
+end
+
+-- ============================================================ MAGE
+-- Q: Chain Lightning. args: x1, z1, x2, z2, ...
+H.Chain = function(...)
+	local a = { ... }
+	local pts = {}
+	for i = 1, #a - 1, 2 do table.insert(pts, { a[i], a[i + 1] }) end
+	local blue, core = C3(120, 190, 255), C3(245, 250, 255)
+	local function bolt(ax, az, bx, bz, w)
+		local p0, p1 = Vector3.new(ax, 2.4, az), Vector3.new(bx, 2.4, bz)
+		local d = p1 - p0
+		local len = d.Magnitude
+		if len < 0.5 then return end
+		local u = d.Unit
+		local perp = Vector3.new(-u.Z, 0, u.X)
+		local n = math.clamp(math.floor(len / 3.2), 3, 9)
+		local list = { p0 }
+		for i = 1, n - 1 do
+			local mid = p0 + d * (i / n)
+			table.insert(list, mid + perp * (math.random() * 2 - 1) * math.min(2.4, len * 0.15))
+		end
+		table.insert(list, p1)
+		for i = 1, #list - 1 do
+			local o = segment(list[i], list[i + 1], w, 0.5, blue, 0.1)
+			local c = segment(list[i], list[i + 1], w * 0.4, 0.6, core, 0)
+			o.Size = o.Size + Vector3.new(0, 0, w * 0.6)
+			c.Size = c.Size + Vector3.new(0, 0, w * 0.6)
+			tw(o, 0.22, { Transparency = 1, Size = Vector3.new(0.05, 0.5, o.Size.Z) })
+			tw(c, 0.16, { Transparency = 1, Size = Vector3.new(0.05, 0.6, c.Size.Z) })
+			Debris:AddItem(o, 0.3)
+			Debris:AddItem(c, 0.3)
+		end
+	end
+	for i = 2, #pts do
+		local p0, p1 = pts[i - 1], pts[i]
+		task.delay((i - 2) * 0.07, function()
+			local w = i == 2 and 1.2 or 0.9
+			bolt(p0[1], p0[2], p1[1], p1[2], w)
+			task.delay(0.05, function() bolt(p0[1], p0[2], p1[1], p1[2], w * 0.7) end)
+			local fl = fxDisc(3.5, p1[1], 2.4, p1[2], core, 0.1, NEON, 0.2)
+			tw(fl, 0.25, { Size = Vector3.new(0.1, 8, 8), Transparency = 1 })
+			Debris:AddItem(fl, 0.3)
+			ringFx(p1[1], 1.0, p1[2], 2, 9, blue, 0.3, 6)
+			burst(p1[1], 2.4, p1[2], core, 12, 14, 34, 0.55, 0.35, blue)
+			shakeAt(p1[1], p1[2], 0.35, 0.12)
+		end)
+	end
+	local s = pts[1]
+	burst(s[1], 2.4, s[2], core, 8, 8, 20, 0.5, 0.25, blue)
+end
+
+-- E: Arcane Blink
+H.Blink = function(x0, z0, x1, z1)
+	local purple, magenta, white = C3(160, 96, 255), C3(220, 120, 255), C3(250, 240, 255)
+	shake(0.9, 0.3)
+	-- origin: implosion
+	ringFx(x0, 0.7, z0, 22, 2, purple, 0.3, 9, 0.0, 0.0)
+	ringFx(x0, 0.8, z0, 14, 20, magenta, 0.4, 8)
+	local d0 = fxDisc(8, x0, 2.2, z0, magenta, 0.2, NEON, 0.3)
+	tw(d0, 0.3, { Size = Vector3.new(0.1, 22, 22), Transparency = 1 })
+	Debris:AddItem(d0, 0.4)
+	burst(x0, 2.4, z0, white, 34, 16, 44, 0.9, 0.7, purple)
+	pillar(x0, z0, 3.5, 40, purple, 0.45, 0.3)
+	-- travel streak
+	local a, b = Vector3.new(x0, 2.4, z0), Vector3.new(x1, 2.4, z1)
+	local st = segment(a, b, 2.6, 0.3, purple, 0.35)
+	tw(st, 0.4, { Transparency = 1, Size = Vector3.new(0.1, 0.3, st.Size.Z) })
+	Debris:AddItem(st, 0.5)
+	local st2 = segment(a, b, 0.9, 0.35, white, 0.05)
+	tw(st2, 0.3, { Transparency = 1, Size = Vector3.new(0.05, 0.35, st2.Size.Z) })
+	Debris:AddItem(st2, 0.4)
+	for i = 1, 6 do
+		local f = i / 7
+		local p = a:Lerp(b, f)
+		task.delay(f * 0.15, function()
+			ringFx(p.X, 1.0, p.Z, 2, 7, magenta, 0.3, 5)
+			burst(p.X, 2.4, p.Z, magenta, 4, 6, 14, 0.5, 0.35, white)
+		end)
+	end
+	-- destination: arcane bloom
+	task.delay(0.1, function()
+		shakeAt(x1, z1, 1.0, 0.3)
+		ringFx(x1, 0.7, z1, 3, 22, white, 0.5, 9)
+		ringFx(x1, 0.8, z1, 2, 17, magenta, 0.4, 7)
+		local d1 = fxDisc(6, x1, 2.2, z1, white, 0.1, NEON, 0.3)
+		tw(d1, 0.35, { Size = Vector3.new(0.1, 21, 21), Transparency = 1 })
+		Debris:AddItem(d1, 0.45)
+		burst(x1, 2.4, z1, white, 40, 18, 48, 1.0, 0.8, magenta)
+		pillar(x1, z1, 4, 50, magenta, 0.5, 0.25)
+		for i = 1, 6 do
+			local ang = i * math.pi / 3
+			local g = fxPart(B, Vector3.new(0.7, 0.06, 5), CFrame.new(x1, 0.5, z1) * CFrame.Angles(0, ang, 0) * CFrame.new(0, 0, -5), purple, NEON, 0.1)
+			tw(g, 0.6, { Transparency = 1, CFrame = CFrame.new(x1, 0.5, z1) * CFrame.Angles(0, ang + 1.2, 0) * CFrame.new(0, 0, -11) })
+			Debris:AddItem(g, 0.7)
+		end
+	end)
+end
+
+-- Z: Meteor Storm (one call per meteor)
+H.Meteor = function(tx, tz, fall, R)
+	local orange, red, yellow = C3(255, 130, 40), C3(220, 50, 20), C3(255, 236, 160)
+	-- telegraph
+	local base = fxDisc(R * 2, tx, 0.3, tz, orange, 0.86, NEON, 0.05)
+	local fill = fxDisc(0.5, tx, 0.35, tz, red, 0.55, NEON, 0.05)
+	tw(fill, fall, { Size = Vector3.new(0.05, R * 2, R * 2) }, Enum.EasingStyle.Linear)
+	ringFx(tx, 0.4, tz, R * 2, R * 2, orange, fall, 8, 0.05, 0.25)
+	-- the meteor itself
+	local dir = Vector3.new(-0.3, -1, 0.38).Unit
+	local endPos = Vector3.new(tx, 3.5, tz)
+	local startPos = endPos - dir * 100
+	local halo = fxPart(BALL, Vector3.new(11, 11, 11), CFrame.new(startPos), red, NEON, 0.78)
+	local rock = fxPart(BALL, Vector3.new(6.6, 6.6, 6.6), CFrame.new(startPos), C3(86, 44, 30), Enum.Material.Slate, 0)
+	local lava = fxPart(BALL, Vector3.new(7.1, 7.1, 7.1), CFrame.new(startPos), orange, NEON, 0.35)
+	local hot = fxPart(BALL, Vector3.new(3.4, 3.4, 3.4), CFrame.new(startPos), yellow, NEON, 0)
+	addTrail(halo, C3(255, 190, 80), C3(150, 30, 10), 7, 0.55, 0)
+	addTrail(hot, yellow, orange, 3.4, 0.4, 0)
+	addEmbers(hot, yellow, red, 70, 1.4, 0.7, 10)
+	local pl = Instance.new("PointLight")
+	pl.Color = orange
+	pl.Range = 36
+	pl.Brightness = 3
+	pl.Parent = lava
+	animate(fall, function(al, t)
+		local a = al ^ 2.2
+		local pos = startPos:Lerp(endPos, a)
+		local rotc = CFrame.new(pos) * CFrame.Angles(t * 4, t * 3, 0)
+		halo.CFrame = CFrame.new(pos)
+		rock.CFrame = rotc
+		lava.CFrame = rotc
+		hot.CFrame = CFrame.new(pos)
+	end, function()
+		halo:Destroy()
+		rock:Destroy()
+		lava:Destroy()
+		hot:Destroy()
+		base:Destroy()
+		fill:Destroy()
+		-- impact
+		shakeAt(tx, tz, 1.5, 0.45, 90)
+		local fl = fxDisc(R * 1.0, tx, 2.4, tz, yellow, 0.0, NEON, 0.3)
+		tw(fl, 0.25, { Size = Vector3.new(0.3, R * 2.0, R * 2.0), Transparency = 1 })
+		Debris:AddItem(fl, 0.35)
+		local fb = fxDisc(R * 0.9, tx, 2.0, tz, orange, 0.15, NEON, 0.3)
+		tw(fb, 0.5, { Size = Vector3.new(0.3, R * 2.3, R * 2.3), Transparency = 1 })
+		Debris:AddItem(fb, 0.6)
+		ringFx(tx, 0.6, tz, R * 0.6, R * 2.5, orange, 0.5, 12)
+		ringFx(tx, 0.7, tz, R * 0.3, R * 1.6, yellow, 0.35, 7)
+		pillar(tx, tz, R * 0.5, 40, yellow, 0.35, 0.2)
+		burst(tx, 2.4, tz, yellow, 40, 18, 48, 1.5, 0.9, red)
+		burst(tx, 1.2, tz, C3(80, 56, 46), 14, 6, 18, 3.2, 1.2, C3(36, 28, 24))
+		local scorch = fxDisc(R * 1.7, tx, 0.27, tz, C3(34, 20, 12), 0.35, Enum.Material.SmoothPlastic, 0.1)
+		tw(scorch, 3.6, { Transparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		Debris:AddItem(scorch, 3.7)
+		for i = 1, 8 do
+			local ang = i * math.pi / 4 + math.random() * 0.4
+			local ch = fxDisc(1.2, tx, 1.5, tz, C3(110, 70, 50), 0, Enum.Material.Slate, 0.8)
+			tw(ch, 0.55, { Position = Vector3.new(tx + math.cos(ang) * R * 1.05, 1.5, tz + math.sin(ang) * R * 1.05), Transparency = 1 })
+			Debris:AddItem(ch, 0.65)
+		end
+		-- lingering flames
+		local fire = fxPart(B, Vector3.new(R * 1.4, 0.2, R * 1.4), CFrame.new(tx, 0.6, tz), orange, Enum.Material.SmoothPlastic, 1)
+		local em = addEmbers(fire, yellow, red, 36, 1.3, 0.9, 6)
+		pcall(function() em.Shape = Enum.ParticleEmitterShape.Box end)
+		task.delay(2.0, function() em.Enabled = false end)
+		Debris:AddItem(fire, 3)
+	end)
+end
+
+ToClient.OnClientEvent:Connect(function(name, ...)
+	local f = H[name]
+	if f then
+		local ok, err = pcall(f, ...)
+		if not ok then warn("[abilities] " .. tostring(name) .. ": " .. tostring(err)) end
+	end
+end)
+
+print("[AbilityClient] ready")
 ]]></ProtectedString>
 </Properties>
 </Item>
