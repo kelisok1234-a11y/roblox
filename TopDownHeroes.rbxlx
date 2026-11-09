@@ -11,11 +11,11 @@
 <bool name="GlobalShadows">false</bool>
 </Properties>
 </Item>
-<Item class="ReplicatedStorage" referent="RBX2">
+<Item class="ReplicatedStorage" referent="RBX5">
 <Properties>
 <string name="Name">ReplicatedStorage</string>
 </Properties>
-<Item class="ModuleScript" referent="RBX3">
+<Item class="ModuleScript" referent="RBX2">
 <Properties>
 <string name="Name">Config</string>
 <ProtectedString name="Source"><![CDATA[-- Shared configuration (ReplicatedStorage.Config)
@@ -51,15 +51,19 @@ Config.Stats = {
 	{ id = "Crit", name = "Crit Chance", per = 0.02, max = 25, fmt = "+2% crit chance per level (x2 damage)" },
 }
 
-function Config.weaponStats(cls, upg)
+function Config.weaponStats(cls, upg, wdef)
 	local c = Config.Classes[cls]
 	upg = upg or {}
 	local dl, sl, rl, cl = upg.Damage or 0, upg.Speed or 0, upg.Range or 0, upg.Crit or 0
+	local r = Config.Rarities[wdef and wdef.tier or 1]
+	local dm = wdef and wdef.dm or 1
 	return {
-		damage = c.damage * (1 + 0.10 * dl),
-		cooldown = math.max(0.12, c.cooldown / (1 + 0.05 * sl)),
-		range = c.range * (1 + 0.03 * rl),
-		crit = math.min(0.75, c.crit + 0.02 * cl),
+		damage = c.damage * (1 + 0.10 * dl) * r.dmg * dm,
+		cooldown = math.max(0.1, c.cooldown / (1 + 0.05 * sl) / r.asp),
+		range = c.range * (1 + 0.03 * rl) * r.rng,
+		crit = math.min(0.85, c.crit + 0.02 * cl + r.crit),
+		-- ability scaling comes from the rarity of the weapon
+		tier = wdef and wdef.tier or 1, rs = r.rs, am = r.am, cnt = r.cnt, cdr = r.cdr, wid = wdef and wdef.id,
 	}
 end
 
@@ -151,8 +155,178 @@ Config.Lobby = {
 		{ id = "gate3", kind = "gate", n = 3, x = 24, z = -60, r = 11 },
 		{ id = "gate4", kind = "gate", n = 4, x = 72, z = -60, r = 11 },
 		{ id = "upgrade", kind = "upgrade", x = 0, z = 72, r = 13 },
+		{ id = "chest", kind = "chest", x = -52, z = 64, r = 12 },
 	},
 }
+
+-- ============================================================ RARITIES / WEAPONS / CHESTS
+-- The rarer the weapon, the stronger the basic attack AND the bigger / stronger / cheaper its abilities:
+--   dmg  = basic damage multiplier          asp = attack speed multiplier       rng = range multiplier
+--   crit = extra crit chance                am  = ability damage multiplier     rs  = ability size (radius / length)
+--   cnt  = extra projectiles / jumps / meteors   cdr = ability cooldown multiplier   sell = coins for a duplicate
+Config.Rarities = {
+	{ id = "common", name = "Обычный", en = "Common", color = Color3.fromRGB(190, 194, 204),
+		dmg = 1.00, asp = 1.00, rng = 1.00, crit = 0.00, am = 1.00, rs = 1.00, cnt = 0, cdr = 1.00, sell = 20 },
+	{ id = "uncommon", name = "Необычный", en = "Uncommon", color = Color3.fromRGB(96, 214, 112),
+		dmg = 1.25, asp = 1.04, rng = 1.02, crit = 0.02, am = 1.10, rs = 1.06, cnt = 0, cdr = 0.97, sell = 60 },
+	{ id = "rare", name = "Редкий", en = "Rare", color = Color3.fromRGB(72, 152, 255),
+		dmg = 1.60, asp = 1.08, rng = 1.05, crit = 0.04, am = 1.22, rs = 1.14, cnt = 1, cdr = 0.94, sell = 180 },
+	{ id = "epic", name = "Эпический", en = "Epic", color = Color3.fromRGB(172, 92, 255),
+		dmg = 2.10, asp = 1.14, rng = 1.08, crit = 0.07, am = 1.38, rs = 1.25, cnt = 2, cdr = 0.90, sell = 600 },
+	{ id = "legendary", name = "Легендарный", en = "Legendary", color = Color3.fromRGB(255, 176, 40),
+		dmg = 2.80, asp = 1.20, rng = 1.12, crit = 0.10, am = 1.58, rs = 1.40, cnt = 3, cdr = 0.85, sell = 2000 },
+	{ id = "mythic", name = "Мифический", en = "Mythic", color = Color3.fromRGB(255, 64, 96),
+		dmg = 3.80, asp = 1.28, rng = 1.16, crit = 0.14, am = 1.85, rs = 1.58, cnt = 4, cdr = 0.80, sell = 7000 },
+	{ id = "secret", name = "Секретный", en = "Secret", color = Color3.fromRGB(255, 255, 255), rainbow = true,
+		dmg = 5.20, asp = 1.40, rng = 1.22, crit = 0.20, am = 2.20, rs = 1.85, cnt = 6, cdr = 0.72, sell = 20000 },
+}
+
+-- Chest prices are tied to what a run pays (coins per victory, Whispering Forest / Gloomrock Cave):
+--   Easy    ~  350 /  ~  850        Normal ~  800 / ~ 1900        Hard ~ 1400 / ~ 3500
+--   Insane  ~ 2500 / ~ 6000         Impossible ~ 4300 / ~ 10000
+-- Wooden chest = a bit less than ONE easy run, Iron = one easy cave run, Gold = one hard cave run,
+-- Void = one Impossible cave run.  x10 opening gets a discount.
+Config.Chests = {
+	{ id = "wood", name = "Деревянный сундук", price = 250, color = Color3.fromRGB(176, 122, 66),
+		desc = "Для старта: в основном обычное и необычное оружие.",
+		odds = { 55, 28, 13, 3.5, 0.45, 0.04, 0.01 } },
+	{ id = "iron", name = "Железный сундук", price = 900, color = Color3.fromRGB(150, 168, 190),
+		desc = "Хороший шанс на редкое и эпическое оружие.",
+		odds = { 25, 35, 27, 10, 2.6, 0.35, 0.05 } },
+	{ id = "gold", name = "Золотой сундук", price = 3000, color = Color3.fromRGB(255, 196, 60),
+		desc = "Без обычных предметов. Эпики и легендарки - обычное дело.",
+		odds = { 0, 20, 40, 28, 9, 2.6, 0.4 } },
+	{ id = "void", name = "Сундук Бездны", price = 9000, color = Color3.fromRGB(176, 90, 255),
+		desc = "Только редкое и выше. Лучший шанс на мифик и секретное.",
+		odds = { 0, 0, 25, 45, 22, 7, 1 } },
+}
+Config.MultiOpen = { 1, 5, 10 }
+Config.MultiDiscount = { [1] = 1, [5] = 0.95, [10] = 0.9 }
+
+Config.TypeInfo = {
+	Mage = { name = "Посохи", one = "Посох", icon = "🔮" },
+	Swordsman = { name = "Мечи", one = "Меч", icon = "⚔️" },
+	Archer = { name = "Луки", one = "Лук", icon = "🏹" },
+}
+Config.TypeOrder = { "Mage", "Swordsman", "Archer" }
+Config.StarterWeapons = { Swordsman = "sw_iron", Archer = "bw_hunter", Mage = "st_apprentice" }
+
+Config.ElementInfo = {
+	none = "—", nature = "Природа: удары замедляют", frost = "Лёд: удары замораживают и замедляют", fire = "Огонь: удары поджигают",
+	shock = "Шторм: шанс оглушить цель", void = "Бездна: вампиризм от ударов", holy = "Свет: удары наносят больше урона по раненым",
+	prism = "Призма: случайная стихия при каждом ударе",
+}
+
+-- all weapons (generated from rbx/build/weapons.py)
+Config.WeaponList = {
+--@WEAPONS_BEGIN
+	{ id = "sw_iron", name = "Iron Shortsword", type = "Swordsman", kind = "Sword", tier = 1, v = 1, dm = 1.00, elem = "none", ult = "Iron Verdict", rainbow = false,
+		c1 = Color3.fromRGB(176, 184, 198), c2 = Color3.fromRGB(120, 92, 60), c3 = Color3.fromRGB(210, 225, 245) },
+	{ id = "sw_falchion", name = "Militia Falchion", type = "Swordsman", kind = "Sword", tier = 1, v = 2, dm = 1.05, elem = "none", ult = "Militia Last Stand", rainbow = false,
+		c1 = Color3.fromRGB(160, 150, 140), c2 = Color3.fromRGB(90, 70, 50), c3 = Color3.fromRGB(255, 200, 150) },
+	{ id = "sw_emerald", name = "Emerald Edge", type = "Swordsman", kind = "Sword", tier = 2, v = 1, dm = 1.00, elem = "nature", ult = "Verdant Judgement", rainbow = false,
+		c1 = Color3.fromRGB(70, 200, 110), c2 = Color3.fromRGB(40, 120, 70), c3 = Color3.fromRGB(190, 255, 210) },
+	{ id = "sw_jade", name = "Jade Scimitar", type = "Swordsman", kind = "Sword", tier = 2, v = 2, dm = 1.05, elem = "nature", ult = "Jade Dragon Fall", rainbow = false,
+		c1 = Color3.fromRGB(60, 190, 170), c2 = Color3.fromRGB(30, 110, 100), c3 = Color3.fromRGB(180, 255, 240) },
+	{ id = "sw_frost", name = "Frostbrand", type = "Swordsman", kind = "Sword", tier = 3, v = 1, dm = 1.00, elem = "frost", ult = "Glacial Sentence", rainbow = false,
+		c1 = Color3.fromRGB(110, 200, 255), c2 = Color3.fromRGB(50, 110, 200), c3 = Color3.fromRGB(220, 245, 255) },
+	{ id = "sw_tide", name = "Tidecaller Saber", type = "Swordsman", kind = "Sword", tier = 3, v = 2, dm = 1.05, elem = "frost", ult = "Tsunami Verdict", rainbow = false,
+		c1 = Color3.fromRGB(40, 160, 230), c2 = Color3.fromRGB(20, 80, 160), c3 = Color3.fromRGB(170, 235, 255) },
+	{ id = "sw_void", name = "Voidfang", type = "Swordsman", kind = "Sword", tier = 4, v = 1, dm = 1.00, elem = "void", ult = "Void Execution", rainbow = false,
+		c1 = Color3.fromRGB(160, 80, 255), c2 = Color3.fromRGB(70, 30, 140), c3 = Color3.fromRGB(230, 190, 255) },
+	{ id = "sw_thunder", name = "Thunder Reaver", type = "Swordsman", kind = "Sword", tier = 4, v = 2, dm = 1.05, elem = "shock", ult = "Reaver Storm Wrath", rainbow = false,
+		c1 = Color3.fromRGB(120, 110, 255), c2 = Color3.fromRGB(255, 225, 80), c3 = Color3.fromRGB(240, 240, 255) },
+	{ id = "sw_solar", name = "Solar Excalibur", type = "Swordsman", kind = "Sword", tier = 5, v = 1, dm = 1.00, elem = "holy", ult = "Excalibur: Dawn Break", rainbow = false,
+		c1 = Color3.fromRGB(255, 200, 60), c2 = Color3.fromRGB(255, 245, 200), c3 = Color3.fromRGB(255, 250, 220) },
+	{ id = "sw_phoenix", name = "Phoenix Dawnblade", type = "Swordsman", kind = "Sword", tier = 5, v = 2, dm = 1.05, elem = "fire", ult = "Phoenix Rebirth", rainbow = false,
+		c1 = Color3.fromRGB(255, 120, 40), c2 = Color3.fromRGB(255, 210, 80), c3 = Color3.fromRGB(255, 235, 170) },
+	{ id = "sw_eclipse", name = "Abyssal Eclipse", type = "Swordsman", kind = "Sword", tier = 6, v = 1, dm = 1.00, elem = "void", ult = "Eclipse of the Abyss", rainbow = false,
+		c1 = Color3.fromRGB(255, 40, 80), c2 = Color3.fromRGB(30, 10, 40), c3 = Color3.fromRGB(255, 150, 190) },
+	{ id = "sw_reaper", name = "Infernal Reaper", type = "Swordsman", kind = "Sword", tier = 6, v = 2, dm = 1.05, elem = "fire", ult = "Reaper Inferno", rainbow = false,
+		c1 = Color3.fromRGB(255, 80, 20), c2 = Color3.fromRGB(40, 15, 10), c3 = Color3.fromRGB(255, 200, 90) },
+	{ id = "sw_prism", name = "Prismatic Singularity", type = "Swordsman", kind = "Sword", tier = 7, v = 1, dm = 1.10, elem = "prism", ult = "Singularity: End of Colors", rainbow = true,
+		c1 = Color3.fromRGB(255, 255, 255), c2 = Color3.fromRGB(255, 255, 255), c3 = Color3.fromRGB(255, 255, 255) },
+	{ id = "bw_hunter", name = "Hunter's Shortbow", type = "Archer", kind = "Bow", tier = 1, v = 1, dm = 1.00, elem = "none", ult = "Hunter's Volley", rainbow = false,
+		c1 = Color3.fromRGB(150, 100, 55), c2 = Color3.fromRGB(212, 168, 72), c3 = Color3.fromRGB(255, 240, 200) },
+	{ id = "bw_oak", name = "Oak Recurve", type = "Archer", kind = "Bow", tier = 1, v = 2, dm = 1.05, elem = "none", ult = "Oakheart Barrage", rainbow = false,
+		c1 = Color3.fromRGB(120, 90, 60), c2 = Color3.fromRGB(180, 170, 150), c3 = Color3.fromRGB(255, 230, 190) },
+	{ id = "bw_verdant", name = "Verdant Longbow", type = "Archer", kind = "Bow", tier = 2, v = 1, dm = 1.00, elem = "nature", ult = "Verdant Piercer", rainbow = false,
+		c1 = Color3.fromRGB(80, 200, 100), c2 = Color3.fromRGB(50, 130, 70), c3 = Color3.fromRGB(200, 255, 200) },
+	{ id = "bw_sylvan", name = "Sylvan Reflex", type = "Archer", kind = "Bow", tier = 2, v = 2, dm = 1.05, elem = "nature", ult = "Sylvan Wrath", rainbow = false,
+		c1 = Color3.fromRGB(130, 210, 90), c2 = Color3.fromRGB(60, 120, 50), c3 = Color3.fromRGB(230, 255, 190) },
+	{ id = "bw_glacier", name = "Glacier Bow", type = "Archer", kind = "Bow", tier = 3, v = 1, dm = 1.00, elem = "frost", ult = "Glacial Lance", rainbow = false,
+		c1 = Color3.fromRGB(120, 210, 255), c2 = Color3.fromRGB(60, 120, 200), c3 = Color3.fromRGB(230, 250, 255) },
+	{ id = "bw_gale", name = "Azure Gale", type = "Archer", kind = "Bow", tier = 3, v = 2, dm = 1.05, elem = "frost", ult = "Gale Force Beam", rainbow = false,
+		c1 = Color3.fromRGB(60, 170, 240), c2 = Color3.fromRGB(200, 240, 255), c3 = Color3.fromRGB(210, 245, 255) },
+	{ id = "bw_storm", name = "Stormcaller", type = "Archer", kind = "Bow", tier = 4, v = 1, dm = 1.00, elem = "shock", ult = "Tempest Lance", rainbow = false,
+		c1 = Color3.fromRGB(140, 120, 255), c2 = Color3.fromRGB(255, 230, 90), c3 = Color3.fromRGB(245, 245, 255) },
+	{ id = "bw_night", name = "Nightshade Arc", type = "Archer", kind = "Bow", tier = 4, v = 2, dm = 1.05, elem = "void", ult = "Nightfall Beam", rainbow = false,
+		c1 = Color3.fromRGB(190, 70, 230), c2 = Color3.fromRGB(60, 20, 90), c3 = Color3.fromRGB(240, 170, 255) },
+	{ id = "bw_dawn", name = "Dawn Piercer", type = "Archer", kind = "Bow", tier = 5, v = 1, dm = 1.00, elem = "holy", ult = "Radiant End", rainbow = false,
+		c1 = Color3.fromRGB(255, 210, 70), c2 = Color3.fromRGB(255, 250, 210), c3 = Color3.fromRGB(255, 252, 230) },
+	{ id = "bw_ember", name = "Emberwing", type = "Archer", kind = "Bow", tier = 5, v = 2, dm = 1.05, elem = "fire", ult = "Emberwing Cataclysm", rainbow = false,
+		c1 = Color3.fromRGB(255, 110, 30), c2 = Color3.fromRGB(255, 200, 60), c3 = Color3.fromRGB(255, 230, 150) },
+	{ id = "bw_phoenix", name = "Phoenix Wing", type = "Archer", kind = "Bow", tier = 6, v = 1, dm = 1.00, elem = "fire", ult = "Phoenix Ascension", rainbow = false,
+		c1 = Color3.fromRGB(255, 70, 70), c2 = Color3.fromRGB(255, 190, 60), c3 = Color3.fromRGB(255, 200, 170) },
+	{ id = "bw_blood", name = "Bloodmoon Harbinger", type = "Archer", kind = "Bow", tier = 6, v = 2, dm = 1.05, elem = "void", ult = "Bloodmoon Requiem", rainbow = false,
+		c1 = Color3.fromRGB(230, 20, 60), c2 = Color3.fromRGB(30, 5, 20), c3 = Color3.fromRGB(255, 140, 170) },
+	{ id = "bw_nova", name = "Cosmic Nova", type = "Archer", kind = "Bow", tier = 7, v = 1, dm = 1.10, elem = "prism", ult = "Nova: Birth of a Star", rainbow = true,
+		c1 = Color3.fromRGB(255, 255, 255), c2 = Color3.fromRGB(255, 255, 255), c3 = Color3.fromRGB(255, 255, 255) },
+	{ id = "st_apprentice", name = "Apprentice Staff", type = "Mage", kind = "Staff", tier = 1, v = 1, dm = 1.00, elem = "none", ult = "Apprentice Spark", rainbow = false,
+		c1 = Color3.fromRGB(120, 80, 50), c2 = Color3.fromRGB(212, 168, 72), c3 = Color3.fromRGB(120, 180, 245) },
+	{ id = "st_branch", name = "Gnarled Branch", type = "Mage", kind = "Staff", tier = 1, v = 2, dm = 1.05, elem = "none", ult = "Wild Surge", rainbow = false,
+		c1 = Color3.fromRGB(100, 75, 50), c2 = Color3.fromRGB(90, 140, 70), c3 = Color3.fromRGB(170, 230, 150) },
+	{ id = "st_jade", name = "Jade Rod", type = "Mage", kind = "Staff", tier = 2, v = 1, dm = 1.00, elem = "nature", ult = "Jade Cataclysm", rainbow = false,
+		c1 = Color3.fromRGB(60, 190, 130), c2 = Color3.fromRGB(30, 110, 80), c3 = Color3.fromRGB(180, 255, 220) },
+	{ id = "st_crook", name = "Verdant Crook", type = "Mage", kind = "Staff", tier = 2, v = 2, dm = 1.05, elem = "nature", ult = "Overgrowth Storm", rainbow = false,
+		c1 = Color3.fromRGB(110, 200, 70), c2 = Color3.fromRGB(80, 60, 40), c3 = Color3.fromRGB(210, 255, 160) },
+	{ id = "st_aqua", name = "Aqua Scepter", type = "Mage", kind = "Staff", tier = 3, v = 1, dm = 1.00, elem = "frost", ult = "Aqua Deluge", rainbow = false,
+		c1 = Color3.fromRGB(60, 190, 255), c2 = Color3.fromRGB(30, 100, 180), c3 = Color3.fromRGB(200, 245, 255) },
+	{ id = "st_prism", name = "Cyan Prism Staff", type = "Mage", kind = "Staff", tier = 3, v = 2, dm = 1.05, elem = "frost", ult = "Prism Meteorfall", rainbow = false,
+		c1 = Color3.fromRGB(80, 230, 230), c2 = Color3.fromRGB(40, 120, 160), c3 = Color3.fromRGB(210, 255, 255) },
+	{ id = "st_amethyst", name = "Amethyst Arcana", type = "Mage", kind = "Staff", tier = 4, v = 1, dm = 1.00, elem = "void", ult = "Arcana Collapse", rainbow = false,
+		c1 = Color3.fromRGB(170, 90, 255), c2 = Color3.fromRGB(90, 40, 160), c3 = Color3.fromRGB(235, 200, 255) },
+	{ id = "st_spire", name = "Stormspire", type = "Mage", kind = "Staff", tier = 4, v = 2, dm = 1.05, elem = "shock", ult = "Stormspire Tempest", rainbow = false,
+		c1 = Color3.fromRGB(110, 140, 255), c2 = Color3.fromRGB(255, 230, 100), c3 = Color3.fromRGB(235, 240, 255) },
+	{ id = "st_sunfire", name = "Sunfire Scepter", type = "Mage", kind = "Staff", tier = 5, v = 1, dm = 1.00, elem = "fire", ult = "Sunfire Armageddon", rainbow = false,
+		c1 = Color3.fromRGB(255, 180, 40), c2 = Color3.fromRGB(255, 240, 170), c3 = Color3.fromRGB(255, 245, 200) },
+	{ id = "st_lantern", name = "Astral Lantern", type = "Mage", kind = "Staff", tier = 5, v = 2, dm = 1.05, elem = "holy", ult = "Astral Judgement", rainbow = false,
+		c1 = Color3.fromRGB(255, 230, 120), c2 = Color3.fromRGB(120, 150, 255), c3 = Color3.fromRGB(255, 250, 220) },
+	{ id = "st_nether", name = "Nether Crown", type = "Mage", kind = "Staff", tier = 6, v = 1, dm = 1.00, elem = "void", ult = "Nether Apocalypse", rainbow = false,
+		c1 = Color3.fromRGB(200, 40, 255), c2 = Color3.fromRGB(20, 5, 35), c3 = Color3.fromRGB(255, 170, 255) },
+	{ id = "st_pyre", name = "Hellfire Pyre", type = "Mage", kind = "Staff", tier = 6, v = 2, dm = 1.05, elem = "fire", ult = "Hellfire Ragnarok", rainbow = false,
+		c1 = Color3.fromRGB(255, 60, 30), c2 = Color3.fromRGB(50, 10, 10), c3 = Color3.fromRGB(255, 190, 60) },
+	{ id = "st_galaxy", name = "Galaxy Weaver", type = "Mage", kind = "Staff", tier = 7, v = 1, dm = 1.10, elem = "prism", ult = "Galaxy: Heat Death", rainbow = true,
+		c1 = Color3.fromRGB(255, 255, 255), c2 = Color3.fromRGB(255, 255, 255), c3 = Color3.fromRGB(255, 255, 255) },
+--@WEAPONS_END
+}
+Config.Weapons = {}
+Config.ByType = { Swordsman = {}, Archer = {}, Mage = {} }
+for _, w in ipairs(Config.WeaponList) do
+	Config.Weapons[w.id] = w
+	table.insert(Config.ByType[w.type], w)
+end
+function Config.rarityOf(w) return Config.Rarities[w and w.tier or 1] end
+
+-- weighted random weapon of a given type from a chest (returns weapon def)
+function Config.rollWeapon(chest, typ, rng)
+	local total = 0
+	for _, o in ipairs(chest.odds) do total = total + o end
+	local r = rng:NextNumber() * total
+	local tier = #chest.odds
+	for i, o in ipairs(chest.odds) do
+		r = r - o
+		if r <= 0 and o > 0 then tier = i break end
+	end
+	local pool = {}
+	for _, w in ipairs(Config.ByType[typ]) do
+		if w.tier == tier then table.insert(pool, w) end
+	end
+	return pool[rng:NextInteger(1, #pool)]
+end
+
+-- [TESTAREA] set enabled = false (or delete the TestArea scripts) to remove the weapon test place
+Config.TestArea = { enabled = true }
 
 -- ============================================================ ABILITIES (Q / E / Z)
 -- Q and E are normal skills, Z is the ULTIMATE of every weapon.
@@ -189,12 +363,762 @@ return Config
 ]]></ProtectedString>
 </Properties>
 </Item>
+<Item class="ModuleScript" referent="RBX3">
+<Properties>
+<string name="Name">Theme</string>
+<ProtectedString name="Source"><![CDATA[-- Theme (ReplicatedStorage.Theme): recolours ability / attack VFX with the colours of the weapon that is being used.
+-- The server sends a "Theme" event (weapon id) right before every attack / ability, clients call Theme.set(id).
+local RS = game:GetService("ReplicatedStorage")
+local Config = require(RS:WaitForChild("Config"))
+
+local Theme = {}
+local cur = nil
+local WHITE = Color3.new(1, 1, 1)
+
+function Theme.set(wid)
+	cur = wid and Config.Weapons[wid] or nil
+end
+
+function Theme.current()
+	return cur
+end
+
+-- main colour of a weapon (animated for rainbow weapons)
+function Theme.main(w)
+	w = w or cur
+	if not w then return WHITE end
+	if w.rainbow then return Color3.fromHSV((os.clock() * 0.35) % 1, 0.8, 1) end
+	return w.c1
+end
+
+function Theme.accent(w)
+	w = w or cur
+	if not w then return WHITE end
+	if w.rainbow then return Color3.fromHSV((os.clock() * 0.35 + 0.4) % 1, 0.8, 1) end
+	return w.c2
+end
+
+function Theme.glow(w)
+	w = w or cur
+	if not w then return WHITE end
+	if w.rainbow then return Color3.fromHSV((os.clock() * 0.35 + 0.7) % 1, 0.3, 1) end
+	return w.c3
+end
+
+-- maps any "class coloured" VFX colour onto the current weapon palette (keeps brightness / neutrals)
+function Theme.tint(c)
+	local w = cur
+	if not w or w.tier <= 1 and w.elem == "none" and not w.rainbow then
+		return c
+	end
+	local h, s, v = c:ToHSV()
+	if s < 0.16 then
+		-- white / grey stays white-ish, bright cores get a hint of the glow colour
+		if v > 0.55 then return c:Lerp(Theme.glow(w), 0.22) end
+		return c
+	end
+	if w.rainbow then
+		return Color3.fromHSV(((os.clock() * 0.35) + h * 1.7) % 1, math.clamp(s * 0.95, 0.25, 0.9), math.clamp(v + 0.05, 0.3, 1))
+	end
+	local t = (h * 7) % 1
+	local base = w.c1:Lerp(w.c2, t * 0.8)
+	if s < 0.55 then base = base:Lerp(w.c3, 0.65) end
+	local bh, bs = base:ToHSV()
+	return Color3.fromHSV(bh, math.clamp(bs, 0.12, 1), math.clamp(v * 1.05, 0.28, 1))
+end
+
+return Theme
+]]></ProtectedString>
+</Properties>
 </Item>
-<Item class="ServerScriptService" referent="RBX4">
+<Item class="ModuleScript" referent="RBX4">
+<Properties>
+<string name="Name">WeaponModels</string>
+<ProtectedString name="Source"><![CDATA[-- WeaponModels (ReplicatedStorage.WeaponModels): procedural, top-down "sprite" models of every weapon.
+-- Used by the server (hero sprite) and by the client (inventory / chest previews in ViewportFrames).
+-- The richer the rarity (w.tier 1..7) the more detail, glow, particles and floating pieces a weapon gets.
+local TweenService = game:GetService("TweenService")
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
+
+local WM = {}
+
+local NEON = Enum.Material.Neon
+local METAL = Enum.Material.Metal
+local WOOD = Enum.Material.Wood
+local FABRIC = Enum.Material.Fabric
+local SMOOTH = Enum.Material.SmoothPlastic
+local BLK, CYL = Enum.PartType.Block, Enum.PartType.Cylinder
+local RB = "RB" -- rainbow colour marker
+
+local function C(r, g, b) return Color3.fromRGB(r, g, b) end
+local function darker(c, m)
+	if c == RB then return c end
+	return Color3.new(c.R * m, c.G * m, c.B * m)
+end
+local function lighter(c, m)
+	if c == RB then return c end
+	return c:Lerp(Color3.new(1, 1, 1), m)
+end
+local function rot(vx, vz) return math.atan2(vx, vz) end
+
+local RAINBOW_KEYS = {}
+for i = 0, 6 do
+	RAINBOW_KEYS[#RAINBOW_KEYS + 1] = ColorSequenceKeypoint.new(i / 6, Color3.fromHSV((i / 6) % 1, 0.75, 1))
+end
+local function cseq(a, b)
+	if a == RB or b == RB then return ColorSequence.new(RAINBOW_KEYS) end
+	return ColorSequence.new(a, b or a)
+end
+
+local rbCounter = 0
+local function mk(parent, shape, size, cf, color, mat, trans, anchored)
+	local p = Instance.new("Part")
+	p.Shape = shape
+	p.Size = size
+	p.CFrame = cf
+	if color == RB then
+		rbCounter = rbCounter + 1
+		local off = (rbCounter * 0.083) % 1
+		p.Color = Color3.fromHSV(off, 0.75, 1)
+		p:SetAttribute("rb", off)
+		CollectionService:AddTag(p, "RainbowPart")
+	else
+		p.Color = color
+	end
+	p.Material = mat or SMOOTH
+	p.Transparency = trans or 0
+	p.Anchored = anchored and true or false
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.Massless = true
+	p.CastShadow = false
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Parent = parent
+	return p
+end
+
+-- builder bound to a pivot part (forward = -z, local units scaled by k)
+local function newS(pivot, parent, k, anchored)
+	local S = {}
+	local function place(p)
+		if not anchored then
+			local w = Instance.new("WeldConstraint")
+			w.Part0 = pivot
+			w.Part1 = p
+			w.Parent = p
+		end
+		return p
+	end
+	function S.disc(d, color, x, z, y, mat, trans, thick)
+		local cf = pivot.CFrame * CFrame.new(x * k, y * k, z * k) * CFrame.Angles(0, 0, math.pi / 2)
+		return place(mk(parent, CYL, Vector3.new((thick or 0.3) * k, d * k, d * k), cf, color, mat, trans, anchored))
+	end
+	function S.block(sx, sz, color, x, z, y, r, mat, trans, sy)
+		local cf = pivot.CFrame * CFrame.new(x * k, y * k, z * k) * CFrame.Angles(0, r or 0, 0)
+		return place(mk(parent, BLK, Vector3.new(sx * k, (sy or 0.3) * k, sz * k), cf, color, mat, trans, anchored))
+	end
+	-- ring made of dashes
+	function S.ring(radius, n, wid, color, cx, cz, y, mat, trans, thick, lenMul)
+		local len = (2 * math.pi * radius / n) * (lenMul or 1.15)
+		for i = 0, n - 1 do
+			local a = i / n * math.pi * 2
+			local tx, tz = -math.sin(a), math.cos(a)
+			S.block(wid, len, color, cx + math.cos(a) * radius, cz + math.sin(a) * radius, y, rot(tx, tz), mat, trans, thick or 0.1)
+		end
+	end
+	-- spokes radiating from a centre
+	function S.rays(n, r0, r1, wid, color, cx, cz, y, mat, trans, thick, off)
+		for i = 0, n - 1 do
+			local a = (i / n) * math.pi * 2 + (off or 0)
+			local vx, vz = math.cos(a), math.sin(a)
+			local mid = (r0 + r1) / 2
+			S.block(wid, r1 - r0, color, cx + vx * mid, cz + vz * mid, y, rot(vx, vz), mat, trans, thick or 0.1)
+		end
+	end
+	-- polyline of blocks (3 layers) between points
+	function S.path(pts, widths, colors, ys, mats, thick)
+		for i = 2, #pts do
+			local a, b = pts[i - 1], pts[i]
+			local v = b - a
+			local len = v.Magnitude
+			local mid = (a + b) / 2
+			local r = rot(v.X, v.Y)
+			for li = 1, #widths do
+				S.block(widths[li], len + 0.12, colors[li], mid.X, mid.Y, ys[li], r, mats[li], 0, thick and thick[li] or 0.3)
+			end
+		end
+	end
+	return S
+end
+
+local function light(part, color, range, brightness)
+	local l = Instance.new("PointLight")
+	l.Color = color == RB and Color3.new(1, 1, 1) or color
+	l.Range = range
+	l.Brightness = brightness or 1
+	l.Shadows = false
+	l.Parent = part
+	return l
+end
+
+local function emitter(part, c0, c1, rate, size, life, speed, spread)
+	local em = Instance.new("ParticleEmitter")
+	em.Rate = rate
+	em.Lifetime = NumberRange.new(life * 0.6, life)
+	em.Speed = NumberRange.new(speed * 0.3, speed)
+	em.SpreadAngle = Vector2.new(spread or 180, spread or 180)
+	em.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, size), NumberSequenceKeypoint.new(1, 0) })
+	em.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.15), NumberSequenceKeypoint.new(1, 1) })
+	em.Color = cseq(c0, c1)
+	em.LightEmission = 1
+	em.LightInfluence = 0
+	em.Parent = part
+	return em
+end
+
+local function attach(part, x, y, z, k)
+	local a = Instance.new("Attachment")
+	a.Position = Vector3.new(x * k, y * k, z * k)
+	a.Parent = part
+	return a
+end
+
+local function mkTrail(part, a0, a1, c0, c1, life)
+	local t = Instance.new("Trail")
+	t.Attachment0 = a0
+	t.Attachment1 = a1
+	t.Lifetime = life or 0.2
+	t.Color = cseq(c0, c1)
+	t.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.25),
+		NumberSequenceKeypoint.new(0.5, 0.6),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	t.LightEmission = 0.8
+	t.LightInfluence = 0
+	t.MinLength = 0.05
+	t.FaceCamera = false
+	t.Enabled = false
+	t.Parent = part
+	return t
+end
+
+local function palette(w)
+	if w.rainbow then
+		return { main = RB, acc = RB, glow = RB, dark = C(22, 18, 34), steel = C(40, 38, 56) }
+	end
+	return { main = w.c1, acc = w.c2, glow = w.c3, dark = darker(w.c2, 0.45), steel = w.tier <= 2 and C(168, 176, 190) or darker(w.c1, 0.55) }
+end
+
+-- ============================================================================ SWORD
+local function sword(S, w, P, out, k)
+	local t, v = w.tier, w.v
+	local leather = t <= 2 and C(84, 54, 34) or darker(P.acc, 0.55)
+	local metalCol = (t <= 2) and C(212, 168, 72) or P.acc
+	if t == 1 then metalCol = (v == 1) and C(190, 150, 70) or C(150, 150, 156) end
+	local L = 4.6 + 0.3 * t
+	local w0 = 0.95 + 0.07 * t
+	local bladeCol = (t <= 2) and lighter(P.main, 0.12) or P.main
+	if t == 6 and not w.rainbow then bladeCol = darker(P.main, 0.28) end
+	if w.rainbow then bladeCol = RB end
+	local faceCol = (t == 6 and not w.rainbow) and darker(P.main, 0.18) or lighter(P.main, 0.5)
+	if t == 1 then bladeCol, faceCol = (v == 1) and C(168, 180, 198) or C(150, 146, 140), (v == 1) and C(222, 230, 241) or C(205, 200, 195) end
+	local glowMat = t >= 3 and NEON or METAL
+
+	-- grip + pommel
+	S.block(0.42, 1.7, leather, 0, 0.25, 0.02, 0, FABRIC, 0, 0.3)
+	for i = 0, 3 do S.block(0.5, 0.12, darker(leather, 0.6), 0, -0.4 + i * 0.4, 0.04, 0, FABRIC, 0, 0.3) end
+	S.disc(0.82 + 0.05 * t, darker(metalCol, 0.68), 0, 1.25, 0.02, METAL, 0, 0.36)
+	S.disc(0.46 + 0.04 * t, metalCol, 0, 1.25, 0.05, METAL, 0, 0.4)
+	if t >= 4 then S.disc(0.3, P.glow, 0, 1.25, 0.12, NEON, 0.05, 0.12) end
+
+	-- guard
+	local gz = -0.75
+	if v == 1 then
+		local gw = 2.6 + 0.14 * t
+		S.block(gw, 0.54, darker(metalCol, 0.68), 0, gz, 0.06, 0, METAL, 0, 0.3)
+		S.block(gw - 0.4, 0.3, metalCol, 0, gz, 0.1, 0, METAL, 0, 0.32)
+		for _, sx in ipairs({ -1, 1 }) do
+			S.disc(0.66, darker(metalCol, 0.68), sx * gw / 2, gz, 0.06, METAL, 0, 0.34)
+			S.disc(0.38, metalCol, sx * gw / 2, gz, 0.1, METAL, 0, 0.38)
+			if t >= 3 then -- horns curving toward the tip
+				S.block(0.34, 1.3 + 0.1 * t, metalCol, sx * (gw / 2 + 0.25), gz - 0.6, 0.08, sx * -0.35, METAL, 0, 0.3)
+			end
+		end
+	else
+		local d = 1.9 + 0.1 * t
+		S.disc(d, darker(metalCol, 0.62), 0, gz, 0.05, METAL, 0, 0.34)
+		S.disc(d - 0.4, metalCol, 0, gz, 0.09, METAL, 0, 0.36)
+		S.disc(d - 1.0, darker(metalCol, 0.5), 0, gz, 0.12, METAL, 0, 0.36)
+		if t >= 3 then
+			for i = 0, 3 do
+				local a = i * math.pi / 2 + math.pi / 4
+				S.block(0.34, 1.0, metalCol, math.cos(a) * d * 0.55, gz + math.sin(a) * d * 0.55, 0.1, rot(math.cos(a), math.sin(a)), METAL, 0, 0.3)
+			end
+		end
+	end
+	if t >= 5 then -- wings of the guard
+		for _, sx in ipairs({ -1, 1 }) do
+			for i = 1, 3 do
+				local len = 1.2 + 0.45 * i + (t - 5) * 0.3
+				S.block(0.3, len, (i == 2) and P.glow or P.main, sx * (1.5 + i * 0.5), gz + 0.1 - i * 0.12, 0.14 + i * 0.01, sx * (-0.25 - i * 0.28), NEON, 0.12, 0.1)
+			end
+		end
+	end
+	local gem = S.disc(0.5 + 0.06 * t, (t >= 2) and P.glow or C(186, 52, 66), 0, gz, 0.26, (t >= 2) and NEON or SMOOTH, 0, 0.16)
+	S.disc(0.16 + 0.02 * t, C(255, 255, 255), 0, gz - 0.06, 0.36, NEON, 0.15, 0.06)
+	if t >= 4 then light(gem, P.glow, 8 + t * 2, 0.9 + t * 0.12) end
+
+	-- blade
+	local z0 = gz - 0.2
+	local edge
+	if v == 1 then
+		local Lb = L * 0.88
+		local cz = z0 - Lb / 2
+		edge = S.block(w0, Lb, bladeCol, 0, cz, 0.05, 0, METAL, 0, 0.2)
+		S.block(w0 * 0.64, Lb - 0.3, faceCol, 0, cz, 0.1, 0, METAL, 0, 0.2)
+		S.block(w0 * 0.15, Lb * 0.78, (t >= 3) and P.glow or C(118, 132, 156), 0, cz - 0.1, 0.18, 0, glowMat, 0, 0.08)
+		S.block(0.06, Lb - 0.4, C(255, 255, 255), w0 * 0.28, cz, 0.2, 0, METAL, 0, 0.06)
+		S.block(0.06, Lb - 0.4, darker(faceCol, 0.7), -w0 * 0.28, cz, 0.2, 0, METAL, 0, 0.06)
+		local tz = z0 - Lb - w0 * 0.12
+		S.block(w0 * 0.72, w0 * 0.72, bladeCol, 0, tz, 0.05, math.pi / 4, METAL, 0, 0.2)
+		S.block(w0 * 0.44, w0 * 0.44, faceCol, 0, tz, 0.1, math.pi / 4, METAL, 0, 0.2)
+		out.tipZ = tz - w0 * 0.4
+		out.bladeLen = Lb
+		out.bladeCz = cz
+		out.bladeW = w0
+		out.bladeX = function() return 0 end
+	else
+		local N, bend = 9, 1.5 + 0.1 * t
+		local pts = {}
+		for i = 0, N do
+			local f = i / N
+			pts[#pts + 1] = Vector2.new(bend * f * f, z0 - L * f)
+		end
+		local function wAt(i) return w0 * (1 - 0.62 * (i / N)) end
+		for i = 2, #pts do
+			local a, b = pts[i - 1], pts[i]
+			local vv = b - a
+			local mid = (a + b) / 2
+			local r = rot(vv.X, vv.Y)
+			local wi = wAt(i - 1)
+			local seg = S.block(wi, vv.Magnitude + 0.16, bladeCol, mid.X, mid.Y, 0.05, r, METAL, 0, 0.2)
+			if i == 5 then edge = seg end
+			S.block(wi * 0.6, vv.Magnitude + 0.1, faceCol, mid.X, mid.Y, 0.1, r, METAL, 0, 0.2)
+			S.block(wi * 0.14, vv.Magnitude + 0.1, (t >= 3) and P.glow or C(118, 132, 156), mid.X - wi * 0.12, mid.Y, 0.18, r, glowMat, 0, 0.08)
+		end
+		local last = pts[#pts]
+		S.block(0.5, 0.5, bladeCol, last.X, last.Y - 0.1, 0.05, math.pi / 4, METAL, 0, 0.2)
+		out.tipZ = last.Y - 0.4
+		out.bladeLen = L
+		out.bladeCz = z0 - L / 2
+		out.bladeW = w0
+		out.bladeX = function(f) return bend * f * f end
+	end
+
+	-- rarity decorations along the blade ---------------------------------------------
+	local cz, Lb, bx = out.bladeCz, out.bladeLen, out.bladeX
+	if t >= 3 then -- rune glints
+		for i = 1, 3 do
+			local f = i / 4.2
+			S.block(w0 * 0.34, 0.34, P.glow, bx(f) + 0.0, z0 - Lb * f, 0.24, v == 2 and 0.2 or 0, NEON, 0.2, 0.05)
+		end
+	end
+	if t >= 4 then -- jagged teeth
+		for i = 1, 4 + (t - 4) do
+			local f = i / (6 + (t - 4))
+			for _, sx in ipairs({ -1, 1 }) do
+				if v == 1 or sx == 1 then
+					S.block(0.34, 0.5, (t == 6) and P.main or P.glow, bx(f) + sx * (w0 / 2 + 0.12), z0 - Lb * f, 0.12, sx * 0.7, NEON, 0.15, 0.1)
+				end
+			end
+		end
+	end
+	if t >= 5 then -- glowing aura sheet under the blade + floating shards
+		S.block(w0 * 2.1, Lb * 1.08, P.glow, bx(0.5), cz, 0.02, 0, NEON, 0.84, 0.05)
+		S.block(w0 * 3.0, Lb * 0.9, P.main, bx(0.5), cz, 0.01, 0, NEON, 0.92, 0.05)
+		for i = 1, 3 do
+			local f = i / 3.6
+			for _, sx in ipairs({ -1, 1 }) do
+				S.block(0.36, 0.95 + 0.1 * i, (i % 2 == 0) and P.glow or P.main, bx(f) + sx * (w0 + 0.75 + 0.15 * i), z0 - Lb * f - 0.2, 0.2, sx * 0.4, NEON, 0.1, 0.1)
+			end
+		end
+	end
+	if t >= 6 then -- cracks of light
+		for i = 1, 6 do
+			local f = i / 7
+			S.block(w0 * 0.74, 0.14, P.glow, bx(f), z0 - Lb * f, 0.26, (i % 2 == 0 and 0.55 or -0.55), NEON, 0.1, 0.05)
+		end
+		S.disc(w0 * 2.6, P.main, bx(0.12), z0 - Lb * 0.12, 0.03, NEON, 0.86, 0.05)
+	end
+	if t >= 7 then -- orbiting shards
+		for i = 0, 7 do
+			local a = i / 8 * math.pi * 2
+			S.block(0.3, 0.8, RB, bx(0.5) + math.cos(a) * (w0 + 2.0), cz + math.sin(a) * (Lb * 0.55), 0.3, a, NEON, 0.05, 0.1)
+		end
+		S.disc(2.6, RB, bx(1), out.tipZ + 0.2, 0.05, NEON, 0.8, 0.06)
+	end
+
+	-- particles / light on the blade
+	if t >= 2 and edge then
+		local em = emitter(edge, P.glow, P.main, 2 + t * 3, 0.32 + 0.05 * t, 0.9 + 0.08 * t, 1.2 + 0.2 * t)
+		em.Rate = 2 + t * 3
+		out.emitter = em
+	end
+	if t >= 5 and edge then light(edge, P.glow, 12 + t * 2, 1.2) end
+	local tip = edge
+	if tip then
+		local a0 = attach(tip, 0, 0, -Lb * 0.5, k)
+		local a1 = attach(tip, 0, 0, Lb * 0.1, k)
+		out.trail = mkTrail(tip, a0, a1, (t >= 2) and P.glow or C(225, 240, 255), (t >= 2) and P.main or C(120, 170, 235), 0.2 + 0.02 * t)
+	end
+end
+
+-- ============================================================================ BOW
+local function bow(S, w, P, out, k)
+	local t, v = w.tier, w.v
+	local R = 3.0 + 0.11 * t
+	local wood = (t <= 1) and P.main or ((t <= 2) and darker(P.main, 0.8) or P.main)
+	if t == 6 and not w.rainbow then wood = darker(P.main, 0.45) end
+	if w.rainbow then wood = RB end
+	local woodHi = (t <= 1) and lighter(P.main, 0.3) or lighter(P.main, 0.45)
+	if w.rainbow then woodHi = RB end
+	local metalCol = (t <= 1) and C(212, 168, 72) or P.acc
+	if t == 1 and v == 2 then metalCol = C(160, 160, 150) end
+	local limbMat = (t <= 2) and WOOD or ((t >= 5) and NEON or METAL)
+
+	-- limb path (left tip -> right tip)
+	local pts = {}
+	local tipZ = R * (1 - math.cos(math.rad(75)))
+	local tipX = R * math.sin(math.rad(75))
+	if v == 1 then
+		for i = -5, 5 do
+			local th = math.rad(i * 15)
+			pts[#pts + 1] = Vector2.new(R * math.sin(th), R * (1 - math.cos(th)))
+		end
+	else
+		tipX, tipZ = R * 0.98, R * 0.74
+		pts = {
+			Vector2.new(-R * 1.12, tipZ - 1.1), Vector2.new(-tipX, tipZ), Vector2.new(-R * 0.62, 0.36 * tipZ), Vector2.new(-R * 0.2, 0),
+			Vector2.new(R * 0.2, 0), Vector2.new(R * 0.62, 0.36 * tipZ), Vector2.new(tipX, tipZ), Vector2.new(R * 1.12, tipZ - 1.1),
+		}
+	end
+	S.path(pts, { 0.5 + 0.03 * t, 0.3 + 0.02 * t, 0.1 }, { darker(wood, 0.75), wood, woodHi }, { 0.08, 0.14, 0.3 }, { limbMat, limbMat, limbMat }, { 0.3, 0.3, 0.1 })
+	if t >= 3 then -- glowing inlay along the limbs
+		S.path(pts, { 0.1 }, { P.glow }, { 0.36 }, { NEON }, { 0.06 })
+	end
+	-- limb tips
+	local tipL, tipR = Vector2.new(-tipX, tipZ), Vector2.new(tipX, tipZ)
+	for _, sx in ipairs({ -1, 1 }) do
+		S.disc(0.6 + 0.04 * t, metalCol, sx * tipX, tipZ, 0.1, METAL, 0, 0.36)
+		S.disc(0.26, darker(metalCol, 0.6), sx * tipX, tipZ, 0.3, METAL, 0, 0.1)
+		if t >= 2 then S.disc(0.3 + 0.03 * t, P.glow, sx * tipX, tipZ, 0.4, NEON, 0.1, 0.1) end
+	end
+	-- wings / feathers at the tips
+	if t >= 4 then
+		local n = t - 2
+		for _, sx in ipairs({ -1, 1 }) do
+			for i = 1, n do
+				local len = 1.0 + 0.42 * i
+				S.block(0.3, len, (i % 2 == 0) and P.glow or P.main, sx * (tipX + 0.2 + i * 0.32), tipZ + 0.5 + i * 0.28, 0.2 + i * 0.01, sx * (0.5 + i * 0.12), NEON, 0.14, 0.08)
+			end
+		end
+	end
+	-- riser grip
+	local grip = (t <= 2) and C(66, 42, 28) or darker(P.acc, 0.5)
+	S.block(0.66, 1.3, grip, 0, 0, 0.3, 0, FABRIC, 0, 0.3)
+	S.block(0.78, 0.14, metalCol, 0, -0.6, 0.34, 0, METAL, 0, 0.3)
+	S.block(0.78, 0.14, metalCol, 0, 0.6, 0.34, 0, METAL, 0, 0.3)
+	if t >= 3 then S.disc(0.4 + 0.04 * t, P.glow, 0, 0, 0.5, NEON, 0.05, 0.14) end
+	-- magic halo behind the bow
+	if t >= 5 then
+		S.disc(R * 2.5, P.glow, 0, tipZ * 0.5, 0.01, NEON, 0.9, 0.05)
+		S.disc(R * 1.7, P.main, 0, tipZ * 0.5, 0.02, NEON, 0.86, 0.05)
+	end
+	if t >= 6 then S.ring(R * 1.35, 22, 0.22, P.glow, 0, tipZ * 0.45, 0.05, NEON, 0.2, 0.06) end
+	if t >= 7 then
+		for i = 0, 5 do
+			local a = i / 6 * math.pi * 2
+			S.block(0.3, 0.9, RB, math.cos(a) * R * 1.6, math.sin(a) * R * 1.0 + 1.2, 0.3, a, NEON, 0.05, 0.1)
+		end
+	end
+	-- string
+	local nockZ = tipZ + 0.55
+	local strC = (t >= 3) and P.glow or C(238, 233, 214)
+	local strMat = (t >= 3) and NEON or FABRIC
+	local strW = (t >= 3) and 0.1 or 0.07
+	local sv = Vector2.new(tipX, nockZ - tipZ)
+	local slen = sv.Magnitude
+	S.block(strW, slen, strC, tipX / 2, (tipZ + nockZ) / 2, 0.1, rot(-sv.X, sv.Y), strMat, 0, 0.07)
+	S.block(strW, slen, strC, -tipX / 2, (tipZ + nockZ) / 2, 0.1, rot(sv.X, sv.Y), strMat, 0, 0.07)
+	-- nocked arrow
+	local arrow = {}
+	local headZ = -3.4 - 0.12 * t
+	local aLen = nockZ - headZ
+	local shaftZ = (nockZ + headZ) / 2
+	local shaftCol = (t >= 3) and lighter(P.glow, 0.2) or C(232, 222, 188)
+	local headCol = (t >= 3) and P.glow or C(176, 188, 206)
+	table.insert(arrow, S.block(0.14 + 0.01 * t, aLen, shaftCol, 0, shaftZ, 0.32, 0, (t >= 3) and NEON or WOOD, 0, 0.12))
+	table.insert(arrow, S.block(0.56 + 0.04 * t, 0.56 + 0.04 * t, headCol, 0, headZ, 0.32, math.pi / 4, (t >= 3) and NEON or METAL, 0, 0.12))
+	table.insert(arrow, S.block(0.32, 0.32, lighter(headCol, 0.6), 0, headZ, 0.36, math.pi / 4, NEON, 0.05, 0.08))
+	local fl = (t <= 2) and C(196, 62, 62) or P.main
+	table.insert(arrow, S.block(0.14, 0.7, fl, -0.2, nockZ - 0.3, 0.34, 0.3, FABRIC, 0, 0.08))
+	table.insert(arrow, S.block(0.14, 0.7, fl, 0.2, nockZ - 0.3, 0.34, -0.3, FABRIC, 0, 0.08))
+	table.insert(arrow, S.block(0.14, 0.6, (t <= 2) and C(236, 236, 236) or P.glow, 0, nockZ - 0.9, 0.34, 0, FABRIC, 0, 0.08))
+	if t >= 5 then
+		table.insert(arrow, S.block(0.7, aLen * 0.9, P.glow, 0, shaftZ, 0.28, 0, NEON, 0.82, 0.08))
+		table.insert(arrow, S.disc(1.6, P.main, 0, headZ, 0.3, NEON, 0.7, 0.08))
+	end
+	out.arrow = arrow
+	-- sparks + light
+	local base = S.disc(0.4, P.glow, 0, 0, 0.6, NEON, 1, 0.1)
+	if t >= 2 then out.emitter = emitter(base, P.glow, P.main, 2 + t * 3, 0.3 + 0.05 * t, 1 + 0.1 * t, 1.5 + 0.2 * t) end
+	if t >= 4 then light(base, P.glow, 10 + t * 2, 1 + 0.12 * t) end
+	if t >= 3 then
+		for _, sx in ipairs({ -1, 1 }) do
+			local tp = S.disc(0.3, P.glow, sx * tipX, tipZ, 0.5, NEON, 1, 0.1)
+			emitter(tp, P.glow, P.main, 1 + t * 2, 0.3 + 0.04 * t, 0.7, 2)
+		end
+	end
+end
+
+-- ============================================================================ STAFF
+local function staff(S, w, P, out, k)
+	local t, v = w.tier, w.v
+	local orbZ = -5.9
+	local shaftCol = (t == 1) and P.main or ((t <= 3) and darker(P.main, 0.7) or ((t >= 6 or w.rainbow) and P.dark or darker(P.acc, 0.55)))
+	if t == 7 then shaftCol = C(30, 26, 46) end
+	local woodHi = (t == 1) and lighter(P.main, 0.3) or lighter(shaftCol, 0.3)
+	local metalCol = (t <= 1) and C(212, 168, 72) or P.acc
+	if t == 1 and v == 2 then metalCol = P.acc end
+	local shaftMat = (t <= 2) and WOOD or METAL
+
+	-- shaft
+	S.block(0.5 + 0.02 * t, 8.0, shaftCol, 0, -1.6, 0.05, 0, shaftMat, 0, 0.3)
+	S.block(0.14, 7.8, woodHi, 0.12, -1.6, 0.2, 0, shaftMat, 0, 0.08)
+	if v == 2 and t == 1 then -- knots of the branch
+		for _, z in ipairs({ -0.2, -2.6 }) do S.disc(0.8, darker(shaftCol, 0.8), 0.15, z, 0.1, WOOD, 0, 0.3) end
+	end
+	for _, z in ipairs({ 0.4, -1.4, -3.2 }) do
+		S.block(0.8, 0.3, darker(metalCol, 0.65), 0, z, 0.1, 0, METAL, 0, 0.36)
+		S.block(0.8, 0.12, metalCol, 0, z, 0.14, 0, METAL, 0, 0.38)
+	end
+	if t >= 2 then
+		for _, z in ipairs({ -0.5, -2.3, -4.3 }) do S.block(0.1, 0.36, P.glow, 0, z, 0.22, 0, NEON, 0.35, 0.05) end
+	end
+	S.disc(0.86, darker(metalCol, 0.65), 0, 2.4, 0.05, METAL, 0, 0.35)
+	S.disc(0.5, metalCol, 0, 2.4, 0.07, METAL, 0, 0.4)
+	if t >= 4 then S.disc(0.4, P.glow, 0, 2.4, 0.14, NEON, 0.1, 0.1) end
+
+	-- ============ heads
+	local haloD = 3.7 + 0.45 * t
+	if t == 1 and v == 1 then
+		for i = 0, 9 do
+			local a = i * math.pi / 5
+			local vx, vz = math.cos(a), math.sin(a)
+			S.block(0.34, 0.62, metalCol, vx * 1.5, orbZ + vz * 1.5, 0.12, rot(-vz, vx), METAL, 0, 0.3)
+		end
+		for i = 0, 3 do
+			local a = math.rad(45 + i * 90)
+			local vx, vz = math.cos(a), math.sin(a)
+			S.block(0.24, 1.0, darker(metalCol, 0.8), vx * 2.0, orbZ + vz * 2.0, 0.1, rot(vx, vz), METAL, 0, 0.3)
+		end
+	elseif t == 1 then -- gnarled branch fork
+		for _, sx in ipairs({ -1, 1 }) do
+			S.block(0.4, 2.8, shaftCol, sx * 0.9, orbZ + 1.3, 0.08, sx * -0.38, WOOD, 0, 0.3)
+			S.block(0.3, 1.6, shaftCol, sx * 1.6, orbZ + 0.1, 0.1, sx * 0.3, WOOD, 0, 0.3)
+			S.disc(0.9, P.acc, sx * 1.9, orbZ + 1.0, 0.16, FABRIC, 0, 0.12)
+			S.disc(0.7, lighter(P.acc, 0.2), sx * 1.4, orbZ - 1.1, 0.16, FABRIC, 0, 0.12)
+		end
+	elseif t == 2 and v == 1 then -- jade rod: crystal + leaves
+		S.block(1.9, 1.9, P.main, 0, orbZ, 0.12, math.pi / 4, METAL, 0, 0.3)
+		S.block(1.3, 1.3, lighter(P.main, 0.35), 0, orbZ, 0.2, math.pi / 4, NEON, 0.1, 0.2)
+		for i = 0, 3 do
+			local a = i * math.pi / 2
+			S.block(0.5, 1.6, P.acc, math.cos(a) * 1.6, orbZ + math.sin(a) * 1.6, 0.1, rot(math.cos(a), math.sin(a)) + 0.4, METAL, 0, 0.25)
+		end
+	elseif t == 2 then -- crook with leaf-wrapped hook
+		S.ring(1.7, 14, 0.4, P.main, 0, orbZ, 0.1, WOOD, 0, 0.3)
+		for i = 0, 5 do
+			local a = i / 6 * math.pi * 2
+			S.disc(0.8, (i % 2 == 0) and P.main or lighter(P.main, 0.25), math.cos(a) * 2.1, orbZ + math.sin(a) * 2.1, 0.18, FABRIC, 0, 0.1)
+		end
+	elseif t == 3 and v == 1 then -- aqua: tall crystal + floating drops
+		S.block(1.5, 3.2, P.main, 0, orbZ - 0.4, 0.12, 0, METAL, 0, 0.3)
+		S.block(1.4, 1.4, P.main, 0, orbZ - 2.0, 0.12, math.pi / 4, METAL, 0, 0.3)
+		S.block(1.4, 1.4, P.main, 0, orbZ + 1.2, 0.12, math.pi / 4, METAL, 0, 0.3)
+		S.block(0.8, 2.6, P.glow, 0, orbZ - 0.4, 0.22, 0, NEON, 0.2, 0.2)
+		for _, sx in ipairs({ -1, 1 }) do
+			S.block(0.5, 1.6, P.acc, sx * 1.6, orbZ + 0.4, 0.1, sx * 0.3, METAL, 0, 0.25)
+			S.disc(0.55, P.glow, sx * 2.5, orbZ - 1.0, 0.3, NEON, 0.15, 0.1)
+		end
+	elseif t == 3 then -- prism hexagon
+		S.ring(1.9, 6, 0.5, P.main, 0, orbZ, 0.12, METAL, 0, 0.3, 1.25)
+		S.ring(1.2, 6, 0.3, P.glow, 0, orbZ, 0.2, NEON, 0.2, 0.1, 1.3)
+		for i = 0, 2 do
+			local a = i * math.pi * 2 / 3
+			S.block(0.3, 2.4, P.acc, 0, orbZ, 0.16, a, METAL, 0, 0.2)
+		end
+	elseif t == 4 and v == 1 then -- amethyst cluster + orbit ring
+		for i = 0, 4 do
+			local a = i / 5 * math.pi * 2 + 0.3
+			local vx, vz = math.cos(a), math.sin(a)
+			S.block(0.7, 2.6, (i % 2 == 0) and P.main or lighter(P.main, 0.25), vx * 1.2, orbZ + vz * 1.2, 0.1 + i * 0.01, rot(vx, vz), METAL, 0, 0.3)
+		end
+		S.ring(2.9, 22, 0.2, P.glow, 0, orbZ, 0.08, NEON, 0.15, 0.08)
+		for i = 0, 2 do
+			local a = i / 3 * math.pi * 2
+			S.disc(0.7, P.glow, math.cos(a) * 2.9, orbZ + math.sin(a) * 2.9, 0.3, NEON, 0.05, 0.16)
+		end
+	elseif t == 4 then -- stormspire
+		S.block(1.1, 4.6, P.main, 0, orbZ - 0.6, 0.12, 0, METAL, 0, 0.3)
+		S.block(1.3, 1.3, P.main, 0, orbZ - 3.0, 0.12, math.pi / 4, METAL, 0, 0.3)
+		for _, sx in ipairs({ -1, 1 }) do
+			for i = 0, 2 do
+				S.block(0.22, 1.2, P.acc, sx * (1.5 + (i % 2) * 0.5), orbZ - 1.4 + i * 1.3, 0.2, sx * (i % 2 == 0 and 0.6 or -0.6), NEON, 0.05, 0.1)
+			end
+		end
+		S.ring(2.6, 18, 0.2, P.acc, 0, orbZ, 0.08, NEON, 0.2, 0.08)
+	elseif t == 5 and v == 1 then -- sun disc with rays
+		S.ring(2.3, 24, 0.5, metalCol, 0, orbZ, 0.1, METAL, 0, 0.3)
+		S.ring(1.7, 20, 0.28, P.glow, 0, orbZ, 0.16, NEON, 0.1, 0.1)
+		S.rays(16, 2.7, 4.2 + (t - 5) * 0.4, 0.34, P.main, 0, orbZ, 0.12, NEON, 0.1, 0.1)
+		S.rays(16, 2.7, 3.2, 0.5, P.glow, 0, orbZ, 0.08, NEON, 0.4, 0.1, math.pi / 16)
+	elseif t == 5 then -- astral lantern cage
+		S.ring(1.9, 6, 0.5, metalCol, 0, orbZ, 0.1, METAL, 0, 0.3, 1.3)
+		for i = 0, 3 do
+			local a = i * math.pi / 2 + math.pi / 4
+			S.block(0.3, 3.4, P.main, 0, orbZ, 0.14, a, NEON, 0.12, 0.1)
+		end
+		S.ring(2.9, 20, 0.2, P.glow, 0, orbZ, 0.06, NEON, 0.3, 0.08)
+		for i = 0, 2 do S.block(0.2, 1.1 + i * 0.4, P.main, (i - 1) * 0.5, orbZ + 2.7, 0.1, 0, FABRIC, 0.1, 0.1) end
+	elseif t == 6 and v == 1 then -- nether crown
+		for i = 0, 7 do
+			local a = i / 8 * math.pi * 2
+			local vx, vz = math.cos(a), math.sin(a)
+			S.block(0.55, 2.6, P.dark, vx * 2.2, orbZ + vz * 2.2, 0.1, rot(vx, vz), METAL, 0, 0.3)
+			S.block(0.3, 0.9, P.main, vx * 3.3, orbZ + vz * 3.3, 0.16, rot(vx, vz), NEON, 0.05, 0.12)
+		end
+		S.ring(1.7, 20, 0.35, P.main, 0, orbZ, 0.14, NEON, 0.1, 0.1)
+		S.ring(3.2, 26, 0.16, P.glow, 0, orbZ, 0.05, NEON, 0.3, 0.06)
+	elseif t == 6 then -- hellfire pyre
+		S.disc(3.6, P.dark, 0, orbZ, 0.08, METAL, 0, 0.3)
+		S.disc(2.8, P.main, 0, orbZ, 0.14, NEON, 0.35, 0.2)
+		for i = 0, 6 do
+			local a = i / 7 * math.pi * 2
+			local vx, vz = math.cos(a), math.sin(a)
+			S.block(0.6, 2.2 + (i % 3) * 0.6, (i % 2 == 0) and P.main or P.glow, vx * 1.5, orbZ + vz * 1.5, 0.2 + i * 0.01, rot(vx, vz), NEON, 0.12, 0.2)
+		end
+		S.disc(1.9, P.glow, 0, orbZ, 0.34, NEON, 0.1, 0.2)
+		for i = 0, 3 do
+			local a = i * math.pi / 2 + 0.4
+			S.block(0.35, 1.6, P.dark, math.cos(a) * 3.3, orbZ + math.sin(a) * 3.3, 0.1, rot(math.cos(a), math.sin(a)), METAL, 0, 0.3)
+		end
+	else -- galaxy weaver (secret)
+		S.disc(5.0, RB, 0, orbZ, 0.02, NEON, 0.9, 0.05)
+		S.ring(2.4, 20, 0.28, RB, 0, orbZ, 0.1, NEON, 0.1, 0.1)
+		S.ring(3.4, 26, 0.2, RB, 0, orbZ, 0.12, NEON, 0.25, 0.08)
+		S.ring(4.4, 32, 0.14, RB, 0, orbZ, 0.14, NEON, 0.4, 0.06)
+		for i = 0, 11 do
+			local a = i / 12 * math.pi * 2
+			S.block(0.3, 0.3, RB, math.cos(a) * (3.4 + (i % 3) * 0.5), orbZ + math.sin(a) * (3.4 + (i % 3) * 0.5), 0.3, a + 0.78, NEON, 0, 0.12)
+		end
+		S.rays(4, 1.5, 5.6, 0.2, RB, 0, orbZ, 0.2, NEON, 0.2, 0.06, math.pi / 4)
+		for i = 0, 5 do
+			S.block(0.26, 0.7, RB, 0, 1.0 + (i % 2) * 0.3 - i * 1.0, 0.3, i, NEON, 0.1, 0.1)
+		end
+	end
+
+	-- orb (always present; the server animates it when you attack)
+	local glowC = P.glow
+	local halo = S.disc(haloD, glowC, 0, orbZ, 0.04, NEON, 0.86, 0.1)
+	local mid = S.disc(2.4 + 0.1 * t, glowC, 0, orbZ, 0.15, NEON, 0.45, 0.4)
+	local core = S.disc(1.2 + 0.06 * t, (w.rainbow and RB) or C(250, 252, 255), 0, orbZ, 0.4, NEON, 0, 0.3)
+	local lt = light(mid, glowC, 14 + t * 2, 1 + t * 0.15)
+	local em = emitter(core, C(235, 245, 255), glowC, 8 + t * 4, 0.45 * k + 0.05 * t, 1.0 + 0.1 * t, 1.5 + 0.3 * t)
+	if t >= 5 then em.Speed = NumberRange.new(2, 6) end
+	pcall(function()
+		TweenService:Create(halo, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.68 }):Play()
+	end)
+	out.orb = { halo = halo, glow = mid, core = core, light = lt, emitter = em }
+end
+
+-- ============================================================================ PUBLIC
+-- kind: "Swordsman" | "Archer" | "Mage".  opts.anchored = true builds a static model (for ViewportFrames)
+function WM.build(kind, w, root, parent, handCF, scale, opts)
+	local anchored = opts and opts.anchored
+	local k = (scale or 1) * (1 + 0.022 * (w.tier - 1))
+	local pivot = mk(parent, BLK, Vector3.new(0.3, 0.3, 0.3), root.CFrame * handCF, Color3.new(1, 1, 1), nil, 1, anchored)
+	local weld
+	if not anchored then
+		weld = Instance.new("Weld")
+		weld.Part0 = root
+		weld.Part1 = pivot
+		weld.C0 = handCF
+		weld.Parent = pivot
+	end
+	local S = newS(pivot, parent, k, anchored)
+	local out = { pivot = pivot, weld = weld, base = handCF, kind = kind, wdef = w }
+	local P = palette(w)
+	if kind == "Swordsman" then
+		sword(S, w, P, out, k)
+	elseif kind == "Archer" then
+		bow(S, w, P, out, k)
+	else
+		staff(S, w, P, out, k)
+	end
+	return out
+end
+
+-- glowing rune circle under the hero's feet for high rarities
+function WM.heroAura(root, parent, w, baseY)
+	local t = w.tier
+	if t < 4 then return end
+	local P = palette(w)
+	local pivot = mk(parent, BLK, Vector3.new(0.2, 0.2, 0.2), root.CFrame * CFrame.new(0, baseY + 0.05, 0), Color3.new(1, 1, 1), nil, 1, false)
+	local wd = Instance.new("WeldConstraint")
+	wd.Part0 = root
+	wd.Part1 = pivot
+	wd.Parent = pivot
+	local S = newS(pivot, parent, 1, false)
+	S.disc(7.5 + (t - 4) * 1.0, P.glow, 0, 0, 0.02, NEON, 0.88, 0.04)
+	S.ring(3.9 + (t - 4) * 0.4, 28, 0.2, P.main, 0, 0, 0.04, NEON, 0.2, 0.05)
+	if t >= 5 then S.ring(2.9, 20, 0.16, P.glow, 0, 0, 0.05, NEON, 0.3, 0.05) end
+	if t >= 6 then
+		S.rays(8, 4.4, 6.4, 0.3, P.main, 0, 0, 0.05, NEON, 0.2, 0.05)
+		S.ring(6.6 + (t - 6), 36, 0.14, P.glow, 0, 0, 0.06, NEON, 0.35, 0.05)
+	end
+	local p = S.disc(0.5, P.glow, 0, 0, 0.1, NEON, 1, 0.05)
+	emitter(p, P.glow, P.main, 6 + t * 3, 0.4 + 0.05 * t, 1.4, 4 + t * 0.5)
+end
+
+-- rainbow weapons: cycle the colour of every tagged part (client side only; cheap)
+local rainbowOn = false
+function WM.startRainbow()
+	if rainbowOn or RunService:IsServer() then return end
+	rainbowOn = true
+	RunService.Heartbeat:Connect(function()
+		local tt = os.clock() * 0.32
+		for _, p in ipairs(CollectionService:GetTagged("RainbowPart")) do
+			local off = p:GetAttribute("rb")
+			if off then p.Color = Color3.fromHSV((tt + off) % 1, 0.78, 1) end
+		end
+	end)
+end
+
+return WM
+]]></ProtectedString>
+</Properties>
+</Item>
+</Item>
+<Item class="ServerScriptService" referent="RBX10">
 <Properties>
 <string name="Name">ServerScriptService</string>
 </Properties>
-<Item class="Script" referent="RBX5">
+<Item class="Script" referent="RBX9">
 <Properties>
 <string name="Name">GameServer</string>
 <ProtectedString name="Source"><![CDATA[-- GameServer: lobby, parties, dungeon runs, enemies, combat, progression
@@ -211,6 +1135,23 @@ local PhysicsService = game:GetService("PhysicsService")
 local Config = require(RS:WaitForChild("Config"))
 local Sprites = require(script:WaitForChild("Sprites"))
 local MapBuilder = require(script:WaitForChild("MapBuilder"))
+local WM = require(RS:WaitForChild("WeaponModels"))
+Sprites.themed = WM -- rarity based weapon models
+
+-- [TESTAREA] optional weapon test place. Delete the "TestArea" module (and the TestAreaClient LocalScript) to remove it.
+local TestArea
+do
+	local m = script:FindFirstChild("TestArea")
+	if m and Config.TestArea and Config.TestArea.enabled then
+		local ok, res = pcall(require, m)
+		if ok then
+			TestArea = res
+			pcall(TestArea.preInit, Config)
+		else
+			warn("[TestArea] " .. tostring(res))
+		end
+	end
+end
 
 Players.CharacterAutoLoads = false
 Lighting.GlobalShadows = false
@@ -244,6 +1185,10 @@ local function newData()
 		level = 1, xp = 0, points = 0, coins = 0, vit = 0, swift = 0, wins = 0,
 		unlocked = { forest = 1, cave = 1 },
 		upg = { Swordsman = {}, Archer = {}, Mage = {} },
+		-- weapon inventory: id -> count.  equip: weapon type -> equipped weapon id
+		inv = { [Config.StarterWeapons.Swordsman] = 1, [Config.StarterWeapons.Archer] = 1, [Config.StarterWeapons.Mage] = 1 },
+		equip = { Swordsman = Config.StarterWeapons.Swordsman, Archer = Config.StarterWeapons.Archer, Mage = Config.StarterWeapons.Mage },
+		opened = 0,
 	}
 end
 
@@ -278,12 +1223,30 @@ local function saveData(p)
 	end)
 end
 
+-- active weapon (the equipped one, or a temporary one inside the test area)
+local function weaponIdOf(p)
+	local st, d = S[p], D[p]
+	if st and st.testWeapon and Config.Weapons[st.testWeapon] then return st.testWeapon end
+	if not d or not d.class then return nil end
+	return d.equip and d.equip[d.class]
+end
+local function weaponDefOf(p)
+	local id = weaponIdOf(p)
+	return id and Config.Weapons[id]
+end
+local function classOf(p)
+	local st = S[p]
+	local w = st and st.testWeapon and Config.Weapons[st.testWeapon]
+	if w then return w.type end
+	return D[p] and D[p].class
+end
+
 local function pushData(p)
 	local d = D[p]
 	if not d then return end
 	local payload = {
 		level = d.level, xp = d.xp, need = Config.xpNeed(d.level), points = d.points, coins = d.coins,
-		class = d.class, upg = d.upg, vit = d.vit, swift = d.swift, unlocked = d.unlocked,
+		class = classOf(p), weapon = weaponIdOf(p), inv = d.inv, equip = d.equip, opened = d.opened, upg = d.upg, vit = d.vit, swift = d.swift, unlocked = d.unlocked,
 	}
 	p:SetAttribute("Data", HttpService:JSONEncode(payload))
 end
@@ -314,7 +1277,7 @@ local function runToast(run, text, color, dur)
 	end
 end
 
-local damagePlayer, damageEnemy, killEnemy, spawnProj
+local damagePlayer, damageEnemy, killEnemy, spawnProj, procElement
 local leaveParty, broadcastParties, sendParties, startRun
 local returnToLobby, endRun, finishRun, checkDefeat, onDied, chooseClass, buildSprite
 
@@ -398,19 +1361,24 @@ buildSprite = function(p)
 	local f = Instance.new("Folder")
 	f.Name = "Sprite"
 	f.Parent = c
-	local cls = D[p].class
+	local cls = classOf(p)
+	local wdef = weaponDefOf(p)
 	local color = cls and Config.Classes[cls].color or Color3.fromRGB(150, 150, 160)
-	st.weapon = Sprites.player(cls, color, r, f)
+	if wdef and wdef.tier >= 2 and not wdef.rainbow then color = color:Lerp(wdef.c1, 0.45) end
+	st.elem = wdef and wdef.elem or nil
+	st.tier = wdef and wdef.tier or 1
+	st.wid = wdef and wdef.id or nil
+	st.weapon = Sprites.player(cls, color, r, f, wdef)
 end
 
 local function applyStats(p, heal)
 	local c, h = getChar(p)
 	if not c then return end
 	local d = D[p]
-	local mh = Config.maxHp(d.class, d.vit)
+	local mh = Config.maxHp(classOf(p), d.vit)
 	h.MaxHealth = mh
 	if heal then h.Health = mh end
-	local sp = Config.walkSpeed(d.class, d.swift)
+	local sp = Config.walkSpeed(classOf(p), d.swift)
 	h.WalkSpeed = sp
 	p:SetAttribute("WalkSpeed", sp)
 	updatePlate(p)
@@ -566,6 +1534,7 @@ local lobbyFolder = Instance.new("Folder")
 lobbyFolder.Name = "Lobby"
 lobbyFolder.Parent = Workspace
 local lobbyGates = MapBuilder.lobby(lobbyFolder)
+if TestArea then pcall(TestArea.buildPortal, lobbyFolder) end -- [TESTAREA]
 
 -- ============================================================ PARTIES
 local parties = {}
@@ -1005,6 +1974,13 @@ local function stepBoss(run, e, dist, nx, nz, dt, now)
 end
 
 local function stepEnemyCore(run, e, dt, now)
+	if e.dummy then -- [TESTAREA] training dummies never move or attack, they only drift back to their spot
+		local k = math.min(1, dt * 2.5)
+		e.x = e.x + (e.hx - e.x) * k
+		e.z = e.z + (e.hz - e.z) * k
+		e.fx, e.fz = 0, 1
+		return
+	end
 	local targets = run.targets
 	if #targets == 0 then return end
 	local best, bd = nil, math.huge
@@ -1050,7 +2026,7 @@ local function stepEnemy(run, e, dt, now)
 		if now >= b.nextT then
 			b.nextT = now + 0.5
 			runFx(run, "Ember", e.x, e.z, e.r)
-			damageEnemy(run, e, b.dps * 0.5, b.owner, false)
+			damageEnemy(run, e, b.dps * 0.5, b.owner, false, true)
 			if e.dead then return end
 		end
 		if now >= b.untilT then e.burn = nil end
@@ -1146,13 +2122,19 @@ damagePlayer = function(p, amount)
 	end
 end
 
-damageEnemy = function(run, e, amount, killer, crit)
+damageEnemy = function(run, e, amount, killer, crit, noProc)
 	if e.dead then return end
+	local ks = killer and S[killer]
+	if ks and ks.elem == "holy" and e.hp < e.maxHp * 0.6 then amount = amount * 1.15 end
 	amount = math.max(1, math.floor(amount))
 	e.hp = e.hp - amount
 	runFx(run, "Dmg", e.x, e.z, amount, crit and true or false, false)
 	e.fill.Size = UDim2.fromScale(math.clamp(e.hp / e.maxHp, 0, 1), 1)
-	if e.hp <= 0 then killEnemy(run, e, killer) end
+	if e.hp <= 0 then
+		killEnemy(run, e, killer)
+	elseif ks and ks.elem and ks.elem ~= "none" and not noProc and procElement then
+		procElement(run, e, ks, killer, amount)
+	end
 end
 
 killEnemy = function(run, e, killer)
@@ -1180,14 +2162,14 @@ local function playerAttack(p, aim)
 	local run = st and st.run
 	if not run or run.over or st.dead then return end
 	local d = D[p]
-	local cls = d.class
+	local cls = classOf(p)
 	if not cls then return end
 	local c, h, hrp = getChar(p)
 	if not c or h.Health <= 0 then return end
 	local now = os.clock()
 	if now < (st.nextAtk or 0) - 0.03 then return end
 	if now < (st.lockAtk or 0) then return end
-	local ws = Config.weaponStats(cls, d.upg[cls])
+	local ws = Config.weaponStats(cls, d.upg[cls], weaponDefOf(p))
 	local cdef = Config.Classes[cls]
 	st.nextAtk = now + ws.cooldown
 	local crit = math.random() < ws.crit
@@ -1203,9 +2185,12 @@ local function playerAttack(p, aim)
 	end
 	dx, dz = dx / m, dz / m
 	swingWeapon(st, cls, ws.cooldown)
+	runFx(run, "Theme", ws.wid)
 	if cdef.kind == "melee" then
-		runFx(run, "Slash", px, pz, dx, dz, ws.range, cdef.arc, crit, st.swingDir or 1)
-		local cosA = math.cos(math.rad(cdef.arc) / 2)
+		-- rarer swords cut a wider arc
+		local arc = math.min(300, cdef.arc * (1 + 0.06 * (ws.tier - 1)))
+		runFx(run, "Slash", px, pz, dx, dz, ws.range, arc, crit, st.swingDir or 1)
+		local cosA = math.cos(math.rad(arc) / 2)
 		local hits = {}
 		for _, e in ipairs(run.enemies) do
 			local ex, ez = e.x - px, e.z - pz
@@ -1221,8 +2206,18 @@ local function playerAttack(p, aim)
 		end
 	elseif cdef.kind == "arrow" then
 		spawnProj(run, { kind = "arrow", x = px + dx * 2, z = pz + dz * 2, dx = dx, dz = dz, speed = cdef.projSpeed, range = ws.range, dmg = dmg, owner = p, crit = crit, hitR = 0.8 })
+		-- rarer bows fire extra side arrows
+		local extra = ws.tier >= 6 and 2 or (ws.tier >= 4 and 1 or 0)
+		for i = 1, extra do
+			for _, sgn in ipairs({ -1, 1 }) do
+				local a = sgn * math.rad(8 * i)
+				local ca, sa = math.cos(a), math.sin(a)
+				local ddx, ddz = dx * ca - dz * sa, dx * sa + dz * ca
+				spawnProj(run, { kind = "arrow", x = px + ddx * 2, z = pz + ddz * 2, dx = ddx, dz = ddz, speed = cdef.projSpeed, range = ws.range, dmg = dmg * 0.6, owner = p, crit = false, hitR = 0.8 })
+			end
+		end
 	else
-		spawnProj(run, { kind = "fireball", x = px + dx * 2.5, z = pz + dz * 2.5, dx = dx, dz = dz, speed = cdef.projSpeed, range = ws.range, dmg = dmg, owner = p, crit = crit, hitR = 1.3, radius = cdef.radius })
+		spawnProj(run, { kind = "fireball", x = px + dx * 2.5, z = pz + dz * 2.5, dx = dx, dz = dz, speed = cdef.projSpeed, range = ws.range, dmg = dmg, owner = p, crit = crit, hitR = 1.3, radius = cdef.radius * (1 + (ws.rs - 1) * 0.6) })
 	end
 end
 
@@ -1295,7 +2290,7 @@ local function updateRun(run, dt, now)
 		if run.boss and not run.boss.dead then
 			boss = { name = run.boss.def.name, hp = run.boss.hp, max = run.boss.maxHp }
 		end
-		runFx(run, "Run", { wave = run.wave, waves = 3, left = #run.enemies + #run.queue, boss = boss, loc = run.cfg.name, diff = run.dcfg.name })
+		runFx(run, "Run", { wave = run.wave, waves = 3, left = #run.enemies + #run.queue, boss = boss, loc = run.cfg.name, diff = run.dcfg.name, test = run.test })
 	end
 end
 
@@ -1589,12 +2584,38 @@ local function applyBurn(e, dps, dur, owner)
 	e.burn = { untilT = now + dur, dps = dps, owner = owner, nextT = now + 0.5 }
 end
 
+local ELEMS = { "fire", "frost", "shock", "void", "nature", "holy" }
+-- weapon element: small on-hit effect, stronger for rarer weapons
+procElement = function(run, e, ks, killer, dmg)
+	local el = ks.elem
+	local tier = ks.tier or 1
+	local now = os.clock()
+	if el == "prism" then el = ELEMS[math.random(#ELEMS)] end
+	if now < (e.procAt or 0) then return end
+	e.procAt = now + 0.35
+	if el == "fire" then
+		applyBurn(e, math.max(2, dmg * 0.3), 2 + tier * 0.3, killer)
+	elseif el == "frost" then
+		applyCC(e, 0, 1.2 + tier * 0.2, 0.55)
+	elseif el == "nature" then
+		applyCC(e, 0, 1.0 + tier * 0.15, 0.7)
+	elseif el == "shock" then
+		if math.random() < 0.06 + 0.02 * tier then applyCC(e, 0.45) end
+	elseif el == "void" then
+		if now >= (ks.healAt or 0) then
+			ks.healAt = now + 0.25
+			local _, h = getChar(killer)
+			if h and h.Health > 0 then h.Health = math.min(h.MaxHealth, h.Health + h.MaxHealth * 0.004 * tier) end
+		end
+	end
+end
+
 local ABIL = { Swordsman = {}, Archer = {}, Mage = {} }
 
 -- ---------------------------------------------------------------- SWORDSMAN
 -- Q: Crimson Charge - lunge through enemies, finish with a 360 slash
 ABIL.Swordsman.Q = function(run, p, st, ws, hrp, px, pz, dx, dz)
-	local dist, dur = 22, 0.22
+	local dist, dur = 22 * (1 + (ws.rs - 1) * 0.6), 0.22
 	local now = os.clock()
 	st.invUntil = now + dur + 0.2
 	st.lockAtk = now + dur + 0.25
@@ -1602,13 +2623,13 @@ ABIL.Swordsman.Q = function(run, p, st, ws, hrp, px, pz, dx, dz)
 	ToClient:FireClient(p, "Lunge", dx, dz, dist / dur, dur)
 	runFx(run, "SwCharge", px, pz, dx, dz, dist, dur)
 	local hit = {}
-	local dmg = ws.damage * 2.3
+	local dmg = ws.damage * 2.3 * ws.am
 	task.spawn(function()
 		local t0 = os.clock()
 		while aliveRun(run) and os.clock() - t0 < dur + 0.06 do
 			local _, _, r = getChar(p)
 			if not r then return end
-			for _, e in ipairs(enemiesInCircle(run, r.Position.X, r.Position.Z, 4.4)) do
+			for _, e in ipairs(enemiesInCircle(run, r.Position.X, r.Position.Z, 4.4 * ws.rs)) do
 				if not hit[e] then
 					hit[e] = true
 					damageEnemy(run, e, dmg * rnd(), p, false)
@@ -1624,11 +2645,11 @@ ABIL.Swordsman.Q = function(run, p, st, ws, hrp, px, pz, dx, dz)
 		local _, _, r = getChar(p)
 		if not r or not aliveRun(run) then return end
 		local ex, ez = r.Position.X, r.Position.Z
-		local rad = ws.range * 1.15
+		local rad = ws.range * 1.15 * (1 + (ws.rs - 1) * 0.5)
 		runFx(run, "Slash", ex, ez, dx, dz, rad, 360, true, st.swingDir or 1)
 		runFx(run, "Ring", ex, ez, rad * 2.2, 255, 90, 80)
 		for _, e in ipairs(enemiesInCircle(run, ex, ez, rad)) do
-			damageEnemy(run, e, ws.damage * 1.4 * rnd(), p, true)
+			damageEnemy(run, e, ws.damage * 1.4 * ws.am * rnd(), p, true)
 			if not e.dead then
 				pushEnemy(run, e, e.x - ex, e.z - ez, 3)
 				applyCC(e, 0.6)
@@ -1639,7 +2660,7 @@ end
 
 -- E: Blade Whirlwind - spin and shred everything around you
 ABIL.Swordsman.E = function(run, p, st, ws, hrp)
-	local dur, radius, ticks = 2.4, 10.5, 8
+	local dur, radius, ticks = 2.4 + 0.1 * (ws.tier - 1), 10.5 * ws.rs, 8 + ws.cnt * 2
 	st.lockAtk = os.clock() + dur + 0.1
 	st.swingTok = (st.swingTok or 0) + 1
 	runFx(run, "SwSpin", p.UserId, dur, radius)
@@ -1660,7 +2681,7 @@ ABIL.Swordsman.E = function(run, p, st, ws, hrp)
 				nextTick = nextTick + dur / ticks
 				local cx, cz = r.Position.X, r.Position.Z
 				for _, e in ipairs(enemiesInCircle(run, cx, cz, radius)) do
-					damageEnemy(run, e, ws.damage * 0.8 * rnd(), p, false)
+					damageEnemy(run, e, ws.damage * 0.8 * ws.am * rnd(), p, false)
 					if not e.dead then
 						pushEnemy(run, e, e.x - cx, e.z - cz, 1.1)
 						applyCC(e, 0, 0.3, 0.6)
@@ -1676,7 +2697,7 @@ end
 
 -- Z: Heaven's Verdict - colossal sword from the sky + aftershock
 ABIL.Swordsman.Z = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
-	local R, fall = 15, 1.25
+	local R, fall = 15 * ws.rs, 1.25
 	local tx, tz = clampTarget(run, px, pz, aim, 42)
 	st.lockAtk = os.clock() + fall + 0.3
 	st.invUntil = os.clock() + 0.3
@@ -1684,7 +2705,7 @@ ABIL.Swordsman.Z = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	runFx(run, "SwUlt", tx, tz, R, fall)
 	later(run, fall, function()
 		for _, e in ipairs(enemiesInCircle(run, tx, tz, R)) do
-			damageEnemy(run, e, ws.damage * 10 * rnd(), p, true)
+			damageEnemy(run, e, ws.damage * 10 * ws.am * rnd(), p, true)
 			if not e.dead then
 				pushEnemy(run, e, e.x - tx, e.z - tz, 4)
 				applyCC(e, 2.5, 3, 0.5)
@@ -1693,16 +2714,28 @@ ABIL.Swordsman.Z = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	end)
 	later(run, fall + 0.65, function()
 		for _, e in ipairs(enemiesInCircle(run, tx, tz, R * 1.35)) do
-			damageEnemy(run, e, ws.damage * 3.5 * rnd(), p, false)
+			damageEnemy(run, e, ws.damage * 3.5 * ws.am * rnd(), p, false)
 			if not e.dead then pushEnemy(run, e, e.x - tx, e.z - tz, 3) end
 		end
 	end)
+	-- rarer swords add extra aftershock waves
+	for i = 1, math.floor(ws.cnt / 2) do
+		later(run, fall + 0.65 + 0.45 * i, function()
+			local rr = R * (1.35 + 0.3 * i)
+			local col = Color3.fromRGB(255, 220, 140)
+			runFx(run, "Ring", tx, tz, rr * 2, 255, 220, 150)
+			for _, e in ipairs(enemiesInCircle(run, tx, tz, rr)) do
+				damageEnemy(run, e, ws.damage * 2.2 * ws.am * rnd(), p, false)
+				if not e.dead then pushEnemy(run, e, e.x - tx, e.z - tz, 2.5) end
+			end
+		end)
+	end
 end
 
 -- ---------------------------------------------------------------- ARCHER
 -- Q: Arrow Fan - 9 arrows in a cone
 ABIL.Archer.Q = function(run, p, st, ws, hrp, px, pz, dx, dz)
-	local n, spread = 9, math.rad(64)
+	local n, spread = 9 + ws.cnt * 2, math.rad(64 + ws.cnt * 7)
 	st.lockAtk = os.clock() + 0.25
 	swingWeapon(st, "Archer", 0.3)
 	for i = 1, n do
@@ -1711,7 +2744,7 @@ ABIL.Archer.Q = function(run, p, st, ws, hrp, px, pz, dx, dz)
 		spawnProj(run, {
 			kind = "arrow", x = px + ddx * 2, z = pz + ddz * 2, dx = ddx, dz = ddz,
 			speed = Config.Classes.Archer.projSpeed * 1.15, range = ws.range,
-			dmg = ws.damage * 1.0 * rnd(), owner = p, crit = false, hitR = 0.9,
+			dmg = ws.damage * 1.0 * ws.am * rnd(), owner = p, crit = false, hitR = 0.9,
 		})
 	end
 	runFx(run, "Fan", px, pz, dx, dz, spread)
@@ -1719,7 +2752,7 @@ end
 
 -- E: Frost Trap - rune that freezes everything in the area
 ABIL.Archer.E = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
-	local R, delay = 11.5, 0.75
+	local R, delay = 11.5 * ws.rs, 0.75
 	local tx, tz = clampTarget(run, px, pz, aim, 48)
 	st.lockAtk = os.clock() + 0.25
 	swingWeapon(st, "Archer", 0.3)
@@ -1727,7 +2760,7 @@ ABIL.Archer.E = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	later(run, delay, function()
 		runFx(run, "Freeze", tx, tz, R, 2.6)
 		for _, e in ipairs(enemiesInCircle(run, tx, tz, R)) do
-			damageEnemy(run, e, ws.damage * 2.0 * rnd(), p, false)
+			damageEnemy(run, e, ws.damage * 2.0 * ws.am * rnd(), p, false)
 			if not e.dead then applyCC(e, 2.6, 3.5, 0.4) end
 		end
 	end)
@@ -1736,7 +2769,7 @@ ABIL.Archer.E = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 		later(run, delay + 0.45 * k, function()
 			for _, e in ipairs(enemiesInCircle(run, tx, tz, R)) do
 				applyCC(e, 0, 0.7, 0.4)
-				if k % 2 == 0 then damageEnemy(run, e, ws.damage * 0.25 * rnd(), p, false) end
+				if k % 2 == 0 then damageEnemy(run, e, ws.damage * 0.25 * ws.am * rnd(), p, false) end
 			end
 		end)
 	end
@@ -1744,7 +2777,7 @@ end
 
 -- Z: Sunpiercer - charged piercing beam of light
 ABIL.Archer.Z = function(run, p, st, ws, hrp, px, pz, dx, dz)
-	local len, width, charge = 90, 4.2, 0.85
+	local len, width, charge = 90 * (1 + (ws.rs - 1) * 0.5), 4.2 * ws.rs, 0.85
 	st.lockAtk = os.clock() + charge + 0.8
 	runFx(run, "BeamCharge", p.UserId, dx, dz, charge, len)
 	local ox, oz = px, pz
@@ -1755,7 +2788,7 @@ ABIL.Archer.Z = function(run, p, st, ws, hrp, px, pz, dx, dz)
 			if t > -2 and t < len then
 				local perp = math.abs(ex * dz - ez * dx)
 				if perp <= width + e.r then
-					damageEnemy(run, e, ws.damage * mult * rnd(), p, mult > 5)
+					damageEnemy(run, e, ws.damage * mult * ws.am * rnd(), p, mult > 5)
 					if not e.dead then applyCC(e, stunT, 1.5, 0.5) end
 				end
 			end
@@ -1765,11 +2798,14 @@ ABIL.Archer.Z = function(run, p, st, ws, hrp, px, pz, dx, dz)
 		local _, _, r = getChar(p)
 		if r then ox, oz = r.Position.X, r.Position.Z end
 		swingWeapon(st, "Archer", 0.6)
-		runFx(run, "Beam", ox, oz, dx, dz, len, width, 0.75)
+		runFx(run, "Beam", ox, oz, dx, dz, len, width, 0.75 + 0.1 * ws.cnt)
 		pulse(6.5, 1.2)
 	end)
 	later(run, charge + 0.25, function() pulse(2.5, 0) end)
 	later(run, charge + 0.5, function() pulse(2.5, 0) end)
+	for i = 1, ws.cnt do
+		later(run, charge + 0.5 + 0.1 * i, function() pulse(2.0, 0) end)
+	end
 end
 
 -- ---------------------------------------------------------------- MAGE
@@ -1793,8 +2829,8 @@ ABIL.Mage.Q = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	end
 	local chain, seen = { first }, { [first] = true }
 	local cur = first
-	for _ = 1, 7 do
-		local nxt, nd = nil, 18 * 18
+	for _ = 1, 7 + ws.cnt * 2 do
+		local nxt, nd = nil, (18 * (1 + (ws.rs - 1) * 0.6)) ^ 2
 		for _, e in ipairs(run.enemies) do
 			if not seen[e] then
 				local d2 = (e.x - cur.x) ^ 2 + (e.z - cur.z) ^ 2
@@ -1818,7 +2854,7 @@ ABIL.Mage.Q = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	for i, e in ipairs(chain) do
 		later(run, (i - 1) * 0.07, function()
 			if e.dead then return end
-			damageEnemy(run, e, ws.damage * 2.1 * (0.92 ^ (i - 1)) * rnd(), p, false)
+			damageEnemy(run, e, ws.damage * 2.1 * ws.am * (0.94 ^ (i - 1)) * rnd(), p, false)
 			if not e.dead then applyCC(e, 0.7) end
 		end)
 	end
@@ -1826,7 +2862,7 @@ end
 
 -- E: Arcane Blink
 ABIL.Mage.E = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
-	local want = math.clamp(math.sqrt((aim.X - px) ^ 2 + (aim.Z - pz) ^ 2), 8, 26)
+	local want = math.clamp(math.sqrt((aim.X - px) ^ 2 + (aim.Z - pz) ^ 2), 8, 26 * (1 + (ws.rs - 1) * 0.4))
 	local nx, nz = clampXZ(run, px + dx * want, pz + dz * want)
 	local info = run.info
 	if info then
@@ -1848,9 +2884,9 @@ ABIL.Mage.E = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	swingWeapon(st, "Mage", 0.4)
 	runFx(run, "Blink", px, pz, nx, nz)
 	ToClient:FireClient(p, "BlinkTo", nx, nz)
-	local R = 10
+	local R = 10 * ws.rs
 	for _, e in ipairs(enemiesInCircle(run, px, pz, R)) do
-		damageEnemy(run, e, ws.damage * 1.6 * rnd(), p, false)
+		damageEnemy(run, e, ws.damage * 1.6 * ws.am * rnd(), p, false)
 		if not e.dead then
 			pushEnemy(run, e, e.x - px, e.z - pz, 5)
 			applyCC(e, 0.8)
@@ -1858,7 +2894,7 @@ ABIL.Mage.E = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	end
 	later(run, 0.18, function()
 		for _, e in ipairs(enemiesInCircle(run, nx, nz, R)) do
-			damageEnemy(run, e, ws.damage * 1.6 * rnd(), p, false)
+			damageEnemy(run, e, ws.damage * 1.6 * ws.am * rnd(), p, false)
 			if not e.dead then
 				pushEnemy(run, e, e.x - nx, e.z - nz, 5)
 				applyCC(e, 0.8, 1.5, 0.6)
@@ -1870,18 +2906,18 @@ end
 -- Z: Meteor Storm
 ABIL.Mage.Z = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	local tx, tz = clampTarget(run, px, pz, aim, 50)
-	local count, scatter, fall, R = 10, 17, 1.15, 8.5
+	local count, scatter, fall, R = 10 + ws.cnt * 3, 17 * ws.rs, 1.15, 8.5 * (1 + (ws.rs - 1) * 0.7)
 	st.lockAtk = os.clock() + 0.6
 	swingWeapon(st, "Mage", 0.8)
 	for i = 1, count do
 		local ang = abRng:NextNumber() * math.pi * 2
 		local rad = (i == 1) and 0 or math.sqrt(abRng:NextNumber()) * scatter
 		local mx, mz = clampXZ(run, tx + math.cos(ang) * rad, tz + math.sin(ang) * rad)
-		local t0 = (i - 1) * 0.36
+		local t0 = (i - 1) * math.max(0.1, 3.6 / count)
 		later(run, t0, function() runFx(run, "Meteor", mx, mz, fall, R) end)
 		later(run, t0 + fall, function()
 			for _, e in ipairs(enemiesInCircle(run, mx, mz, R)) do
-				damageEnemy(run, e, ws.damage * 3.8 * rnd(), p, false)
+				damageEnemy(run, e, ws.damage * 3.8 * ws.am * rnd(), p, false)
 				if not e.dead then
 					pushEnemy(run, e, e.x - mx, e.z - mz, 2.5)
 					applyBurn(e, ws.damage * 0.9, 4, p)
@@ -1900,7 +2936,7 @@ local function castAbility(p, key)
 		return
 	end
 	local d = D[p]
-	local cls = d and d.class
+	local cls = classOf(p)
 	if not cls then return end
 	local def = Config.Abilities[cls] and Config.Abilities[cls][key]
 	local fn = ABIL[cls] and ABIL[cls][key]
@@ -1913,7 +2949,8 @@ local function castAbility(p, key)
 	if now < (st.lockCast or 0) then return end
 	local aim = st.lastAim
 	if typeof(aim) ~= "Vector3" then aim = hrp.Position + hrp.CFrame.LookVector * 20 end
-	local ws = Config.weaponStats(cls, d.upg[cls])
+	local wdef = weaponDefOf(p)
+	local ws = Config.weaponStats(cls, d.upg[cls], wdef)
 	local px, pz = hrp.Position.X, hrp.Position.Z
 	local dx, dz = aim.X - px, aim.Z - pz
 	local m = math.sqrt(dx * dx + dz * dz)
@@ -1924,21 +2961,27 @@ local function castAbility(p, key)
 		if m < 0.01 then dx, dz, m = 0, -1, 1 end
 	end
 	dx, dz = dx / m, dz / m
-	st.abCd[key] = now + def.cd
+	-- rarer weapons recharge faster
+	local cd = def.cd * ws.cdr
+	st.abCd[key] = now + cd
 	st.lockCast = now + 0.3
+	runFx(run, "Theme", ws.wid)
 	local ok, err = pcall(fn, run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	if not ok then
 		warn("[ability " .. cls .. key .. "] " .. tostring(err))
 		st.abCd[key] = 0
 		return
 	end
-	ToClient:FireClient(p, "AbCd", key, def.cd)
+	ToClient:FireClient(p, "AbCd", key, cd)
+	-- rarity aura around the caster (bigger for higher tiers / ultimates)
+	runFx(run, "Aura", px, pz, ws.tier, def.ult and 2 or 1, ws.wid)
 	if def.ult then
-		ToClient:FireClient(p, "UltBanner", def.name, Config.Classes[cls].color)
+		ToClient:FireClient(p, "UltBanner", wdef and wdef.ult or def.name, Config.Classes[cls].color, ws.wid)
 	end
 end
 
 -- ============================================================ REMOTES
+local chestRng = Random.new()
 ToServer.OnServerEvent:Connect(function(p, action, a, b, c, d, e)
 	local st = S[p]
 	if not st or type(action) ~= "string" then return end
@@ -2011,6 +3054,77 @@ ToServer.OnServerEvent:Connect(function(p, action, a, b, c, d, e)
 		pushData(p)
 	elseif action == "ReturnLobby" then
 		if st.run and st.run.over then returnToLobby(p) end
+	elseif action == "OpenChest" then
+		-- a = chest id, b = weapon type, c = amount (1 / 5 / 10)
+		local d = D[p]
+		if st.zone ~= "chest" or st.run or type(a) ~= "string" or type(b) ~= "string" or type(c) ~= "number" then return end
+		local chest
+		for _, ch in ipairs(Config.Chests) do
+			if ch.id == a then chest = ch end
+		end
+		if not chest or not Config.ByType[b] then return end
+		local amount = math.floor(c)
+		local disc = Config.MultiDiscount[amount]
+		if not disc or os.clock() < (st.chestLock or 0) then return end
+		local cost = math.floor(chest.price * amount * disc)
+		if d.coins < cost then
+			toast(p, "Не хватает монет!", "ff6b6b", 2)
+			return
+		end
+		d.coins = d.coins - cost
+		local results, best = {}, 0
+		for _ = 1, amount do
+			local w = Config.rollWeapon(chest, b, chestRng)
+			local isNew = (d.inv[w.id] or 0) == 0
+			d.inv[w.id] = (d.inv[w.id] or 0) + 1
+			table.insert(results, { id = w.id, new = isNew })
+			if w.tier > best then best = w.tier end
+			if w.tier >= 6 then
+				local col = Config.Rarities[w.tier].color:ToHex()
+				ToClient:FireAllClients("Toast", p.DisplayName .. " выбил " .. string.upper(Config.Rarities[w.tier].name) .. ": " .. w.name .. "!", col, 4.5)
+			end
+		end
+		d.opened = (d.opened or 0) + amount
+		st.chestLock = os.clock() + 0.6
+		pushData(p)
+		ToClient:FireClient(p, "ChestResult", chest.id, results, cost)
+		if os.clock() - (st.lastSave or 0) > 25 then
+			st.lastSave = os.clock()
+			task.spawn(saveData, p)
+		end
+	elseif action == "Equip" then
+		local d = D[p]
+		local w = type(a) == "string" and Config.Weapons[a]
+		if not w or st.run or (d.inv[a] or 0) < 1 then return end
+		d.equip[w.type] = a
+		d.class = w.type
+		applyStats(p, false)
+		local _, h = getChar(p)
+		if h then h.Health = h.MaxHealth end
+		buildSprite(p)
+		pushData(p)
+		toast(p, "Экипировано: " .. w.name, Config.Rarities[w.tier].color:ToHex(), 2.2)
+	elseif action == "Sell" then
+		-- a = weapon id or "all": sells every duplicate (one copy of each weapon is always kept)
+		local d = D[p]
+		if st.run or type(a) ~= "string" then return end
+		local total, n = 0, 0
+		for id, cnt in pairs(d.inv) do
+			local w = Config.Weapons[id]
+			if w and cnt > 1 and (a == "all" or a == id) then
+				total = total + (cnt - 1) * Config.Rarities[w.tier].sell
+				n = n + cnt - 1
+				d.inv[id] = 1
+			end
+		end
+		if n > 0 then
+			d.coins = d.coins + total
+			pushData(p)
+			toast(p, "Продано дубликатов: " .. n .. "  (+" .. total .. " монет)", "ffd84a", 2.5)
+		end
+	elseif TestArea and TestArea.onAction then -- [TESTAREA]
+		local ok, err = pcall(TestArea.onAction, p, st, action, a, b, c)
+		if not ok then warn("[TestArea] " .. tostring(err)) end
 	end
 end)
 
@@ -2111,6 +3225,16 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 end)
+
+-- [TESTAREA] hand the internals to the test place module
+if TestArea then
+	local ok, err = pcall(TestArea.init, {
+		Config = Config, D = D, S = S, runs = runs, slots = slots, getChar = getChar, applyStats = applyStats,
+		buildSprite = buildSprite, pushData = pushData, toast = toast, returnToLobby = returnToLobby, endRun = endRun,
+		spawnEnemy = spawnEnemy, runFx = runFx, ToClient = ToClient, lobbySpawnPos = lobbySpawnPos,
+	})
+	if not ok then warn("[TestArea] init failed: " .. tostring(err)) end
+end
 
 print("[TopDownHeroes] server ready")
 ]]></ProtectedString>
@@ -2419,7 +3543,15 @@ local HANDS = {
 	Mage = CFrame.new(2.0, 0, -0.5) * CFrame.Angles(0, -0.05, 0),
 }
 
-function Sprites.player(cls, color, root, parent)
+-- themed (rarity based) weapon models are injected by GameServer: Sprites.themed = require(ReplicatedStorage.WeaponModels)
+function Sprites.weaponFor(kind, root, parent, handCF, scale, wdef)
+	if wdef and Sprites.themed then
+		return Sprites.themed.build(kind, wdef, root, parent, handCF, scale)
+	end
+	return Sprites.weapon(kind, root, parent, handCF, scale)
+end
+
+function Sprites.player(cls, color, root, parent, wdef)
 	local base = -2.8
 	local s = Sprites.new(root, parent, base, 1)
 	local torso = color or Color3.fromRGB(120, 120, 130)
@@ -2452,7 +3584,7 @@ function Sprites.player(cls, color, root, parent)
 		s:disc(0.5, Color3.fromRGB(235, 185, 60), -1.7, 0.15, 1.1, METAL, 0, 0.15)
 		s:disc(0.5, Color3.fromRGB(235, 185, 60), 1.7, 0.15, 1.1, METAL, 0, 0.15)
 		s:disc(0.85, SKIN, 1.9, -0.9, 0.9)
-		weapon = Sprites.weapon("Swordsman", root, parent, HANDS.Swordsman * CFrame.new(0, base + 1.1, 0), 1)
+		weapon = Sprites.weaponFor("Swordsman", root, parent, HANDS.Swordsman * CFrame.new(0, base + 1.1, 0), 1, wdef)
 	elseif cls == "Archer" then
 		s:disc(2.3, Color3.fromRGB(46, 112, 58), 0, 0.15, 1.5, FABRIC, 0, 0.5)
 		s:disc(1.3, Color3.fromRGB(34, 86, 44), 0, 0.7, 1.82, FABRIC, 0, 0.2)
@@ -2463,7 +3595,7 @@ function Sprites.player(cls, color, root, parent)
 		end
 		s:disc(0.85, SKIN, -0.7, -2.0, 0.9)
 		s:disc(0.85, SKIN, 0.7, -2.0, 0.9)
-		weapon = Sprites.weapon("Archer", root, parent, HANDS.Archer * CFrame.new(0, base + 1.0, 0), 1)
+		weapon = Sprites.weaponFor("Archer", root, parent, HANDS.Archer * CFrame.new(0, base + 1.0, 0), 1, wdef)
 	elseif cls == "Mage" then
 		local purple = Color3.fromRGB(100, 58, 170)
 		s:disc(3.6, Color3.fromRGB(70, 38, 120), 0, 0.0, 1.45, FABRIC, 0, 0.25)
@@ -2472,12 +3604,15 @@ function Sprites.player(cls, color, root, parent)
 		s:disc(0.6, Color3.fromRGB(255, 215, 80), 0, 0.0, 2.25, NEON, 0, 0.2)
 		s:disc(3.45, Color3.fromRGB(255, 215, 80), 0, 0.0, 1.58, NEON, 0.55, 0.05)
 		s:disc(0.85, SKIN, 2.0, -0.5, 0.9)
-		weapon = Sprites.weapon("Mage", root, parent, HANDS.Mage * CFrame.new(0, base + 1.0, 0), 1)
+		weapon = Sprites.weaponFor("Mage", root, parent, HANDS.Mage * CFrame.new(0, base + 1.0, 0), 1, wdef)
 	else
 		s:disc(1.85, hairC, 0, 0.25, 1.5, nil, 0, 0.3)
 	end
 	if cls == nil then
 		s:disc(1.85, hairC, 0, 0.25, 1.5, nil, 0, 0.3)
+	end
+	if wdef and Sprites.themed and wdef.tier >= 4 then
+		pcall(Sprites.themed.heroAura, root, parent, wdef, base)
 	end
 	return weapon
 end
@@ -3111,6 +4246,62 @@ function M.lobby(folder)
 	label(folder, uz.x, 7, uz.z - uz.r - 4, "UPGRADES", C3(255, 214, 40), 380, 48, 34)
 	label(folder, uz.x, 7, uz.z - uz.r - 0.8, "Spend skill points & coins", C3(255, 255, 255), 380, 28, 16)
 
+	-- ================= WEAPON CHEST STATION (orange) =================
+	local cz_
+	for _, zn in ipairs(Config.Lobby.zones) do
+		if zn.id == "chest" then cz_ = zn end
+	end
+	if cz_ then
+		local ORANGE, GOLD = C3(255, 170, 50), C3(255, 214, 90)
+		disc(folder, cz_.r * 2 + 3, C3(52, 50, 62), cz_.x, 0.26, cz_.z, MAT.Slate, 0, 0.12)
+		ring(folder, cz_.r * 2, 1.0, ORANGE, cz_.x, 0.34, cz_.z)
+		disc(folder, cz_.r * 1.7, C3(86, 52, 26), cz_.x, 0.5, cz_.z, MAT.Marble, 0, 0.4)
+		disc(folder, cz_.r * 1.35, ORANGE, cz_.x, 0.62, cz_.z, MAT.Neon, 0.84, 0.1)
+		disc(folder, cz_.r * 0.9, GOLD, cz_.x, 0.66, cz_.z, MAT.Neon, 0.8, 0.1)
+		for i = 0, 15 do
+			local a = i * math.pi / 8
+			block(folder, 0.5, 0.15, 1.5, ORANGE, cz_.x + math.cos(a) * cz_.r * 0.82, 0.75, cz_.z + math.sin(a) * cz_.r * 0.82, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
+		end
+		-- the chest (seen from above: lid, golden bands, lock)
+		local wood, woodDark = C3(142, 88, 44), C3(98, 60, 30)
+		block(folder, 8.4, 3, 5.6, woodDark, cz_.x, 2.0, cz_.z, 0, MAT.WoodPlanks, 0, false)
+		block(folder, 8.0, 1.8, 5.2, wood, cz_.x, 4.1, cz_.z, 0, MAT.WoodPlanks, 0, false)
+		block(folder, 7.4, 0.5, 4.6, C3(170, 108, 52), cz_.x, 5.1, cz_.z, 0, MAT.Wood, 0, false)
+		for _, bx in ipairs({ -3.1, 3.1 }) do
+			block(folder, 0.8, 5.3, 5.8, GOLD, cz_.x + bx, 3.7, cz_.z, 0, MAT.Metal, 0, false)
+			block(folder, 0.5, 0.3, 5.0, C3(255, 240, 170), cz_.x + bx, 5.45, cz_.z, 0, MAT.Neon, 0.2, false)
+		end
+		block(folder, 8.5, 0.5, 0.7, GOLD, cz_.x, 5.35, cz_.z, 0, MAT.Metal, 0, false)
+		disc(folder, 1.9, GOLD, cz_.x, 5.7, cz_.z + 2.4, MAT.Metal, 0, 0.4)
+		disc(folder, 0.9, C3(255, 90, 60), cz_.x, 5.95, cz_.z + 2.4, MAT.Neon, 0, 0.3)
+		for _, cx2 in ipairs({ -4.1, 4.1 }) do
+			for _, cz2 in ipairs({ -2.7, 2.7 }) do
+				disc(folder, 1.0, GOLD, cz_.x + cx2, 5.3, cz_.z + cz2, MAT.Metal, 0, 0.5)
+			end
+		end
+		local glowp = disc(folder, 5, GOLD, cz_.x, 5.4, cz_.z, MAT.Neon, 1, 0.1)
+		local pe3 = Instance.new("ParticleEmitter")
+		pe3.Rate = 30
+		pe3.Lifetime = NumberRange.new(1.6, 2.6)
+		pe3.Speed = NumberRange.new(5, 9)
+		pe3.SpreadAngle = Vector2.new(25, 25)
+		pe3.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.7), NumberSequenceKeypoint.new(1, 0) })
+		pe3.Transparency = NumberSequence.new(0, 1)
+		pe3.Color = ColorSequence.new(GOLD, C3(255, 120, 60))
+		pe3.LightEmission = 1
+		pe3.EmissionDirection = Enum.NormalId.Right
+		pe3.Parent = glowp
+		addLight(glowp, ORANGE, 30, 1.6)
+		for i = 0, 6 do
+			local a = i * 0.9
+			local coin = disc(folder, 1.3, C3(255, 205, 40), cz_.x + math.cos(a) * 9, 0.9 + (i % 3) * 0.2, cz_.z + math.sin(a) * 8, MAT.Neon, 0.1, 0.2)
+			if i == 0 then addLight(coin, C3(255, 214, 40), 16, 1) end
+		end
+		collider(folder, 8, cz_.x, cz_.z, 5)
+		label(folder, cz_.x, 8, cz_.z - cz_.r - 4, "СУНДУКИ С ОРУЖИЕМ", ORANGE, 460, 48, 34)
+		label(folder, cz_.x, 8, cz_.z - cz_.r - 0.8, "Посохи  -  Мечи  -  Луки   |   за монеты", C3(255, 255, 255), 460, 28, 16)
+	end
+
 	-- crates
 	for _, p in ipairs({ { -88, 60 }, { -84, 66 }, { 88, 60 }, { 85, 67 }, { 90, -20 }, { -90, -20 } }) do
 		block(folder, 5, 4, 5, C3(150, 108, 60), p[1], 2.2, p[2], rng:NextNumber(0, 1), MAT.WoodPlanks, 0, true)
@@ -3361,17 +4552,344 @@ return M
 ]]></ProtectedString>
 </Properties>
 </Item>
+<Item class="ModuleScript" referent="RBX8">
+<Properties>
+<string name="Name">TestArea</string>
+<ProtectedString name="Source"><![CDATA[-- ===========================================================================================
+-- [TESTAREA]  WEAPON TEST PLACE  -  built so it can be removed later in two clicks:
+--   1. delete this ModuleScript   (ServerScriptService > GameServer > TestArea)
+--   2. delete the LocalScript     (StarterPlayer > StarterPlayerScripts > TestAreaClient)
+-- (or just set Config.TestArea.enabled = false in ReplicatedStorage > Config)
+-- Nothing else in the game depends on it: GameServer only calls it through "-- [TESTAREA]" hooks that are
+-- skipped automatically when this module is missing.
+-- ===========================================================================================
+local Workspace = game:GetService("Workspace")
+
+local TestArea = {}
+local api
+local testRun = nil
+local C3 = Color3.fromRGB
+
+local ZONE = { id = "testportal", kind = "testportal", x = 52, z = 64, r = 11 }
+local SLOT = 40 -- far away arena slot (ox = 3000 + 40 * 400)
+local HALF = 80
+
+-- called by GameServer BEFORE the lobby is built: registers the portal zone
+function TestArea.preInit(Config)
+	table.insert(Config.Lobby.zones, ZONE)
+end
+
+-- ============================================================ small part helpers
+local function part(parent, shape, size, cf, color, mat, trans, collide)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.Shape = shape
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color
+	p.Material = mat or Enum.Material.SmoothPlastic
+	p.Transparency = trans or 0
+	p.CanCollide = collide or false
+	p.CanQuery = collide or false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Parent = parent
+	return p
+end
+local function disc(parent, d, color, x, y, z, mat, trans, thick)
+	return part(parent, Enum.PartType.Cylinder, Vector3.new(thick or 0.2, d, d), CFrame.new(x, y, z) * CFrame.Angles(0, 0, math.pi / 2), color, mat, trans, false)
+end
+local function block(parent, sx, sy, sz, color, x, y, z, rot, mat, trans, collide)
+	return part(parent, Enum.PartType.Block, Vector3.new(sx, sy, sz), CFrame.new(x, y, z) * CFrame.Angles(0, rot or 0, 0), color, mat, trans, collide)
+end
+local function label(parent, x, y, z, text, color, w, h, size)
+	local a = part(parent, Enum.PartType.Block, Vector3.new(1, 1, 1), CFrame.new(x, y, z), C3(255, 255, 255), nil, 1, false)
+	local g = Instance.new("BillboardGui")
+	g.Size = UDim2.fromOffset(w or 300, h or 50)
+	g.AlwaysOnTop = true
+	g.LightInfluence = 0
+	g.MaxDistance = 700
+	g.Adornee = a
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.Text = text
+	t.TextColor3 = color or C3(255, 255, 255)
+	t.Font = Enum.Font.GothamBlack
+	t.TextSize = size or 22
+	t.TextStrokeTransparency = 0.2
+	t.TextWrapped = true
+	t.Parent = g
+	g.Parent = a
+	return a
+end
+
+-- ============================================================ lobby portal (blue)
+function TestArea.buildPortal(folder)
+	local col = C3(70, 190, 255)
+	local z = ZONE
+	disc(folder, z.r * 2 + 3, C3(52, 50, 62), z.x, 0.26, z.z, Enum.Material.Slate, 0, 0.12)
+	disc(folder, z.r * 2, col, z.x, 0.34, z.z, Enum.Material.Neon, 0, 0.15)
+	disc(folder, z.r * 2 - 1.8, C3(24, 34, 48), z.x, 0.36, z.z, Enum.Material.Slate, 0, 0.15)
+	disc(folder, z.r * 1.5, C3(30, 70, 110), z.x, 0.5, z.z, Enum.Material.Marble, 0, 0.3)
+	disc(folder, z.r * 1.2, col, z.x, 0.64, z.z, Enum.Material.Neon, 0.8, 0.1)
+	disc(folder, z.r * 0.7, C3(190, 240, 255), z.x, 0.7, z.z, Enum.Material.Neon, 0.75, 0.1)
+	for i = 0, 11 do
+		local a = i * math.pi / 6
+		block(folder, 0.5, 0.15, 1.6, col, z.x + math.cos(a) * z.r * 0.8, 0.8, z.z + math.sin(a) * z.r * 0.8, math.atan2(math.cos(a), math.sin(a)), Enum.Material.Neon, 0, false)
+	end
+	-- two pillars + arch
+	for _, sx in ipairs({ -1, 1 }) do
+		block(folder, 2, 14, 2, C3(60, 66, 84), z.x + sx * 5, 7, z.z - 3, 0, Enum.Material.Slate, 0, true)
+		block(folder, 2.4, 0.6, 2.4, col, z.x + sx * 5, 14.2, z.z - 3, 0, Enum.Material.Neon, 0, false)
+	end
+	block(folder, 12, 1.4, 2, C3(60, 66, 84), z.x, 14.2, z.z - 3, 0, Enum.Material.Slate, 0, false)
+	local sheet = block(folder, 8, 13, 0.3, col, z.x, 7, z.z - 3, 0, Enum.Material.Neon, 0.7, false)
+	local em = Instance.new("ParticleEmitter")
+	em.Rate = 28
+	em.Lifetime = NumberRange.new(1.4, 2.4)
+	em.Speed = NumberRange.new(2, 5)
+	em.SpreadAngle = Vector2.new(30, 30)
+	em.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(1, 0) })
+	em.Transparency = NumberSequence.new(0, 1)
+	em.Color = ColorSequence.new(col, C3(255, 255, 255))
+	em.LightEmission = 1
+	em.Parent = sheet
+	local l = Instance.new("PointLight")
+	l.Color = col
+	l.Range = 26
+	l.Brightness = 1.4
+	l.Parent = sheet
+	label(folder, z.x, 19, z.z - 3, "ТЕСТОВАЯ АРЕНА", col, 420, 44, 30)
+	label(folder, z.x, 16.5, z.z - 3, "Проверь всё оружие  |  временная зона", C3(255, 255, 255), 420, 26, 15)
+end
+
+-- ============================================================ the arena
+local DUMMY_PAL = { skin = C3(214, 190, 150), cloth = C3(150, 112, 70), hair = C3(100, 76, 50) }
+local DEFS = {
+	small = { id = "DummyS", name = "Training Dummy", kind = "zombie", hp = 10, dmg = 0, speed = 0, r = 1.7, atkCd = 9, pal = DUMMY_PAL },
+	big = { id = "DummyB", name = "Training Titan", kind = "titan", hp = 10, dmg = 0, speed = 0, r = 5.2, atkCd = 9, pal = DUMMY_PAL },
+}
+
+local function buildArena(folder, ox)
+	block(folder, HALF * 2 + 30, 1, HALF * 2 + 30, C3(54, 60, 78), ox, -0.5, 0, 0, Enum.Material.Slate, 0, true)
+	for i = -8, 8 do
+		block(folder, HALF * 2, 0.06, 0.25, C3(90, 104, 140), ox, 0.04, i * 10, 0, Enum.Material.Neon, 0.55, false)
+		block(folder, 0.25, 0.06, HALF * 2, C3(90, 104, 140), ox + i * 10, 0.04, 0, 0, Enum.Material.Neon, 0.55, false)
+	end
+	-- frame
+	local frameCol = C3(70, 190, 255)
+	block(folder, HALF * 2 + 1, 0.2, 1, frameCol, ox, 0.12, -HALF, 0, Enum.Material.Neon, 0.2, false)
+	block(folder, HALF * 2 + 1, 0.2, 1, frameCol, ox, 0.12, HALF, 0, Enum.Material.Neon, 0.2, false)
+	block(folder, 1, 0.2, HALF * 2 + 1, frameCol, ox - HALF, 0.12, 0, 0, Enum.Material.Neon, 0.2, false)
+	block(folder, 1, 0.2, HALF * 2 + 1, frameCol, ox + HALF, 0.12, 0, 0, Enum.Material.Neon, 0.2, false)
+	-- invisible walls
+	local c = C3(0, 0, 0)
+	block(folder, HALF * 2 + 30, 40, 6, c, ox, 20, -HALF - 3, 0, nil, 1, true)
+	block(folder, HALF * 2 + 30, 40, 6, c, ox, 20, HALF + 3, 0, nil, 1, true)
+	block(folder, 6, 40, HALF * 2, c, ox - HALF - 3, 20, 0, 0, nil, 1, true)
+	block(folder, 6, 40, HALF * 2, c, ox + HALF + 3, 20, 0, 0, nil, 1, true)
+	-- spawn pad
+	disc(folder, 14, C3(255, 255, 255), ox, 0.2, 62, Enum.Material.Neon, 0.88, 0.05)
+	-- distance markers along the middle line (from the spawn pad at z = 62)
+	for d = 20, 120, 20 do
+		local z = 62 - d
+		if z > -HALF + 2 then
+			block(folder, 6, 0.1, 0.4, C3(255, 214, 90), ox, 0.1, z, 0, Enum.Material.Neon, 0.1, false)
+			label(folder, ox + 6, 1.5, z, d .. " studs", C3(255, 214, 90), 140, 24, 14)
+		end
+	end
+	label(folder, ox, 10, 50, "ТЕСТОВАЯ АРЕНА", C3(70, 190, 255), 520, 52, 36)
+	label(folder, ox, 10, 42, "Манекены не бьют в ответ и не умирают. Выбирай оружие слева, пробуй Q / E / Z", C3(255, 255, 255), 640, 30, 16)
+	label(folder, ox - 40, 6, 30, "ЦЕЛИ", C3(200, 210, 230), 200, 24, 16)
+	label(folder, ox, 6, -2, "ГРУППА (проверка зон)", C3(200, 210, 230), 260, 24, 16)
+	label(folder, ox, 12, -45, "БОЛЬШИЕ ЦЕЛИ", C3(200, 210, 230), 260, 24, 16)
+	label(folder, ox, 6, -72, "ДАЛЬНЯЯ ЛИНИЯ (дальность)", C3(200, 210, 230), 300, 24, 16)
+end
+
+local function dummyLayout(ox)
+	local L = {}
+	for i = -2, 2 do table.insert(L, { "small", ox + i * 16, 30 }) end
+	-- tight group for area abilities
+	local ring = { { 0, 0 }, { 6, 0 }, { -6, 0 }, { 0, 6 }, { 0, -6 }, { 12, 4 }, { -12, 4 }, { 12, -4 }, { -12, -4 }, { 6, 10 }, { -6, 10 }, { 6, -10 }, { -6, -10 } }
+	for _, o in ipairs(ring) do table.insert(L, { "small", ox + o[1], -10 + o[2] }) end
+	for i = -1, 1 do table.insert(L, { "big", ox + i * 34, -45 }) end
+	for i = -2, 2 do table.insert(L, { "small", ox + i * 14, -70 }) end
+	return L
+end
+
+local function spawnDummy(run, spec)
+	local def = DEFS[spec.kind]
+	local e = api.spawnEnemy(run, def, 1, spec.x, spec.z)
+	e.dummy = true
+	e.hx, e.hz = spec.x, spec.z
+	e.maxHp = 2000000
+	e.hp = e.maxHp
+	e.nextAtk = math.huge
+	e.fill.Size = UDim2.fromScale(1, 1)
+	spec.e = e
+end
+
+local function ensureRun()
+	if testRun and not testRun.destroyed and not testRun.over then return testRun end
+	local slot = SLOT
+	local ox = 3000 + slot * 400
+	local folder = Instance.new("Folder")
+	folder.Name = "Run" .. slot
+	folder.Parent = Workspace
+	buildArena(folder, ox)
+	local ef = Instance.new("Folder")
+	ef.Name = "Enemies"
+	ef.Parent = folder
+	local run = {
+		cfg = { id = "test", name = "Тестовая арена", enemies = {} },
+		dcfg = { name = "Training", hp = 1, dmg = 0, reward = 0, extra = 0, color = "ffffff" },
+		diff = 1, slot = slot, folder = folder, enemyFolder = ef,
+		info = { half = HALF, ox = ox, obstacles = {}, spawn = Vector3.new(ox, 4, 62) },
+		players = {}, enemies = {}, projs = {}, queue = {}, events = {}, targets = {}, gain = {},
+		wave = 1, total = 0, waveCounts = { 0, 0, 0 }, cap = 999, nextSpawn = 0, nextHud = 0, over = false, test = true,
+	}
+	api.slots[slot] = run
+	table.insert(api.runs, run)
+	testRun = run
+	local specs = {}
+	for _, d in ipairs(dummyLayout(ox)) do
+		local spec = { kind = d[1], x = d[2], z = d[3] }
+		table.insert(specs, spec)
+		spawnDummy(run, spec)
+	end
+	run.specs = specs
+	-- keep the dummies alive: refill health, bring back killed ones
+	task.spawn(function()
+		while not run.destroyed and not run.over do
+			task.wait(0.5)
+			for _, spec in ipairs(specs) do
+				local e = spec.e
+				if not e or e.dead then
+					if spec.respawnAt and os.clock() >= spec.respawnAt then
+						spec.respawnAt = nil
+						pcall(spawnDummy, run, spec)
+					elseif not spec.respawnAt then
+						spec.respawnAt = os.clock() + 1.5
+					end
+				elseif e.hp < e.maxHp * 0.6 then
+					e.hp = e.maxHp
+					e.fill.Size = UDim2.fromScale(1, 1)
+				end
+			end
+		end
+	end)
+	return run
+end
+
+-- ============================================================ enter / leave / actions
+local function enter(p, st)
+	if st.run or st.dead then return end
+	local run = ensureRun()
+	local info = run.info
+	st.run = run
+	st.zone = nil
+	st.party = nil
+	st.dead = false
+	st.abCd = {}
+	st.lockAtk = 0
+	st.lockCast = 0
+	local d = api.D[p]
+	st.testWeapon = (d.class and d.equip[d.class]) or api.Config.StarterWeapons.Swordsman
+	table.insert(run.players, p)
+	p:SetAttribute("InRun", true)
+	api.ToClient:FireClient(p, "Zone", nil)
+	api.ToClient:FireClient(p, "Env", "test")
+	local c = p.Character
+	if c then
+		c:PivotTo(CFrame.new(info.spawn + Vector3.new(math.random(-8, 8), 0, math.random(-4, 4))))
+		api.applyStats(p, true)
+		api.buildSprite(p)
+	end
+	api.pushData(p)
+	api.ToClient:FireClient(p, "TestMode", true)
+	api.toast(p, "ТЕСТОВАЯ АРЕНА", "46beff", 3)
+end
+
+local function leave(p, st)
+	local run = st.run
+	if not run or run ~= testRun then return end
+	st.testWeapon = nil
+	api.returnToLobby(p)
+	api.ToClient:FireClient(p, "TestMode", false)
+	task.defer(function()
+		if api.S[p] then
+			api.applyStats(p, true)
+			api.buildSprite(p)
+			api.pushData(p)
+		end
+	end)
+	if #run.players == 0 then
+		api.endRun(run)
+		testRun = nil
+	end
+end
+
+function TestArea.onAction(p, st, action, a)
+	if action == "TestEnter" then
+		if st.zone == "testportal" then enter(p, st) end
+	elseif action == "TestLeave" then
+		leave(p, st)
+	elseif action == "TestEquip" then
+		if st.run ~= testRun or not testRun then return end
+		local w = type(a) == "string" and api.Config.Weapons[a]
+		if not w then return end
+		st.testWeapon = a
+		api.applyStats(p, false)
+		api.buildSprite(p)
+		api.pushData(p)
+		st.abCd = {}
+		api.toast(p, w.name, api.Config.Rarities[w.tier].color:ToHex(), 2)
+	elseif action == "TestCd" then
+		if st.run ~= testRun or not testRun then return end
+		st.abCd = {}
+		st.lockCast = 0
+		st.lockAtk = 0
+		for _, k in ipairs({ "Q", "E", "Z" }) do
+			api.ToClient:FireClient(p, "AbCd", k, 0)
+		end
+	elseif action == "TestReset" then
+		if st.run ~= testRun or not testRun then return end
+		for _, spec in ipairs(testRun.specs or {}) do
+			local e = spec.e
+			if e and not e.dead then
+				e.hp = e.maxHp
+				e.x, e.z = spec.x, spec.z
+				e.burn = nil
+				e.stunUntil = nil
+				e.slowUntil = nil
+				e.fill.Size = UDim2.fromScale(1, 1)
+			end
+		end
+	end
+end
+
+function TestArea.init(a)
+	api = a
+end
+
+return TestArea
+]]></ProtectedString>
+</Properties>
 </Item>
 </Item>
-<Item class="StarterPlayer" referent="RBX8">
+</Item>
+<Item class="StarterPlayer" referent="RBX17">
 <Properties>
 <string name="Name">StarterPlayer</string>
 </Properties>
-<Item class="StarterPlayerScripts" referent="RBX9">
+<Item class="StarterPlayerScripts" referent="RBX15">
 <Properties>
 <string name="Name">StarterPlayerScripts</string>
 </Properties>
-<Item class="LocalScript" referent="RBX10">
+<Item class="LocalScript" referent="RBX11">
 <Properties>
 <string name="Name">GameClient</string>
 <ProtectedString name="Source"><![CDATA[-- GameClient: top-down camera, controls, HUD, menus and visual effects
@@ -3392,6 +4910,9 @@ local ToClient = Net:WaitForChild("ToClient")
 local Config = require(RS:WaitForChild("Config"))
 local cam = workspace.CurrentCamera
 local C3 = Color3.fromRGB
+local Theme = require(RS:WaitForChild("Theme"))
+local C3t = function(r, g, b) return Theme.tint(Color3.fromRGB(r, g, b)) end
+local projWid = {}
 
 pcall(function()
 	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
@@ -3576,7 +5097,7 @@ local function showToast(text, color, dur)
 	end)
 end
 
-local hint = mkLabel(gui, "WASD - move   |   Mouse - aim   |   Hold LMB - attack   |   Q / E - skills   |   Z - ULTIMATE   |   SPACE / SHIFT - dash   |   Wheel - zoom",
+local hint = mkLabel(gui, "WASD - move   |   Mouse - aim   |   Hold LMB - attack   |   Q / E - skills   |   Z - ULTIMATE   |   SPACE / SHIFT - dash   |   B - inventory   |   Wheel - zoom",
 	UDim2.new(0, 14, 1, -66), UDim2.fromOffset(410, 56), 13, C3(196, 202, 218))
 hint.TextStrokeColor3 = INK
 hint.TextYAlignment = Enum.TextYAlignment.Bottom
@@ -3626,7 +5147,7 @@ local LOC_COLORS = { forest = C3(70, 150, 90), cave = C3(124, 96, 190) }
 
 local function gateNumber(zid)
 	for _, zn in ipairs(Config.Lobby.zones) do
-		if zn.id == zid then return zn.n end
+		if zn.id == zid then return zn.n or 0 end
 	end
 	return 0
 end
@@ -4030,7 +5551,7 @@ local changeBtn = mkButton(gui, "CHANGE WEAPON", UDim2.fromOffset(14, 122), UDim
 end)
 changeBtn.TextSize = 15
 local function refreshChangeBtn()
-	changeBtn.Visible = not lp:GetAttribute("InRun")
+	changeBtn.Visible = false -- weapons are now equipped from the inventory (B)
 end
 
 -- ------------------------------------------------------------ RESULT PANEL
@@ -4053,7 +5574,14 @@ onData = function()
 	xpBar.txt.Text = "XP " .. data.xp .. " / " .. data.need
 	coinLabel.Text = "Coins: " .. data.coins
 	ptsLabel.Text = "Skill points: " .. data.points
-	classLabel.Text = data.class and string.upper(data.class) or "NO WEAPON"
+	local wd = data.weapon and Config.Weapons[data.weapon]
+	if wd then
+		classLabel.Text = wd.name
+		classLabel.TextColor3 = wd.rainbow and C3(255, 255, 255) or Config.Rarities[wd.tier].color
+	else
+		classLabel.Text = data.class and string.upper(data.class) or "NO WEAPON"
+	end
+	classLabel.TextScaled = true
 	refreshWeaponCards()
 	if curZone == "upgrade" then renderUpgrade() end
 	if curZone and gateNumber(curZone) > 0 and portal.frame.Visible then renderPortal() end
@@ -4345,8 +5873,8 @@ local H = {}
 
 -- sword arc: layered crescent that sweeps in the direction of the swing, with sparks
 H.Slash = function(x, z, dx, dz, range, arcDeg, crit, swingDir)
-	local col = crit and C3(255, 196, 84) or C3(150, 190, 235)
-	local core = crit and C3(255, 238, 190) or C3(236, 246, 255)
+	local col = crit and C3(255, 196, 84) or C3t(150, 190, 235)
+	local core = crit and C3(255, 238, 190) or C3t(236, 246, 255)
 	local N = 14
 	local half = math.rad(arcDeg) / 2
 	local dir = swingDir or 1
@@ -4398,31 +5926,38 @@ local function addProjPart(pr, shape, size, off, color, mat, trans)
 end
 
 H.Proj = function(id, kind, x, z, dx, dz, speed, range)
+	local TH = (kind == "arrow" or kind == "fireball") and Theme.current() or nil
+	local tinted = TH ~= nil and (TH.tier > 1 or TH.elem ~= "none")
+	projWid[id] = TH and TH.id or false
 	local pr = { kind = kind, x = x, z = z, dx = dx, dz = dz, speed = speed, left = range, parts = {}, acc = 0 }
 	local B, CY = Enum.PartType.Block, Enum.PartType.Cylinder
 	local flat = CFrame.Angles(0, 0, math.pi / 2)
 	if kind == "arrow" then
 		local shaft = addProjPart(pr, B, Vector3.new(0.2, 0.14, 2.8), CFrame.new(), C3(232, 222, 188), Enum.Material.Wood)
-		addProjPart(pr, B, Vector3.new(0.6, 0.16, 0.6), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), C3(176, 188, 206), Enum.Material.Metal)
-		addProjPart(pr, B, Vector3.new(0.34, 0.2, 0.34), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), C3(232, 238, 246), Enum.Material.Metal)
-		addProjPart(pr, B, Vector3.new(0.16, 0.12, 0.7), CFrame.new(-0.2, 0, 1.15) * CFrame.Angles(0, 0.3, 0), C3(196, 62, 62), Enum.Material.Fabric)
-		addProjPart(pr, B, Vector3.new(0.16, 0.12, 0.7), CFrame.new(0.2, 0, 1.15) * CFrame.Angles(0, -0.3, 0), C3(196, 62, 62), Enum.Material.Fabric)
+		addProjPart(pr, B, Vector3.new(0.6, 0.16, 0.6), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), (tinted and Theme.glow(TH) or C3(176, 188, 206)), Enum.Material.Metal)
+		addProjPart(pr, B, Vector3.new(0.34, 0.2, 0.34), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), (tinted and Theme.glow(TH) or C3(232, 238, 246)), tinted and NEON or Enum.Material.Metal)
+		addProjPart(pr, B, Vector3.new(0.16, 0.12, 0.7), CFrame.new(-0.2, 0, 1.15) * CFrame.Angles(0, 0.3, 0), (tinted and Theme.main(TH) or C3(196, 62, 62)), Enum.Material.Fabric)
+		addProjPart(pr, B, Vector3.new(0.16, 0.12, 0.7), CFrame.new(0.2, 0, 1.15) * CFrame.Angles(0, -0.3, 0), (tinted and Theme.main(TH) or C3(196, 62, 62)), Enum.Material.Fabric)
 		addProjPart(pr, B, Vector3.new(0.14, 0.12, 0.6), CFrame.new(0, 0, 0.6), C3(236, 236, 236), Enum.Material.Fabric)
-		addTrail(shaft, C3(255, 246, 215), C3(190, 215, 240), 0.5, 0.16, 1.3)
-		burst(x, 2.2, z, C3(255, 244, 210), 5, 8, 18, 0.35, 0.2, C3(190, 210, 235), dx, dz, 35)
+		addTrail(shaft, tinted and Theme.glow(TH) or C3(255, 246, 215), tinted and Theme.main(TH) or C3(190, 215, 240), 0.5 + (tinted and 0.14 * TH.tier or 0), 0.16 + (tinted and 0.03 * TH.tier or 0), 1.3)
+		if tinted and TH.tier >= 3 then
+			addProjPart(pr, CY, Vector3.new(0.3, 1.6 + 0.3 * TH.tier, 1.6 + 0.3 * TH.tier), flat, Theme.glow(TH), NEON, 0.55)
+			addEmbers(shaft, Theme.glow(TH), Theme.main(TH), 10 + TH.tier * 6, 0.5, 0.4, 4)
+		end
+		burst(x, 2.2, z, C3t(255, 244, 210), 5, 8, 18, 0.35, 0.2, C3t(190, 210, 235), dx, dz, 35)
 	elseif kind == "fireball" then
-		local halo = addProjPart(pr, CY, Vector3.new(0.4, 3.6, 3.6), flat, C3(255, 100, 30), NEON, 0.72)
-		local o = addProjPart(pr, CY, Vector3.new(0.5, 2.5, 2.5), CFrame.new(0, 0.05, 0) * flat, C3(255, 142, 44), NEON, 0.15)
-		local c = addProjPart(pr, CY, Vector3.new(0.6, 1.3, 1.3), CFrame.new(0, 0.1, 0) * flat, C3(255, 236, 170), NEON, 0)
+		local halo = addProjPart(pr, CY, Vector3.new(0.4, 3.6, 3.6), flat, C3t(255, 100, 30), NEON, 0.72)
+		local o = addProjPart(pr, CY, Vector3.new(0.5, 2.5, 2.5), CFrame.new(0, 0.05, 0) * flat, C3t(255, 142, 44), NEON, 0.15)
+		local c = addProjPart(pr, CY, Vector3.new(0.6, 1.3, 1.3), CFrame.new(0, 0.1, 0) * flat, C3t(255, 236, 170), NEON, 0)
 		local l = Instance.new("PointLight")
-		l.Color = C3(255, 140, 50)
+		l.Color = C3t(255, 140, 50)
 		l.Range = 20
 		l.Brightness = 1.6
 		l.Parent = o
-		addTrail(halo, C3(255, 170, 60), C3(150, 30, 10), 2.0, 0.28, 0)
-		addEmbers(c, C3(255, 214, 120), C3(255, 70, 20), 38, 0.9, 0.5, 4)
-		burst(x, 2.2, z, C3(255, 210, 120), 10, 6, 16, 0.7, 0.35, C3(255, 90, 30), dx, dz, 50)
-		ringFx(x, 1.0, z, 1.2, 4.2, C3(255, 150, 60), 0.3, 8)
+		addTrail(halo, C3t(255, 170, 60), C3t(150, 30, 10), 2.0, 0.28, 0)
+		addEmbers(c, C3t(255, 214, 120), C3t(255, 70, 20), 38, 0.9, 0.5, 4)
+		burst(x, 2.2, z, C3t(255, 210, 120), 10, 6, 16, 0.7, 0.35, C3t(255, 90, 30), dx, dz, 50)
+		ringFx(x, 1.0, z, 1.2, 4.2, C3t(255, 150, 60), 0.3, 8)
 	elseif kind == "spit" then
 		local o = addProjPart(pr, CY, Vector3.new(0.5, 1.7, 1.7), flat, C3(112, 220, 62), NEON, 0.15)
 		local c = addProjPart(pr, CY, Vector3.new(0.6, 0.8, 0.8), CFrame.new(0, 0.1, 0) * flat, C3(222, 255, 176), NEON, 0)
@@ -4452,27 +5987,30 @@ end
 
 H.ProjEnd = function(id, x, z, kind, radius)
 	local pr = killProj(id)
+	local pw = projWid[id]
+	projWid[id] = nil
+	if pw then Theme.set(pw) end
 	if kind == "fireball" then
-		local fl = fxDisc(radius * 0.7, x, 2.2, z, C3(255, 238, 170), 0.05, NEON, 0.3)
+		local fl = fxDisc(radius * 0.7, x, 2.2, z, C3t(255, 238, 170), 0.05, NEON, 0.3)
 		tw(fl, 0.2, { Size = Vector3.new(0.3, radius * 1.5, radius * 1.5), Transparency = 1 })
-		local a = fxDisc(radius * 0.6, x, 2, z, C3(255, 120, 34), 0.2, NEON, 0.3)
+		local a = fxDisc(radius * 0.6, x, 2, z, C3t(255, 120, 34), 0.2, NEON, 0.3)
 		tw(a, 0.38, { Size = Vector3.new(0.3, radius * 2.1, radius * 2.1), Transparency = 1 })
-		local scorch = fxDisc(radius * 1.2, x, 0.3, z, C3(36, 20, 12), 0.45, Enum.Material.SmoothPlastic, 0.1)
+		local scorch = fxDisc(radius * 1.2, x, 0.3, z, C3t(36, 20, 12), 0.45, Enum.Material.SmoothPlastic, 0.1)
 		tw(scorch, 1.0, { Transparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		ringFx(x, 0.6, z, radius * 0.6, radius * 2.3, C3(255, 170, 70), 0.45, 10)
-		ringFx(x, 0.7, z, radius * 0.3, radius * 1.5, C3(255, 236, 170), 0.3, 6)
-		burst(x, 2.2, z, C3(255, 214, 120), 26, 14, 34, 1.1, 0.7, C3(255, 70, 20), nil, nil, nil)
-		burst(x, 1.0, z, C3(90, 60, 45), 10, 4, 12, 2.2, 0.9, C3(40, 28, 22), nil, nil, nil)
+		ringFx(x, 0.6, z, radius * 0.6, radius * 2.3, C3t(255, 170, 70), 0.45, 10)
+		ringFx(x, 0.7, z, radius * 0.3, radius * 1.5, C3t(255, 236, 170), 0.3, 6)
+		burst(x, 2.2, z, C3t(255, 214, 120), 26, 14, 34, 1.1, 0.7, C3t(255, 70, 20), nil, nil, nil)
+		burst(x, 1.0, z, C3t(90, 60, 45), 10, 4, 12, 2.2, 0.9, C3t(40, 28, 22), nil, nil, nil)
 		Debris:AddItem(fl, 0.3)
 		Debris:AddItem(a, 0.5)
 		Debris:AddItem(scorch, 1.1)
 	else
-		local col = kind == "spit" and C3(130, 240, 76) or (kind == "arrow" and C3(255, 238, 190) or C3(205, 210, 222))
+		local col = kind == "spit" and C3t(130, 240, 76) or (kind == "arrow" and C3t(255, 238, 190) or C3t(205, 210, 222))
 		local a = fxDisc(1.0, x, 2, z, col, 0.15, NEON, 0.2)
 		tw(a, 0.2, { Size = Vector3.new(0.2, 3.0, 3.0), Transparency = 1 })
 		Debris:AddItem(a, 0.3)
 		ringFx(x, 1.0, z, 0.8, 4.0, col, 0.25, 7)
-		burst(x, 2.2, z, col, 8, 8, 20, 0.45, 0.3, C3(255, 255, 255), nil, nil, nil)
+		burst(x, 2.2, z, col, 8, 8, 20, 0.45, 0.3, C3t(255, 255, 255), nil, nil, nil)
 	end
 end
 
@@ -4635,6 +6173,7 @@ bloom.Parent = Lighting
 local ENV = {
 	lobby = { amb = C3(150, 146, 162), out = C3(166, 160, 172), br = 2.3, clock = 17.2, tint = C3(255, 238, 218), sat = 0.22, con = 0.1, bloom = 0.5 },
 	forest = { amb = C3(100, 120, 98), out = C3(125, 145, 112), br = 1.9, clock = 16.5, tint = C3(255, 244, 214), sat = 0.18, con = 0.1, bloom = 0.35 },
+	test = { amb = C3(150, 150, 168), out = C3(170, 170, 184), br = 2.4, clock = 14, tint = C3(255, 250, 240), sat = 0.2, con = 0.1, bloom = 0.55 }, -- [TESTAREA]
 	cave = { amb = C3(88, 82, 120), out = C3(80, 74, 112), br = 1.2, clock = 0, tint = C3(205, 205, 255), sat = 0.05, con = 0.12, bloom = 0.7 },
 }
 local function applyEnv(name)
@@ -4679,6 +6218,10 @@ H.Run = function(d)
 	waveFrame.Visible = true
 	waveTitle.Text = (d.wave and d.wave > 0) and ("WAVE " .. d.wave .. " / " .. d.waves) or "GET READY"
 	waveSub.Text = d.loc .. "  [" .. d.diff .. "]   -   Enemies left: " .. d.left
+	if d.test then -- [TESTAREA]
+		waveTitle.Text = "TEST ARENA"
+		waveSub.Text = "Тренировочные манекены  -  бей и пробуй способности Q / E / Z"
+	end
 	if d.boss then
 		bossFrame.Visible = true
 		bossName.Text = string.upper(d.boss.name)
@@ -4738,6 +6281,9 @@ local ToClient = Net:WaitForChild("ToClient")
 local Config = require(RS:WaitForChild("Config"))
 local playerGui = lp:WaitForChild("PlayerGui")
 local C3 = Color3.fromRGB
+local Theme = require(RS:WaitForChild("Theme"))
+local WeaponModels = require(RS:WaitForChild("WeaponModels"))
+WeaponModels.startRainbow()
 
 -- ============================================================ SMALL UI HELPERS
 local function new(class, props, parent)
@@ -4767,7 +6313,9 @@ local cdTotal = { Q = 1, E = 1, Z = 1 }
 local kick = 0 -- crosshair recoil / pulse
 local attacking = false
 
+local curWeapon = nil
 local function classColor()
+	if curWeapon and curWeapon.tier >= 2 then return Theme.main(curWeapon) end
 	local c = curClass and Config.Classes[curClass]
 	return c and c.color or C3(230, 230, 240)
 end
@@ -5028,8 +6576,9 @@ local function readClass()
 	local raw = lp:GetAttribute("Data")
 	if not raw then return end
 	local ok, d = pcall(function() return HttpService:JSONDecode(raw) end)
-	if ok and type(d) == "table" and d.class ~= curClass then
+	if ok and type(d) == "table" and (d.class ~= curClass or (d.weapon and Config.Weapons[d.weapon] ~= curWeapon)) then
 		curClass = d.class
+		curWeapon = d.weapon and Config.Weapons[d.weapon] or nil
 		refreshSlots()
 	end
 end
@@ -5125,7 +6674,7 @@ local function fxPart(shape, size, cf, color, mat, trans)
 	p.Shape = shape
 	p.Size = size
 	p.CFrame = cf
-	p.Color = color
+	p.Color = Theme.tint(color)
 	p.Material = mat or NEON
 	p.Transparency = trans or 0
 	p.Parent = fxFolder
@@ -5167,7 +6716,7 @@ local function ringFx(x, y, z, d0, d1, color, dur, thick, startTrans, endTrans)
 	uc.CornerRadius = UDim.new(0.5, 0)
 	uc.Parent = f
 	local us = Instance.new("UIStroke")
-	us.Color = color
+	us.Color = Theme.tint(color)
 	us.Thickness = thick or 8
 	us.Transparency = startTrans or 0.1
 	us.Parent = f
@@ -5187,7 +6736,7 @@ local function burst(x, y, z, color, count, smin, smax, size, life, color2, dirX
 	local e = Instance.new("ParticleEmitter")
 	e.Enabled = false
 	e.Rate = 0
-	e.Color = ColorSequence.new(color, color2 or color)
+	e.Color = ColorSequence.new(Theme.tint(color), Theme.tint(color2 or color))
 	e.LightEmission = 0.9
 	e.LightInfluence = 0
 	e.Lifetime = NumberRange.new(life * 0.6, life)
@@ -5216,7 +6765,7 @@ local function addTrail(part, c0, c1, width, life, off)
 	t.Attachment0 = a0
 	t.Attachment1 = a1
 	t.Lifetime = life
-	t.Color = ColorSequence.new(c0, c1)
+	t.Color = ColorSequence.new(Theme.tint(c0), Theme.tint(c1))
 	t.Transparency = NumberSequence.new({
 		NumberSequenceKeypoint.new(0, 0.15),
 		NumberSequenceKeypoint.new(0.6, 0.6),
@@ -5233,7 +6782,7 @@ end
 local function addEmbers(part, c0, c1, rate, size, life, speed)
 	local e = Instance.new("ParticleEmitter")
 	e.Rate = rate
-	e.Color = ColorSequence.new(c0, c1)
+	e.Color = ColorSequence.new(Theme.tint(c0), Theme.tint(c1))
 	e.LightEmission = 1
 	e.LightInfluence = 0
 	e.Lifetime = NumberRange.new(life * 0.6, life)
@@ -5277,8 +6826,9 @@ H.AbCd = function(key, cd)
 	cdTotal[key] = cd
 end
 
-H.UltBanner = function(name, color)
-	local col = color or C3(255, 206, 90)
+H.UltBanner = function(name, color, wid)
+	local w = wid and Config.Weapons[wid]
+	local col = (w and w.tier >= 2) and Theme.main(w) or color or C3(255, 206, 90)
 	showBanner(name, col)
 	screenFlash(col:Lerp(C3(255, 255, 255), 0.6), 0.55, 0.45)
 	shake(1.2, 0.45)
@@ -5290,6 +6840,56 @@ H.UltBanner = function(name, color)
 		ringFx(x, 0.8, z, 2, 16, C3(255, 255, 255), 0.4, 7)
 		pillar(x, z, 4, 70, col:Lerp(C3(255, 255, 255), 0.4), 0.6, 0.45)
 		burst(x, 1.5, z, col, 40, 14, 38, 1.0, 0.8, C3(255, 255, 255))
+	end
+end
+
+H.Theme = function(wid)
+	Theme.set(wid)
+end
+
+-- rarity aura: every ability cast gets a bigger, flashier burst the rarer the weapon is
+H.Aura = function(x, z, tier, mult, wid)
+	Theme.set(wid)
+	local w = wid and Config.Weapons[wid]
+	if not w or tier < 2 then return end
+	local col, glow, acc = Theme.main(w), Theme.glow(w), Theme.accent(w)
+	local m = mult or 1
+	local sz = (6 + tier * 2.4) * m
+	ringFx(x, 0.9, z, sz * 0.3, sz, col, 0.5, 8)
+	if tier >= 3 then
+		ringFx(x, 1.0, z, sz * 0.2, sz * 0.7, glow, 0.45, 6)
+		burst(x, 1.8, z, glow, 8 + tier * 3, 8, 22, 0.7, 0.6, col)
+	end
+	if tier >= 4 then
+		pillar(x, z, 2 + tier * 0.4, 28 + tier * 7, glow, 0.7, 0.5)
+		local d = fxDisc(sz * 0.8, x, 0.8, z, col, 0.7, NEON, 0.1)
+		tw(d, 0.7, { Size = Vector3.new(0.1, sz * 1.3, sz * 1.3), Transparency = 1 })
+		Debris:AddItem(d, 0.8)
+	end
+	if tier >= 5 then
+		shakeAt(x, z, 0.45 * m, 0.3)
+		ringFx(x, 1.1, z, sz * 0.1, sz * 1.5, acc, 0.7, 12)
+		burst(x, 2.5, z, acc, 30, 14, 40, 0.9, 0.9, glow)
+		if m > 1 then screenFlash(glow, 0.82, 0.3) end
+	end
+	if tier >= 6 then
+		ringFx(x, 1.2, z, sz * 0.1, sz * 2, col, 0.9, 14)
+		animate(0.9, function(al, t)
+			for j = 1, 3 do
+				local a = t * 9 + j * 2.09
+				local r = sz * 0.55 * al
+				burst(x + math.cos(a) * r, 1.5 + al * 7, z + math.sin(a) * r, glow, 2, 2, 7, 0.6, 0.45, col)
+			end
+		end)
+	end
+	if tier >= 7 then
+		for i = 1, 3 do
+			task.delay(i * 0.12, function()
+				ringFx(x, 1.0 + i * 0.1, z, sz * 0.1, sz * (1.6 + i * 0.5), C3(255, 80, 80), 0.8, 12)
+			end)
+		end
+		pillar(x, z, 6, 90, glow, 1.0, 0.4)
+		shakeAt(x, z, 0.8 * m, 0.45)
 	end
 end
 
@@ -5447,7 +7047,7 @@ H.SwUlt = function(tx, tz, R, fall)
 	local tipPart = fxPart(B, Vector3.new(1, 0.4, 1), CFrame.new(), white, NEON, 1)
 	addTrail(tipPart, white, gold, 5.4, 0.45, 0)
 	local light = Instance.new("PointLight")
-	light.Color = gold
+	light.Color = Theme.tint(gold)
 	light.Range = 45
 	light.Brightness = 3
 	light.Parent = blade
@@ -5594,7 +7194,7 @@ H.Freeze = function(x, z, R, dur)
 	local mist = fxPart(B, Vector3.new(R * 1.8, 0.3, R * 1.8), CFrame.new(x, 0.8, z), white, Enum.Material.SmoothPlastic, 1)
 	local em = Instance.new("ParticleEmitter")
 	em.Rate = 26
-	em.Color = ColorSequence.new(white, ice)
+	em.Color = ColorSequence.new(Theme.tint(white), Theme.tint(ice))
 	em.LightEmission = 0.8
 	em.LightInfluence = 0
 	em.Lifetime = NumberRange.new(1.2, 2)
@@ -5651,7 +7251,7 @@ H.BeamCharge = function(uid, dx, dz, charge, len)
 	local orb = fxPart(BALL, Vector3.new(0.5, 0.5, 0.5), CFrame.new(ox, 3, oz), white, NEON, 0)
 	local halo = fxPart(BALL, Vector3.new(1, 1, 1), CFrame.new(ox, 3, oz), gold, NEON, 0.6)
 	local light = Instance.new("PointLight")
-	light.Color = gold
+	light.Color = Theme.tint(gold)
 	light.Range = 30
 	light.Brightness = 2
 	light.Parent = orb
@@ -5847,7 +7447,7 @@ H.Meteor = function(tx, tz, fall, R)
 	addTrail(hot, yellow, orange, 3.4, 0.4, 0)
 	addEmbers(hot, yellow, red, 70, 1.4, 0.7, 10)
 	local pl = Instance.new("PointLight")
-	pl.Color = orange
+	pl.Color = Theme.tint(orange)
 	pl.Range = 36
 	pl.Brightness = 3
 	pl.Parent = lava
@@ -5909,8 +7509,854 @@ print("[AbilityClient] ready")
 ]]></ProtectedString>
 </Properties>
 </Item>
+<Item class="LocalScript" referent="RBX13">
+<Properties>
+<string name="Name">ShopClient</string>
+<ProtectedString name="Source"><![CDATA[-- ShopClient: weapon chests (lobby station), opening animation and the inventory (Staffs / Swords / Bows)
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+
+local lp = Players.LocalPlayer
+local Net = RS:WaitForChild("Net")
+local ToServer = Net:WaitForChild("ToServer")
+local ToClient = Net:WaitForChild("ToClient")
+local Config = require(RS:WaitForChild("Config"))
+local WM = require(RS:WaitForChild("WeaponModels"))
+local Theme = require(RS:WaitForChild("Theme"))
+WM.startRainbow()
+local C3 = Color3.fromRGB
+
+-- ============================================================ UI HELPERS
+local GOLD = C3(214, 178, 98)
+local INK = C3(12, 14, 20)
+local PANEL = C3(21, 24, 33)
+local CARD = C3(30, 34, 46)
+local LINE = C3(62, 68, 86)
+local TXT = C3(232, 235, 242)
+local TXT2 = C3(150, 157, 175)
+
+local function new(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props or {}) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
+local function corner(o, r) return new("UICorner", { CornerRadius = UDim.new(0, r or 6) }, o) end
+local function stroke(o, color, th, tr) return new("UIStroke", { Color = color or LINE, Thickness = th or 1.5, Transparency = tr or 0 }, o) end
+local function tween(o, t, props, style, dir)
+	local tw = TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props)
+	tw:Play()
+	return tw
+end
+
+-- labels that must cycle through the rainbow (secret rarity)
+local rbLabels = {}
+RunService.Heartbeat:Connect(function()
+	local col = Color3.fromHSV((os.clock() * 0.35) % 1, 0.75, 1)
+	for l in pairs(rbLabels) do
+		if l.Parent then l.TextColor3 = col else rbLabels[l] = nil end
+	end
+end)
+
+local function label(parent, text, pos, size, ts, color, align, font)
+	return new("TextLabel", {
+		Text = text, Position = pos or UDim2.fromScale(0, 0), Size = size or UDim2.fromScale(1, 1), TextSize = ts or 16,
+		TextColor3 = color or TXT, BackgroundTransparency = 1, Font = font or Enum.Font.GothamBold,
+		TextXAlignment = align or Enum.TextXAlignment.Left, TextWrapped = true, TextStrokeTransparency = 1,
+	}, parent)
+end
+
+local function rarityColor(w) return Config.Rarities[w.tier].color end
+local function paintRarity(l, w)
+	if w.rainbow then
+		rbLabels[l] = true
+	else
+		rbLabels[l] = nil
+		l.TextColor3 = rarityColor(w)
+	end
+end
+
+local function button(parent, text, pos, size, color, cb)
+	local b = new("TextButton", {
+		Text = text, Position = pos, Size = size, BackgroundColor3 = color, TextColor3 = TXT, Font = Enum.Font.GothamBold,
+		TextSize = 15, AutoButtonColor = false, BorderSizePixel = 0, TextWrapped = true,
+	}, parent)
+	corner(b, 6)
+	new("UIStroke", { Color = C3(8, 10, 16), Thickness = 1.5, Transparency = 0.25 }, b)
+	local sc = new("UIScale", {}, b)
+	local base = color
+	b.MouseEnter:Connect(function()
+		if not b:GetAttribute("Dis") then tween(b, 0.1, { BackgroundColor3 = base:Lerp(C3(255, 255, 255), 0.14) }) end
+	end)
+	b.MouseLeave:Connect(function()
+		tween(b, 0.12, { BackgroundColor3 = base })
+		tween(sc, 0.1, { Scale = 1 })
+	end)
+	b.MouseButton1Down:Connect(function()
+		if not b:GetAttribute("Dis") then tween(sc, 0.06, { Scale = 0.96 }) end
+	end)
+	b.MouseButton1Up:Connect(function() tween(sc, 0.12, { Scale = 1 }, Enum.EasingStyle.Back) end)
+	b.MouseButton1Click:Connect(function()
+		if not b:GetAttribute("Dis") and cb then cb() end
+	end)
+	return b
+end
+local function setDis(b, dis)
+	b:SetAttribute("Dis", dis and true or false)
+	b.TextTransparency = dis and 0.45 or 0
+	b.BackgroundTransparency = dis and 0.5 or 0
+end
+
+local gui = new("ScreenGui", { Name = "ShopUI", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 12 }, lp:WaitForChild("PlayerGui"))
+
+-- ============================================================ DATA
+local data = { inv = {}, equip = {}, coins = 0, upg = {}, opened = 0 }
+local onData
+local lastInvKey = ""
+local function readData()
+	local s = lp:GetAttribute("Data")
+	if not s then return end
+	local ok, t = pcall(function() return HttpService:JSONDecode(s) end)
+	if ok and type(t) == "table" then
+		t.inv = t.inv or {}
+		t.equip = t.equip or {}
+		t.upg = t.upg or {}
+		data = t
+		if onData then onData() end
+	end
+end
+local function inRun() return lp:GetAttribute("InRun") == true end
+
+-- ============================================================ WEAPON PREVIEW (ViewportFrame)
+local function makePreview(parent, w, dim)
+	local vf = new("ViewportFrame", {
+		Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Ambient = C3(200, 200, 210), LightColor = C3(255, 255, 255),
+		LightDirection = Vector3.new(-0.3, -1, -0.4), ZIndex = 2,
+	}, parent)
+	local model = new("Model", {}, vf)
+	local root = new("Part", { Size = Vector3.new(1, 1, 1), Anchored = true, CanCollide = false, Transparency = 1, CFrame = CFrame.new() }, model)
+	model.PrimaryPart = root
+	local ok = pcall(function()
+		WM.build(w.type, w, root, model, CFrame.new(), 1, { anchored = true })
+	end)
+	local cam = new("Camera", {}, vf)
+	vf.CurrentCamera = cam
+	local cf, size = model:GetBoundingBox()
+	local ext = math.max(size.X, size.Z, 4)
+	cam.FieldOfView = 24
+	local dist = ext * 0.62 / math.tan(math.rad(12))
+	local center = cf.Position
+	cam.CFrame = CFrame.lookAt(center + Vector3.new(0, dist, 0), center, Vector3.new(0.35, 0, -1))
+	if dim then vf.ImageColor3 = C3(0, 0, 0) end
+	return vf
+end
+
+-- weapon card (used by the chest reveal and by the inventory grid)
+local function makeCard(parent, w, opts)
+	opts = opts or {}
+	local owned = opts.owned ~= false
+	local rc = rarityColor(w)
+	local card = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = CARD, BorderSizePixel = 0, Size = opts.size or UDim2.fromOffset(150, 214) }, parent)
+	corner(card, 10)
+	local st = stroke(card, owned and (w.rainbow and C3(255, 255, 255) or rc) or LINE, owned and 2 or 1.2, owned and 0 or 0.3)
+	local bar = new("Frame", { Size = UDim2.new(1, 0, 0, 5), BackgroundColor3 = owned and rc or LINE, BorderSizePixel = 0, ZIndex = 3 }, card)
+	corner(bar, 3)
+	if owned and w.rainbow then
+		new("UIGradient", { Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, C3(255, 80, 80)), ColorSequenceKeypoint.new(0.2, C3(255, 220, 80)), ColorSequenceKeypoint.new(0.4, C3(90, 255, 120)),
+			ColorSequenceKeypoint.new(0.6, C3(80, 220, 255)), ColorSequenceKeypoint.new(0.8, C3(170, 100, 255)), ColorSequenceKeypoint.new(1, C3(255, 80, 200)),
+		}) }, bar)
+	end
+	-- soft rarity glow behind the model
+	local glow = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.new(1, -16, 0, (opts.size and 90 or 130)), BackgroundColor3 = owned and rc or C3(40, 44, 58), BackgroundTransparency = owned and 0.82 or 0.4, BorderSizePixel = 0 }, card)
+	corner(glow, 8)
+	local pv = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.new(1, -16, 0, (opts.size and 90 or 130)), BackgroundTransparency = 1 }, card)
+	makePreview(pv, w, not owned)
+	local nameY = opts.size and 104 or 146
+	local nm = label(card, owned and w.name or "???", UDim2.fromOffset(6, nameY), UDim2.new(1, -12, 0, 32), opts.size and 12 or 14, owned and TXT or TXT2, Enum.TextXAlignment.Center)
+	local rl = label(card, Config.Rarities[w.tier].name, UDim2.fromOffset(6, nameY + (opts.size and 30 or 36)), UDim2.new(1, -12, 0, 16), opts.size and 11 or 13, rc, Enum.TextXAlignment.Center)
+	if owned then
+		paintRarity(rl, w)
+	else
+		rl.TextColor3 = TXT2
+		rbLabels[rl] = nil
+	end
+	return card, st, glow
+end
+
+-- ============================================================ PANEL FRAME
+local function makePanel(title, w, h)
+	local f = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -24, 0.5, 0), Size = UDim2.fromOffset(w, h), BackgroundColor3 = PANEL, BorderSizePixel = 0, Visible = false }, gui)
+	corner(f, 10)
+	stroke(f, LINE, 1.5, 0)
+	new("UIScale", {}, f)
+	label(f, title, UDim2.fromOffset(16, 10), UDim2.new(1, -32, 0, 34), 24, GOLD, nil, Enum.Font.GothamBlack)
+	local sub = label(f, "", UDim2.fromOffset(16, 44), UDim2.new(1, -32, 0, 30), 14, TXT2, nil, Enum.Font.Gotham)
+	new("Frame", { Position = UDim2.fromOffset(12, 78), Size = UDim2.new(1, -24, 0, 1), BackgroundColor3 = LINE, BorderSizePixel = 0 }, f)
+	local content = new("Frame", { Position = UDim2.fromOffset(12, 86), Size = UDim2.new(1, -24, 1, -96), BackgroundTransparency = 1 }, f)
+	return { frame = f, sub = sub, content = content }
+end
+
+local function fitScale(frame, w, h)
+	local function fit()
+		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+		local sc = math.clamp(math.min(vp.X / (w + 360), vp.Y / (h + 40)), 0.45, 1.1)
+		local us = frame:FindFirstChildOfClass("UIScale")
+		if us then us.Scale = sc end
+	end
+	fit()
+	if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit) end
+end
+
+-- ============================================================ CHEST PANEL
+local chestPanel = makePanel("СУНДУКИ С ОРУЖИЕМ", 490, 660)
+fitScale(chestPanel.frame, 490, 660)
+local selType = "Swordsman"
+local lastReq = nil
+local revealOpen = false
+
+local function drawChest(parent, color, w, h)
+	local g = new("Frame", { Size = UDim2.fromOffset(w, h), BackgroundTransparency = 1 }, parent)
+	local dark = color:Lerp(C3(0, 0, 0), 0.5)
+	local gold = C3(255, 205, 80)
+	local body = new("Frame", { Position = UDim2.fromScale(0.05, 0.42), Size = UDim2.fromScale(0.9, 0.54), BackgroundColor3 = color, BorderSizePixel = 0 }, g)
+	corner(body, 8)
+	stroke(body, dark, 3)
+	local lid = new("Frame", { Position = UDim2.fromScale(0.0, 0.08), Size = UDim2.fromScale(1, 0.38), BackgroundColor3 = color:Lerp(C3(255, 255, 255), 0.12), BorderSizePixel = 0, ZIndex = 2 }, g)
+	corner(lid, 12)
+	stroke(lid, dark, 3)
+	for _, x in ipairs({ 0.16, 0.76 }) do
+		local band = new("Frame", { Position = UDim2.fromScale(x, 0.08), Size = UDim2.fromScale(0.09, 0.88), BackgroundColor3 = gold, BorderSizePixel = 0, ZIndex = 3 }, g)
+		corner(band, 3)
+		stroke(band, C3(150, 100, 20), 1.5)
+	end
+	local lock = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0.36), Size = UDim2.fromScale(0.14, 0.24), BackgroundColor3 = gold, BorderSizePixel = 0, ZIndex = 4 }, g)
+	corner(lock, 5)
+	stroke(lock, C3(150, 100, 20), 2)
+	local gem = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(0.34, 0.34), BackgroundColor3 = C3(255, 90, 70), BorderSizePixel = 0, ZIndex = 5 }, lock)
+	corner(gem, 10)
+	return g, lid
+end
+
+local function oddsText(chest)
+	local total = 0
+	for _, o in ipairs(chest.odds) do total = total + o end
+	local parts = {}
+	for i, o in ipairs(chest.odds) do
+		if o > 0 then
+			local pct = o / total * 100
+			local s = pct >= 1 and string.format("%.0f", pct) or (pct >= 0.1 and string.format("%.1f", pct) or string.format("%.2f", pct))
+			local col = i == 7 and C3(255, 120, 220) or Config.Rarities[i].color
+			table.insert(parts, string.format('<font color="#%s">%s%%</font>', col:ToHex(), s))
+		end
+	end
+	return table.concat(parts, "  ")
+end
+
+local function dupValue()
+	local total, n = 0, 0
+	for id, cnt in pairs(data.inv) do
+		local w = Config.Weapons[id]
+		if w and cnt > 1 then
+			total = total + (cnt - 1) * Config.Rarities[w.tier].sell
+			n = n + cnt - 1
+		end
+	end
+	return total, n
+end
+
+local function requestOpen(chestId, typ, amount)
+	if revealOpen then return end
+	lastReq = { chestId, typ, amount }
+	ToServer:FireServer("OpenChest", chestId, typ, amount)
+end
+
+local function renderChest()
+	for _, c in ipairs(chestPanel.content:GetChildren()) do c:Destroy() end
+	chestPanel.sub.Text = "Монет: " .. data.coins .. "   |   Открыто сундуков: " .. (data.opened or 0)
+	-- tabs
+	local y = 0
+	for i, typ in ipairs(Config.TypeOrder) do
+		local info = Config.TypeInfo[typ]
+		local sel = typ == selType
+		local b = button(chestPanel.content, info.icon .. "  " .. info.name, UDim2.new((i - 1) / 3, 2, 0, y), UDim2.new(1 / 3, -4, 0, 38), sel and C3(190, 140, 50) or C3(42, 47, 62), function()
+			selType = typ
+			renderChest()
+		end)
+		b.TextSize = 16
+	end
+	y = y + 46
+	local tl = label(chestPanel.content, "Из сундука выпадет: " .. string.lower(Config.TypeInfo[selType].name) .. ". Чем реже предмет - тем мощнее способности!", UDim2.fromOffset(2, y), UDim2.new(1, -4, 0, 30), 12, TXT2, nil, Enum.Font.Gotham)
+	y = y + 32
+	for _, chest in ipairs(Config.Chests) do
+		local row = new("Frame", { Position = UDim2.fromOffset(0, y), Size = UDim2.new(1, 0, 0, 104), BackgroundColor3 = CARD, BorderSizePixel = 0 }, chestPanel.content)
+		corner(row, 8)
+		stroke(row, chest.color:Lerp(C3(0, 0, 0), 0.25), 1.5, 0.1)
+		local icon = new("Frame", { Position = UDim2.fromOffset(8, 10), Size = UDim2.fromOffset(78, 56), BackgroundTransparency = 1 }, row)
+		drawChest(icon, chest.color, 78, 56)
+		label(row, chest.name, UDim2.fromOffset(98, 4), UDim2.new(1, -106, 0, 20), 17, chest.color:Lerp(C3(255, 255, 255), 0.35))
+		label(row, chest.desc, UDim2.fromOffset(98, 24), UDim2.new(1, -106, 0, 16), 11, TXT2, nil, Enum.Font.Gotham)
+		local odds = label(row, oddsText(chest), UDim2.fromOffset(98, 42), UDim2.new(1, -106, 0, 26), 11, TXT, nil, Enum.Font.GothamBold)
+		odds.RichText = true
+		for k, amount in ipairs(Config.MultiOpen) do
+			local cost = math.floor(chest.price * amount * Config.MultiDiscount[amount])
+			local can = data.coins >= cost
+			local txt = "x" .. amount .. "  -  " .. cost
+			if amount > 1 then txt = txt .. (amount == 10 and "  (-10%)" or "  (-5%)") end
+			local b = button(row, txt, UDim2.new((k - 1) / 3, 6, 1, -34), UDim2.new(1 / 3, -8, 0, 28), can and C3(184, 138, 50) or C3(52, 56, 68), function()
+				requestOpen(chest.id, selType, amount)
+			end)
+			b.TextSize = 12
+			setDis(b, not can)
+		end
+		y = y + 110
+	end
+	local total, n = dupValue()
+	local sb = button(chestPanel.content, n > 0 and ("Продать все дубликаты (" .. n .. " шт.)  +" .. total .. " монет") or "Нет дубликатов для продажи", UDim2.fromOffset(0, y + 2), UDim2.new(1, 0, 0, 34), n > 0 and C3(64, 140, 92) or C3(52, 56, 68), function()
+		ToServer:FireServer("Sell", "all")
+	end)
+	sb.TextSize = 14
+	setDis(sb, n == 0)
+end
+
+-- ============================================================ CHEST OPENING ANIMATION
+local rg = new("ScreenGui", { Name = "ChestReveal", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 40 }, lp:WaitForChild("PlayerGui"))
+local dim = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(4, 6, 12), BackgroundTransparency = 1, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false }, rg)
+local stage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, dim)
+local revealToken = 0
+
+local function ping(tier)
+	local s = Instance.new("Sound")
+	s.SoundId = "rbxasset://sounds/electronicpingshort.wav"
+	s.Volume = 0.5
+	s.PlaybackSpeed = 0.7 + tier * 0.12
+	s.Parent = gui
+	s:Play()
+	game:GetService("Debris"):AddItem(s, 2)
+end
+
+local function closeReveal()
+	revealToken = revealToken + 1
+	revealOpen = false
+	tween(dim, 0.2, { BackgroundTransparency = 1 })
+	task.delay(0.2, function()
+		if not revealOpen then
+			dim.Visible = false
+			for _, c in ipairs(stage:GetChildren()) do c:Destroy() end
+		end
+	end)
+	if onData then onData() end
+end
+
+local function showReveal(chestId, results)
+	local chest
+	for _, c in ipairs(Config.Chests) do if c.id == chestId then chest = c end end
+	if not chest then return end
+	revealToken = revealToken + 1
+	local tok = revealToken
+	revealOpen = true
+	for _, c in ipairs(stage:GetChildren()) do c:Destroy() end
+	dim.Visible = true
+	dim.BackgroundTransparency = 1
+	tween(dim, 0.25, { BackgroundTransparency = 0.18 })
+	local best = 1
+	for _, r in ipairs(results) do
+		local w = Config.Weapons[r.id]
+		if w and w.tier > best then best = w.tier end
+	end
+	local bestCol = best == 7 and C3(255, 140, 255) or Config.Rarities[best].color
+
+	-- chest + glow
+	local halo = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(120, 120), BackgroundColor3 = bestCol, BackgroundTransparency = 0.9, BorderSizePixel = 0 }, stage)
+	corner(halo, 200)
+	local holder = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(260, 190), BackgroundTransparency = 1 }, stage)
+	local hs = new("UIScale", { Scale = 0.2 }, holder)
+	local chestG, lid = drawChest(holder, chest.color, 260, 190)
+	tween(hs, 0.35, { Scale = 1 }, Enum.EasingStyle.Back)
+	tween(halo, 1.1, { Size = UDim2.fromOffset(420, 420), BackgroundTransparency = 0.55 })
+	local title = label(stage, results[1] and (#results > 1 and ("Открываем x" .. #results .. "...") or "Открываем...") or "", UDim2.new(0.5, -300, 0.5, 130), UDim2.fromOffset(600, 34), 24, TXT, Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
+
+	task.spawn(function()
+		task.wait(0.4)
+		-- shake, getting stronger
+		for i = 1, 9 do
+			if tok ~= revealToken then return end
+			local a = (3 + i * 1.3) * (i % 2 == 0 and 1 or -1)
+			tween(holder, 0.06, { Rotation = a })
+			ping(math.min(best, 3))
+			task.wait(0.085)
+		end
+		if tok ~= revealToken then return end
+		tween(holder, 0.1, { Rotation = 0 })
+		-- flash + lid pops
+		local flash = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = best >= 5 and bestCol:Lerp(C3(255, 255, 255), 0.6) or C3(255, 255, 255), BackgroundTransparency = 0.1, BorderSizePixel = 0, ZIndex = 50 }, stage)
+		tween(flash, 0.6, { BackgroundTransparency = 1 })
+		tween(lid, 0.25, { Position = UDim2.fromScale(0, -0.5), Rotation = -18 })
+		tween(hs, 0.3, { Scale = 1.5 })
+		tween(halo, 0.6, { Size = UDim2.fromOffset(900, 900), BackgroundTransparency = 1 })
+		task.wait(0.28)
+		if tok ~= revealToken then return end
+		tween(holder, 0.2, { Position = UDim2.fromScale(0.5, -0.2) })
+		title:Destroy()
+
+		-- result cards
+		local n = #results
+		local cols = math.min(n, 5)
+		local rows = math.ceil(n / 5)
+		local cw, ch, pad = 150, 214, 10
+		local grid = new("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.46),
+			Size = UDim2.fromOffset(cols * (cw + pad), rows * (ch + pad)), BackgroundTransparency = 1,
+		}, stage)
+		new("UIGridLayout", { CellSize = UDim2.fromOffset(cw, ch), CellPadding = UDim2.fromOffset(pad, pad), FillDirectionMaxCells = 5, HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder }, grid)
+		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+		local gs = new("UIScale", { Scale = math.clamp(math.min(vp.X / (cols * (cw + pad) + 80), vp.Y / (rows * (ch + pad) + 190)), 0.4, 1.15) }, grid)
+		for i, r in ipairs(results) do
+			if tok ~= revealToken then return end
+			local w = Config.Weapons[r.id]
+			if w then
+				local slot = new("Frame", { BackgroundTransparency = 1, LayoutOrder = i }, grid)
+				local card, st = makeCard(slot, w, { owned = true })
+				card.Size = UDim2.fromScale(1, 1)
+				card.Active = false
+				local sc = new("UIScale", { Scale = 0 }, card)
+				tween(sc, 0.35, { Scale = 1 }, Enum.EasingStyle.Back)
+				ping(w.tier)
+				if r.new then
+					local nb = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 10), Size = UDim2.fromOffset(52, 18), BackgroundColor3 = C3(80, 200, 110), BorderSizePixel = 0, ZIndex = 6 }, card)
+					corner(nb, 5)
+					label(nb, "НОВОЕ!", nil, nil, 11, INK, Enum.TextXAlignment.Center, Enum.Font.GothamBlack).ZIndex = 7
+				end
+				if w.tier >= 5 then
+					st.Thickness = 3
+					TweenService:Create(st, TweenInfo.new(0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Thickness = 6 }):Play()
+					local f2 = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = w.rainbow and C3(255, 255, 255) or rarityColor(w), BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 8 }, card)
+					corner(f2, 10)
+					tween(f2, 0.5, { BackgroundTransparency = 1 })
+				end
+				task.wait(n > 5 and 0.1 or 0.16)
+			end
+		end
+		task.wait(0.2)
+		if tok ~= revealToken then return end
+		local bw = 190
+		local by = 0.5 + (rows * (ch + pad) * gs.Scale) / (2 * vp.Y) + 0.08
+		by = math.clamp(by, 0.55, 0.94)
+		local b1 = button(stage, "ЗАБРАТЬ", UDim2.new(0.5, -bw - 8, by, 0), UDim2.fromOffset(bw, 46), C3(64, 140, 92), closeReveal)
+		b1.TextSize = 19
+		b1.Font = Enum.Font.GothamBlack
+		local again = button(stage, "ОТКРЫТЬ ЕЩЁ", UDim2.new(0.5, 8, by, 0), UDim2.fromOffset(bw, 46), C3(184, 138, 50), function()
+			local rq = lastReq
+			closeReveal()
+			if rq then
+				task.delay(0.25, function() requestOpen(rq[1], rq[2], rq[3]) end)
+			end
+		end)
+		again.TextSize = 19
+		again.Font = Enum.Font.GothamBlack
+	end)
+end
+
+-- ============================================================ INVENTORY
+local inv = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(980, 600), BackgroundColor3 = PANEL, BorderSizePixel = 0, Visible = false }, gui)
+corner(inv, 12)
+stroke(inv, LINE, 2, 0)
+local invScale = new("UIScale", {}, inv)
+local function fitInv()
+	local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+	invScale.Scale = math.clamp(math.min(vp.X / 1020, vp.Y / 640), 0.45, 1.1)
+end
+fitInv()
+if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitInv) end
+label(inv, "ИНВЕНТАРЬ", UDim2.fromOffset(20, 10), UDim2.fromOffset(300, 36), 28, GOLD, nil, Enum.Font.GothamBlack)
+local invSub = label(inv, "", UDim2.fromOffset(20, 44), UDim2.fromOffset(600, 22), 14, TXT2, nil, Enum.Font.Gotham)
+local invClose = button(inv, "X", UDim2.new(1, -52, 0, 12), UDim2.fromOffset(38, 34), C3(160, 66, 66), function() inv.Visible = false end)
+invClose.TextSize = 18
+local sellAll = button(inv, "", UDim2.new(1, -330, 0, 12), UDim2.fromOffset(270, 34), C3(64, 140, 92), function() ToServer:FireServer("Sell", "all") end)
+sellAll.TextSize = 13
+new("Frame", { Position = UDim2.fromOffset(14, 72), Size = UDim2.new(1, -28, 0, 1), BackgroundColor3 = LINE, BorderSizePixel = 0 }, inv)
+
+local invType = "Swordsman"
+local invSel = nil
+local tabBtns = {}
+for i, typ in ipairs(Config.TypeOrder) do
+	local b = button(inv, "", UDim2.fromOffset(14, 84 + (i - 1) * 62), UDim2.fromOffset(150, 54), C3(42, 47, 62), function()
+		invType = typ
+		invSel = nil
+		lastInvKey = ""
+		onData()
+	end)
+	b.TextSize = 15
+	tabBtns[typ] = b
+end
+local scroll = new("ScrollingFrame", {
+	Position = UDim2.fromOffset(176, 84), Size = UDim2.fromOffset(510, 500), BackgroundTransparency = 1, BorderSizePixel = 0,
+	ScrollBarThickness = 6, CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, inv)
+new("UIGridLayout", { CellSize = UDim2.fromOffset(112, 160), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
+new("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4) }, scroll)
+local detail = new("Frame", { Position = UDim2.fromOffset(700, 84), Size = UDim2.fromOffset(268, 500), BackgroundColor3 = CARD, BorderSizePixel = 0 }, inv)
+corner(detail, 10)
+stroke(detail, LINE, 1.5, 0.2)
+
+local function statLine(parent, text, color, y, size)
+	return label(parent, text, UDim2.fromOffset(12, y), UDim2.new(1, -24, 0, 16), size or 13, color or TXT, nil, Enum.Font.Gotham)
+end
+
+local function renderDetail()
+	for _, c in ipairs(detail:GetChildren()) do
+		if not c:IsA("UICorner") and not c:IsA("UIStroke") then c:Destroy() end
+	end
+	local w = invSel and Config.Weapons[invSel]
+	if not w then
+		label(detail, "Выбери оружие\nиз списка слева", UDim2.fromOffset(10, 200), UDim2.new(1, -20, 0, 60), 16, TXT2, Enum.TextXAlignment.Center)
+		return
+	end
+	local cnt = data.inv[w.id] or 0
+	local owned = cnt > 0
+	local r = Config.Rarities[w.tier]
+	local pvBox = new("Frame", { Position = UDim2.fromOffset(34, 8), Size = UDim2.fromOffset(200, 190), BackgroundColor3 = w.rainbow and C3(40, 40, 60) or r.color:Lerp(C3(10, 12, 18), 0.82), BorderSizePixel = 0 }, detail)
+	corner(pvBox, 10)
+	stroke(pvBox, w.rainbow and C3(255, 255, 255) or r.color, 2, 0.2)
+	makePreview(pvBox, w, not owned)
+	local nm = label(detail, owned and w.name or "???", UDim2.fromOffset(10, 202), UDim2.new(1, -20, 0, 26), 19, TXT, Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
+	local rl = label(detail, r.name .. "  -  " .. Config.TypeInfo[w.type].one, UDim2.fromOffset(10, 228), UDim2.new(1, -20, 0, 18), 14, r.color, Enum.TextXAlignment.Center)
+	paintRarity(rl, w)
+	local ws = Config.weaponStats(w.type, data.upg[w.type], w)
+	local y = 252
+	statLine(detail, string.format("Урон: %.0f     Скорость: %.2f уд/с", ws.damage, 1 / ws.cooldown), TXT, y)
+	y = y + 18
+	statLine(detail, string.format("Дальность: %.0f     Крит: %.0f%%", ws.range, ws.crit * 100), TXT, y)
+	y = y + 22
+	label(detail, "СПОСОБНОСТИ", UDim2.fromOffset(12, y), UDim2.new(1, -24, 0, 16), 12, GOLD)
+	y = y + 18
+	local cn = r.cnt
+	local extra
+	if w.type == "Swordsman" then
+		extra = string.format("Вихрь: +%d ударов, ульта: +%d волн", cn * 2, math.floor(cn / 2))
+	elseif w.type == "Archer" then
+		extra = string.format("Веер: +%d стрел, луч: +%d импульсов", cn * 2, cn)
+	else
+		extra = string.format("Молния: +%d прыжков, метеоры: +%d", cn * 2, cn * 3)
+	end
+	statLine(detail, string.format("Размер способностей: x%.2f", r.rs), C3(130, 200, 226), y)
+	y = y + 17
+	statLine(detail, string.format("Урон способностей: x%.2f", r.am), C3(130, 200, 226), y)
+	y = y + 17
+	statLine(detail, extra, C3(130, 200, 226), y, 12)
+	y = y + 17
+	statLine(detail, string.format("Перезарядка: -%.0f%%", (1 - r.cdr) * 100), C3(130, 200, 226), y)
+	y = y + 19
+	local ult = label(detail, "ULT: " .. w.ult, UDim2.fromOffset(12, y), UDim2.new(1, -24, 0, 16), 13, GOLD)
+	y = y + 18
+	local el = label(detail, Config.ElementInfo[w.elem] or "", UDim2.fromOffset(12, y), UDim2.new(1, -24, 0, 30), 11, TXT2, nil, Enum.Font.Gotham)
+	local eq = data.equip[w.type] == w.id and data.class == w.type
+	local bY = 500 - 88
+	if owned then
+		local eb = button(detail, eq and "ЭКИПИРОВАНО" or "ЭКИПИРОВАТЬ", UDim2.fromOffset(12, bY), UDim2.new(1, -24, 0, 36), eq and C3(52, 56, 68) or C3(64, 140, 92), function()
+			ToServer:FireServer("Equip", w.id)
+		end)
+		eb.TextSize = 16
+		setDis(eb, eq or inRun())
+		local dup = cnt - 1
+		local sb = button(detail, dup > 0 and string.format("Продать дубликаты: %d  (+%d)", dup, dup * r.sell) or ("Экземпляров: " .. cnt .. "  (продажа: " .. r.sell .. " за дубликат)"), UDim2.fromOffset(12, bY + 42), UDim2.new(1, -24, 0, 34), dup > 0 and C3(184, 138, 50) or C3(52, 56, 68), function()
+			ToServer:FireServer("Sell", w.id)
+		end)
+		sb.TextSize = 12
+		setDis(sb, dup <= 0)
+	else
+		label(detail, "Ещё не получено. Выбей в сундуках!", UDim2.fromOffset(12, bY + 6), UDim2.new(1, -24, 0, 40), 14, TXT2, Enum.TextXAlignment.Center)
+	end
+end
+
+local function renderInventory()
+	-- header + tabs
+	local owned, total = 0, 0
+	for _, w in ipairs(Config.WeaponList) do
+		total = total + 1
+		if (data.inv[w.id] or 0) > 0 then owned = owned + 1 end
+	end
+	invSub.Text = "Монет: " .. data.coins .. "     Коллекция: " .. owned .. " / " .. total
+	local dv, dn = dupValue()
+	sellAll.Text = dn > 0 and ("Продать все дубликаты (" .. dn .. ")  +" .. dv) or "Дубликатов нет"
+	setDis(sellAll, dn == 0 or inRun())
+	for typ, b in pairs(tabBtns) do
+		local o, t = 0, 0
+		for _, w in ipairs(Config.ByType[typ]) do
+			t = t + 1
+			if (data.inv[w.id] or 0) > 0 then o = o + 1 end
+		end
+		b.Text = Config.TypeInfo[typ].icon .. " " .. Config.TypeInfo[typ].name .. "\n" .. o .. " / " .. t
+		b.BackgroundColor3 = typ == invType and C3(190, 140, 50) or C3(42, 47, 62)
+	end
+	-- grid (rebuilt only when the inventory itself changed)
+	local key = invType .. HttpService:JSONEncode(data.inv) .. tostring(data.equip[invType]) .. tostring(data.class)
+	if key ~= lastInvKey then
+		lastInvKey = key
+		for _, c in ipairs(scroll:GetChildren()) do
+			if c:IsA("GuiObject") then c:Destroy() end
+		end
+		local list = {}
+		for _, w in ipairs(Config.ByType[invType]) do table.insert(list, w) end
+		table.sort(list, function(a, b)
+			if a.tier ~= b.tier then return a.tier > b.tier end
+			return a.name < b.name
+		end)
+		for i, w in ipairs(list) do
+			local cnt = data.inv[w.id] or 0
+			local slot = new("Frame", { BackgroundTransparency = 1, LayoutOrder = i }, scroll)
+			local card, st = makeCard(slot, w, { owned = cnt > 0, size = UDim2.fromScale(1, 1) })
+			card.Size = UDim2.fromScale(1, 1)
+			if invSel == w.id then st.Color = GOLD st.Thickness = 3 end
+			if cnt > 1 then
+				local cb = new("TextLabel", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 10), Size = UDim2.fromOffset(34, 18), BackgroundColor3 = C3(10, 12, 18), BackgroundTransparency = 0.2, Text = "x" .. cnt, TextColor3 = TXT, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 6, BorderSizePixel = 0 }, card)
+				corner(cb, 5)
+			end
+			if data.equip[w.type] == w.id and data.class == w.type then
+				local eb = new("TextLabel", { Position = UDim2.fromOffset(4, 10), Size = UDim2.fromOffset(22, 18), BackgroundColor3 = C3(80, 200, 110), Text = "✔", TextColor3 = INK, Font = Enum.Font.GothamBlack, TextSize = 13, ZIndex = 6, BorderSizePixel = 0 }, card)
+				corner(eb, 5)
+			end
+			card.MouseButton1Click:Connect(function()
+				invSel = w.id
+				lastInvKey = ""
+				onData()
+			end)
+		end
+	end
+	renderDetail()
+end
+
+local invBtn
+local function openInventory()
+	if inRun() then return end
+	inv.Visible = not inv.Visible
+	if inv.Visible then
+		lastInvKey = ""
+		renderInventory()
+	end
+end
+invBtn = button(gui, "ИНВЕНТАРЬ  [B]", UDim2.fromOffset(14, 122), UDim2.fromOffset(290, 34), C3(52, 58, 86), openInventory)
+invBtn.TextSize = 15
+UIS.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.B then openInventory() end
+end)
+
+-- ============================================================ HOOKS
+onData = function()
+	if chestPanel.frame.Visible and not revealOpen then renderChest() end
+	if inv.Visible then renderInventory() end
+end
+lp:GetAttributeChangedSignal("Data"):Connect(readData)
+lp:GetAttributeChangedSignal("InRun"):Connect(function()
+	invBtn.Visible = not inRun()
+	if inRun() then
+		inv.Visible = false
+		chestPanel.frame.Visible = false
+	end
+end)
+invBtn.Visible = not inRun()
+
+local H = {}
+H.Zone = function(zid)
+	chestPanel.frame.Visible = zid == "chest"
+	if zid == "chest" then renderChest() end
+end
+H.ChestResult = function(chestId, results, cost)
+	showReveal(chestId, results)
+end
+ToClient.OnClientEvent:Connect(function(name, ...)
+	local f = H[name]
+	if f then
+		local ok, err = pcall(f, ...)
+		if not ok then warn("[shop] " .. tostring(name) .. ": " .. tostring(err)) end
+	end
+end)
+readData()
+print("[ShopClient] ready")
+]]></ProtectedString>
+</Properties>
 </Item>
-<Item class="StarterCharacterScripts" referent="RBX11">
+<Item class="LocalScript" referent="RBX14">
+<Properties>
+<string name="Name">TestAreaClient</string>
+<ProtectedString name="Source"><![CDATA[-- ===========================================================================================
+-- [TESTAREA]  client side of the weapon test place (portal panel + weapon picker).
+-- Delete this LocalScript together with the TestArea module to remove the feature.
+-- ===========================================================================================
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+
+local lp = Players.LocalPlayer
+local Net = RS:WaitForChild("Net")
+local ToServer = Net:WaitForChild("ToServer")
+local ToClient = Net:WaitForChild("ToClient")
+local Config = require(RS:WaitForChild("Config"))
+local C3 = Color3.fromRGB
+
+local GOLD = C3(214, 178, 98)
+local INK = C3(12, 14, 20)
+local PANEL = C3(21, 24, 33)
+local CARD = C3(30, 34, 46)
+local LINE = C3(62, 68, 86)
+local TXT = C3(232, 235, 242)
+local TXT2 = C3(150, 157, 175)
+local BLUE = C3(70, 190, 255)
+
+local function new(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props or {}) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
+local function corner(o, r) return new("UICorner", { CornerRadius = UDim.new(0, r or 6) }, o) end
+local function stroke(o, color, th, tr) return new("UIStroke", { Color = color or LINE, Thickness = th or 1.5, Transparency = tr or 0 }, o) end
+local function label(parent, text, pos, size, ts, color, align, font)
+	return new("TextLabel", {
+		Text = text, Position = pos or UDim2.fromScale(0, 0), Size = size or UDim2.fromScale(1, 1), TextSize = ts or 16,
+		TextColor3 = color or TXT, BackgroundTransparency = 1, Font = font or Enum.Font.GothamBold,
+		TextXAlignment = align or Enum.TextXAlignment.Left, TextWrapped = true,
+	}, parent)
+end
+local function button(parent, text, pos, size, color, cb)
+	local b = new("TextButton", { Text = text, Position = pos, Size = size, BackgroundColor3 = color, TextColor3 = TXT, Font = Enum.Font.GothamBold, TextSize = 14, AutoButtonColor = false, BorderSizePixel = 0, TextWrapped = true }, parent)
+	corner(b, 6)
+	new("UIStroke", { Color = C3(8, 10, 16), Thickness = 1.5, Transparency = 0.25 }, b)
+	b.MouseEnter:Connect(function() TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = color:Lerp(C3(255, 255, 255), 0.14) }):Play() end)
+	b.MouseLeave:Connect(function() TweenService:Create(b, TweenInfo.new(0.12), { BackgroundColor3 = color }):Play() end)
+	b.MouseButton1Click:Connect(function() if cb then cb() end end)
+	return b
+end
+
+local gui = new("ScreenGui", { Name = "TestAreaUI", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 11 }, lp:WaitForChild("PlayerGui"))
+
+-- ============================================================ portal panel (lobby)
+local portal = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -24, 0.5, 0), Size = UDim2.fromOffset(400, 330), BackgroundColor3 = PANEL, BorderSizePixel = 0, Visible = false }, gui)
+corner(portal, 10)
+stroke(portal, BLUE, 2, 0.1)
+label(portal, "ТЕСТОВАЯ АРЕНА", UDim2.fromOffset(16, 12), UDim2.new(1, -32, 0, 34), 26, BLUE, nil, Enum.Font.GothamBlack)
+label(portal, "Временная зона для проверки всего оружия: посохов, мечей и луков всех редкостей. Манекены не бьют в ответ и не умирают.\n\nОружие из арены не попадает в твой инвентарь - это только тест.", UDim2.fromOffset(16, 52), UDim2.new(1, -32, 0, 170), 14, TXT2, nil, Enum.Font.Gotham)
+local enterBtn = button(portal, "ВОЙТИ В ТЕСТОВУЮ АРЕНУ", UDim2.fromOffset(16, 250), UDim2.new(1, -32, 0, 50), C3(40, 130, 200), function()
+	ToServer:FireServer("TestEnter")
+end)
+enterBtn.TextSize = 18
+enterBtn.Font = Enum.Font.GothamBlack
+
+-- ============================================================ weapon picker (inside the arena)
+local W, H = 300, 560
+local panel = new("Frame", { Position = UDim2.fromOffset(14, 166), Size = UDim2.fromOffset(W, H), BackgroundColor3 = PANEL, BorderSizePixel = 0, Visible = false }, gui)
+corner(panel, 10)
+stroke(panel, BLUE, 2, 0.1)
+label(panel, "ТЕСТ ОРУЖИЯ", UDim2.fromOffset(12, 6), UDim2.new(1, -24, 0, 26), 20, BLUE, nil, Enum.Font.GothamBlack)
+label(panel, "Клик по оружию - сразу надеть. Способности: Q / E / Z", UDim2.fromOffset(12, 30), UDim2.new(1, -24, 0, 30), 11, TXT2, nil, Enum.Font.Gotham)
+local panelScale = new("UIScale", {}, panel)
+local function fit()
+	local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+	panelScale.Scale = math.clamp((vp.Y - 180) / H, 0.5, 1)
+end
+fit()
+if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit) end
+
+local pickType = "Swordsman"
+local tabs = {}
+for i, typ in ipairs(Config.TypeOrder) do
+	local info = Config.TypeInfo[typ]
+	local b = button(panel, info.icon .. " " .. info.name, UDim2.new((i - 1) / 3, 8, 0, 64), UDim2.new(1 / 3, -10, 0, 30), C3(42, 47, 62), function()
+		pickType = typ
+		if panel.Visible then
+			for t, tb in pairs(tabs) do tb.BackgroundColor3 = t == typ and BLUE:Lerp(C3(0, 0, 0), 0.45) or C3(42, 47, 62) end
+			panel:SetAttribute("Rebuild", (panel:GetAttribute("Rebuild") or 0) + 1)
+		end
+	end)
+	b.TextSize = 12
+	tabs[typ] = b
+end
+local list = new("ScrollingFrame", { Position = UDim2.fromOffset(8, 102), Size = UDim2.new(1, -16, 1, -214), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 5, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new() }, panel)
+new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+
+local curWeapon = nil
+local function readWeapon()
+	local s = lp:GetAttribute("Data")
+	if not s then return end
+	local ok, t = pcall(function() return HttpService:JSONDecode(s) end)
+	if ok and type(t) == "table" then curWeapon = t.weapon end
+end
+
+local function rebuildList()
+	for _, c in ipairs(list:GetChildren()) do
+		if c:IsA("GuiObject") then c:Destroy() end
+	end
+	local arr = {}
+	for _, w in ipairs(Config.ByType[pickType]) do table.insert(arr, w) end
+	table.sort(arr, function(a, b) return a.tier < b.tier end)
+	for i, w in ipairs(arr) do
+		local rc = Config.Rarities[w.tier]
+		local sel = curWeapon == w.id
+		local row = new("TextButton", { Text = "", AutoButtonColor = false, Size = UDim2.new(1, -6, 0, 34), BackgroundColor3 = sel and C3(44, 60, 84) or CARD, BorderSizePixel = 0, LayoutOrder = i }, list)
+		corner(row, 6)
+		stroke(row, sel and BLUE or LINE, sel and 2 or 1, sel and 0 or 0.4)
+		local bar = new("Frame", { Size = UDim2.new(0, 5, 1, -8), Position = UDim2.fromOffset(4, 4), BackgroundColor3 = w.rainbow and C3(255, 120, 220) or rc.color, BorderSizePixel = 0 }, row)
+		corner(bar, 3)
+		label(row, w.name, UDim2.fromOffset(16, 1), UDim2.new(1, -20, 0, 18), 13, TXT)
+		label(row, rc.name .. " - " .. w.ult, UDim2.fromOffset(16, 17), UDim2.new(1, -20, 0, 14), 10, w.rainbow and C3(255, 140, 230) or rc.color, nil, Enum.Font.Gotham)
+		row.MouseButton1Click:Connect(function()
+			ToServer:FireServer("TestEquip", w.id)
+			curWeapon = w.id
+			rebuildList()
+		end)
+	end
+end
+panel:GetAttributeChangedSignal("Rebuild"):Connect(rebuildList)
+
+local actions = {
+	{ "Сбросить перезарядки", C3(52, 110, 170), "TestCd" },
+	{ "Вернуть манекены", C3(150, 110, 50), "TestReset" },
+	{ "ВЫЙТИ В ЛОББИ", C3(160, 66, 66), "TestLeave" },
+}
+for i, a in ipairs(actions) do
+	button(panel, a[1], UDim2.new(0, 8, 1, -108 + (i - 1) * 34), UDim2.new(1, -16, 0, 30), a[2], function()
+		ToServer:FireServer(a[3])
+	end)
+end
+
+lp:GetAttributeChangedSignal("Data"):Connect(function()
+	readWeapon()
+	if panel.Visible then rebuildList() end
+end)
+readWeapon()
+
+local H2 = {}
+H2.Zone = function(zid)
+	portal.Visible = zid == "testportal"
+end
+H2.TestMode = function(on)
+	panel.Visible = on
+	portal.Visible = false
+	if on then
+		readWeapon()
+		if curWeapon and Config.Weapons[curWeapon] then pickType = Config.Weapons[curWeapon].type end
+		for t, tb in pairs(tabs) do tb.BackgroundColor3 = t == pickType and BLUE:Lerp(C3(0, 0, 0), 0.45) or C3(42, 47, 62) end
+		rebuildList()
+	end
+end
+ToClient.OnClientEvent:Connect(function(name, ...)
+	local f = H2[name]
+	if f then
+		local ok, err = pcall(f, ...)
+		if not ok then warn("[testarea] " .. tostring(name) .. ": " .. tostring(err)) end
+	end
+end)
+]]></ProtectedString>
+</Properties>
+</Item>
+</Item>
+<Item class="StarterCharacterScripts" referent="RBX16">
 <Properties>
 <string name="Name">StarterCharacterScripts</string>
 </Properties>
