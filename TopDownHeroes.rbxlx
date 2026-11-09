@@ -385,23 +385,64 @@ local function applyStats(p, heal)
 	updatePlate(p)
 end
 
-local function swingWeapon(st, cls)
+local function swingWeapon(st, cls, cd)
 	local w = st.weapon
 	if not w or not w.weld.Parent then return end
 	local base = w.base
 	local weld = w.weld
+	st.swingTok = (st.swingTok or 0) + 1
+	local tok = st.swingTok
+	local function alive() return weld.Parent and st.swingTok == tok end
+	local function tween(inst, t, props, style, dir)
+		TweenService:Create(inst, TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props):Play()
+	end
 	if cls == "Swordsman" then
-		weld.C0 = CFrame.Angles(0, -1.2, 0) * base
-		TweenService:Create(weld, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { C0 = CFrame.Angles(0, 1.2, 0) * base }):Play()
-		task.delay(0.16, function()
-			if weld.Parent then
-				TweenService:Create(weld, TweenInfo.new(0.2), { C0 = base }):Play()
+		-- combo: every hit swings from the opposite side
+		st.swingDir = -(st.swingDir or 1)
+		local d = st.swingDir
+		local a0, a1 = -1.4 * d, 1.4 * d
+		if w.trail then w.trail.Enabled = true end
+		-- wind-up, then a fast cut with a little forward thrust
+		weld.C0 = CFrame.Angles(0, a0 * 1.12, 0) * base
+		tween(weld, 0.11, { C0 = CFrame.Angles(0, a1, 0) * CFrame.new(0, 0, -0.7) * base }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+		task.delay(0.13, function()
+			if alive() then
+				tween(weld, 0.24, { C0 = base }, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 			end
 		end)
+		task.delay(0.2, function()
+			if alive() and w.trail then w.trail.Enabled = false end
+		end)
+	elseif cls == "Archer" then
+		-- recoil, then the next arrow is nocked
+		weld.C0 = base * CFrame.new(0, 0, 0.95)
+		tween(weld, 0.24, { C0 = base }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		if w.arrow then
+			for _, ap in ipairs(w.arrow) do ap.Transparency = 1 end
+			task.delay(math.clamp((cd or 0.4) * 0.45, 0.06, 0.3), function()
+				if not alive() then return end
+				for _, ap in ipairs(w.arrow) do
+					if ap.Parent then tween(ap, 0.12, { Transparency = 0 }, Enum.EasingStyle.Linear) end
+				end
+			end)
+		end
 	else
-		local dz = cls == "Archer" and 0.9 or -1.0
-		weld.C0 = base * CFrame.new(0, 0, dz)
-		TweenService:Create(weld, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { C0 = base }):Play()
+		-- staff: small pull-back, thrust forward, orb flares
+		weld.C0 = base * CFrame.new(0, 0, 0.5)
+		tween(weld, 0.07, { C0 = base * CFrame.new(0, 0, -1.3) }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		task.delay(0.08, function()
+			if alive() then tween(weld, 0.28, { C0 = base }, Enum.EasingStyle.Back, Enum.EasingDirection.Out) end
+		end)
+		local o = w.orb
+		if o then
+			o.halo.Transparency = 0.35
+			o.glow.Transparency = 0.05
+			o.light.Brightness = 3.2
+			tween(o.halo, 0.45, { Transparency = 0.86 })
+			tween(o.glow, 0.4, { Transparency = 0.45 })
+			tween(o.light, 0.4, { Brightness = 1 })
+			o.emitter:Emit(14)
+		end
 	end
 end
 
@@ -868,6 +909,7 @@ local function swingBossSword(e)
 	if not w then return end
 	task.spawn(function()
 		local t0 = os.clock()
+		if w.trail then w.trail.Enabled = true end
 		while w.weld.Parent do
 			local t = os.clock() - t0
 			if t > 0.9 then break end
@@ -880,6 +922,7 @@ local function swingBossSword(e)
 			w.weld.C0 = CFrame.Angles(0, a, 0) * w.base
 			task.wait()
 		end
+		if w.trail then w.trail.Enabled = false end
 		if w.weld.Parent then w.weld.C0 = w.base end
 	end)
 end
@@ -1108,9 +1151,9 @@ local function playerAttack(p, aim)
 		if m < 0.01 then dx, dz, m = 0, -1, 1 end
 	end
 	dx, dz = dx / m, dz / m
-	swingWeapon(st, cls)
+	swingWeapon(st, cls, ws.cooldown)
 	if cdef.kind == "melee" then
-		runFx(run, "Slash", px, pz, dx, dz, ws.range, cdef.arc, crit)
+		runFx(run, "Slash", px, pz, dx, dz, ws.range, cdef.arc, crit, st.swingDir or 1)
 		local cosA = math.cos(math.rad(cdef.arc) / 2)
 		local hits = {}
 		for _, e in ipairs(run.enemies) do
@@ -1593,6 +1636,8 @@ print("[TopDownHeroes] server ready")
 <Properties>
 <string name="Name">Sprites</string>
 <ProtectedString name="Source"><![CDATA[-- Flat "2D sprite" builder: everything is made from thin discs / blocks seen from above
+local TweenService = game:GetService("TweenService")
+
 local Sprites = {}
 Sprites.__index = Sprites
 
@@ -1666,7 +1711,41 @@ local function radialRot(vx, vz)
 end
 
 -- ===================== WEAPONS =====================
+local function C(r, g, b) return Color3.fromRGB(r, g, b) end
+
+local function darker(c, m)
+	return Color3.new(c.R * m, c.G * m, c.B * m)
+end
+
+local function attach(part, x, y, z, k)
+	local a = Instance.new("Attachment")
+	a.Position = Vector3.new(x * k, y * k, z * k)
+	a.Parent = part
+	return a
+end
+
+local function mkTrail(part, a0, a1, c0, c1, life)
+	local t = Instance.new("Trail")
+	t.Attachment0 = a0
+	t.Attachment1 = a1
+	t.Lifetime = life or 0.2
+	t.Color = ColorSequence.new(c0, c1 or c0)
+	t.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.3),
+		NumberSequenceKeypoint.new(0.5, 0.65),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	t.LightEmission = 0.7
+	t.LightInfluence = 0
+	t.MinLength = 0.05
+	t.FaceCamera = false
+	t.Enabled = false
+	t.Parent = part
+	return t
+end
+
 -- builds a weapon on an invisible pivot welded to root with an animatable Weld
+-- returns { pivot, weld, base, trail?, arrow?, orb? }
 function Sprites.weapon(kind, root, parent, handCF, scale, pal)
 	pal = pal or {}
 	local k = scale or 1
@@ -1677,23 +1756,54 @@ function Sprites.weapon(kind, root, parent, handCF, scale, pal)
 	w.C0 = handCF
 	w.Parent = pivot
 	local s = Sprites.new(pivot, parent, 0, k)
+	local out = { pivot = pivot, weld = w, base = handCF, kind = kind }
 
 	if kind == "Swordsman" then
-		local blade = pal.blade or Color3.fromRGB(205, 215, 230)
-		local light = pal.fuller or Color3.fromRGB(240, 248, 255)
-		local gold = pal.guard or Color3.fromRGB(235, 185, 60)
-		local grip = pal.grip or Color3.fromRGB(95, 60, 35)
+		local edge = pal.blade or C(168, 180, 198)
+		local face = pal.fuller or C(222, 230, 241)
+		local gold = pal.guard or C(212, 168, 72)
+		local goldDark = darker(gold, 0.68)
+		local grip = pal.grip or C(84, 54, 34)
+		local gemC = pal.gem or C(186, 52, 66)
+
+		-- grip with leather wraps
 		s:block(0.42, 1.7, grip, 0, 0.25, 0.02, 0, FABRIC, 0, 0.3)
-		s:disc(0.7, gold, 0, 1.15, 0.02, METAL, 0, 0.35)
-		s:block(2.5, 0.5, gold, 0, -0.75, 0.06, 0, METAL, 0, 0.3)
-		s:disc(0.55, pal.gem or Color3.fromRGB(220, 50, 70), 0, -0.75, 0.25, NEON, 0, 0.12)
-		s:block(0.85, 5.2, blade, 0, -3.5, 0.05, 0, METAL, 0, 0.22)
-		s:block(0.3, 4.4, light, 0, -3.5, 0.18, 0, METAL, 0, 0.06)
-		s:block(0.1, 5.1, Color3.fromRGB(255, 255, 255), 0.4, -3.5, 0.17, 0, METAL, 0, 0.06)
-		s:block(0.1, 5.1, Color3.fromRGB(150, 160, 180), -0.4, -3.5, 0.17, 0, METAL, 0, 0.06)
-		s:block(0.6, 0.6, blade, 0, -6.1, 0.05, math.pi / 4, METAL, 0, 0.22)
+		for i = 0, 3 do
+			s:block(0.5, 0.12, darker(grip, 0.55), 0, -0.4 + i * 0.4, 0.04, 0, FABRIC, 0, 0.3)
+		end
+		-- pommel
+		s:disc(0.82, goldDark, 0, 1.2, 0.02, METAL, 0, 0.36)
+		s:disc(0.44, gold, 0, 1.2, 0.04, METAL, 0, 0.4)
+		-- crossguard
+		s:block(2.8, 0.54, goldDark, 0, -0.75, 0.06, 0, METAL, 0, 0.3)
+		s:block(2.4, 0.3, gold, 0, -0.75, 0.1, 0, METAL, 0, 0.32)
+		s:disc(0.66, goldDark, -1.4, -0.75, 0.06, METAL, 0, 0.34)
+		s:disc(0.66, goldDark, 1.4, -0.75, 0.06, METAL, 0, 0.34)
+		s:disc(0.38, gold, -1.4, -0.75, 0.1, METAL, 0, 0.38)
+		s:disc(0.38, gold, 1.4, -0.75, 0.1, METAL, 0, 0.38)
+		s:disc(0.62, goldDark, 0, -0.75, 0.2, METAL, 0, 0.14)
+		s:disc(0.4, gemC, 0, -0.75, 0.26, nil, 0, 0.14)
+		s:disc(0.14, C(255, 190, 200), 0, -0.82, 0.34, NEON, 0.2, 0.06)
+		-- blade: steel edge + bright face + fuller + rune glints
+		local bladeEdge = s:block(0.96, 5.3, edge, 0, -3.5, 0.05, 0, METAL, 0, 0.2)
+		s:block(0.62, 5.0, face, 0, -3.5, 0.1, 0, METAL, 0, 0.2)
+		s:block(0.14, 3.9, C(118, 132, 156), 0, -3.4, 0.18, 0, METAL, 0, 0.08)
+		s:block(0.06, 4.9, C(255, 255, 255), 0.27, -3.5, 0.2, 0, METAL, 0, 0.06)
+		s:block(0.06, 4.9, C(150, 162, 184), -0.27, -3.5, 0.2, 0, METAL, 0, 0.06)
+		for _, z in ipairs({ -2.3, -3.4, -4.5 }) do
+			s:block(0.1, 0.42, C(150, 205, 255), 0, z, 0.23, 0, NEON, 0.3, 0.05)
+		end
+		s:block(0.68, 0.68, edge, 0, -6.1, 0.05, math.pi / 4, METAL, 0, 0.2)
+		s:block(0.42, 0.42, face, 0, -6.1, 0.1, math.pi / 4, METAL, 0, 0.2)
+		-- swing trail (enabled by the server while attacking)
+		local a0 = attach(bladeEdge, 0, 0, -2.65, k)
+		local a1 = attach(bladeEdge, 0, 0, -0.2, k)
+		out.trail = mkTrail(bladeEdge, a0, a1, C(225, 240, 255), C(120, 170, 235), 0.2)
+
 	elseif kind == "Archer" then
-		local wood = pal.wood or Color3.fromRGB(128, 82, 42)
+		local wood = pal.wood or C(124, 80, 42)
+		local woodHi = C(166, 116, 66)
+		local gold = C(212, 168, 72)
 		local R = 3.0
 		local prev
 		for i = -5, 5 do
@@ -1703,52 +1813,118 @@ function Sprites.weapon(kind, root, parent, handCF, scale, pal)
 				local v = pt - prev
 				local len = v.Magnitude
 				local mid = (pt + prev) / 2
-				s:block(0.42, len + 0.14, wood, mid.X, mid.Y, 0.1, radialRot(v.X, v.Y), WOOD, 0, 0.3)
+				local rot = radialRot(v.X, v.Y)
+				s:block(0.5, len + 0.14, darker(wood, 0.75), mid.X, mid.Y, 0.08, rot, WOOD, 0, 0.3)
+				s:block(0.3, len + 0.1, wood, mid.X, mid.Y, 0.14, rot, WOOD, 0, 0.3)
+				s:block(0.1, len + 0.06, woodHi, mid.X + 0.04, mid.Y, 0.3, rot, WOOD, 0, 0.1)
 			end
 			prev = pt
 		end
 		local tipZ = R * (1 - math.cos(math.rad(75)))
 		local tipX = R * math.sin(math.rad(75))
-		s:disc(0.55, Color3.fromRGB(235, 185, 60), tipX, tipZ, 0.1, METAL, 0, 0.35)
-		s:disc(0.55, Color3.fromRGB(235, 185, 60), -tipX, tipZ, 0.1, METAL, 0, 0.35)
-		s:block(tipX * 2, 0.07, Color3.fromRGB(240, 235, 215), 0, tipZ, 0.1, 0, FABRIC, 0, 0.07)
-		s:block(0.6, 1.2, Color3.fromRGB(70, 45, 30), 0, 0, 0.3, 0, FABRIC, 0, 0.3)
-		-- nocked arrow
-		local aLen = tipZ + 3.3
-		s:block(0.14, aLen, Color3.fromRGB(235, 225, 190), 0, (tipZ - 3.3) / 2, 0.32, 0, WOOD, 0, 0.12)
-		s:block(0.5, 0.5, Color3.fromRGB(190, 200, 215), 0, -3.4, 0.32, math.pi / 4, METAL, 0, 0.12)
-		s:block(0.55, 0.45, Color3.fromRGB(210, 60, 60), 0, tipZ - 0.2, 0.34, 0, FABRIC, 0, 0.08)
-		s:block(0.5, 0.35, Color3.fromRGB(240, 240, 240), 0, tipZ - 0.7, 0.34, 0, FABRIC, 0, 0.08)
+		-- limb tips
+		s:disc(0.6, gold, tipX, tipZ, 0.1, METAL, 0, 0.36)
+		s:disc(0.6, gold, -tipX, tipZ, 0.1, METAL, 0, 0.36)
+		s:disc(0.26, darker(gold, 0.6), tipX, tipZ, 0.3, METAL, 0, 0.1)
+		s:disc(0.26, darker(gold, 0.6), -tipX, tipZ, 0.3, METAL, 0, 0.1)
+		-- riser grip with gold rings
+		s:block(0.66, 1.3, C(66, 42, 28), 0, 0, 0.3, 0, FABRIC, 0, 0.3)
+		s:block(0.78, 0.14, gold, 0, -0.6, 0.34, 0, METAL, 0, 0.3)
+		s:block(0.78, 0.14, gold, 0, 0.6, 0.34, 0, METAL, 0, 0.3)
+		-- string (drawn back slightly in the middle)
+		local nockZ = tipZ + 0.55
+		local sv = Vector2.new(tipX, nockZ - tipZ)
+		local slen = sv.Magnitude
+		local strC = C(238, 233, 214)
+		s:block(0.07, slen, strC, tipX / 2, (tipZ + nockZ) / 2, 0.1, radialRot(-sv.X, sv.Y), FABRIC, 0, 0.07)
+		s:block(0.07, slen, strC, -tipX / 2, (tipZ + nockZ) / 2, 0.1, radialRot(sv.X, sv.Y), FABRIC, 0, 0.07)
+		-- nocked arrow (kept in a list so it can be hidden while "reloading")
+		local arrow = {}
+		local headZ = -3.4
+		local aLen = nockZ - headZ
+		local shaftZ = (nockZ + headZ) / 2
+		table.insert(arrow, s:block(0.14, aLen, C(232, 222, 188), 0, shaftZ, 0.32, 0, WOOD, 0, 0.12))
+		table.insert(arrow, s:block(0.56, 0.56, C(176, 188, 206), 0, headZ, 0.32, math.pi / 4, METAL, 0, 0.12))
+		table.insert(arrow, s:block(0.32, 0.32, C(228, 234, 242), 0, headZ, 0.36, math.pi / 4, METAL, 0, 0.08))
+		table.insert(arrow, s:block(0.14, 0.7, C(196, 62, 62), -0.2, nockZ - 0.3, 0.34, 0.3, FABRIC, 0, 0.08))
+		table.insert(arrow, s:block(0.14, 0.7, C(196, 62, 62), 0.2, nockZ - 0.3, 0.34, -0.3, FABRIC, 0, 0.08))
+		table.insert(arrow, s:block(0.14, 0.6, C(236, 236, 236), 0, nockZ - 0.9, 0.34, 0, FABRIC, 0, 0.08))
+		out.arrow = arrow
+
 	elseif kind == "Mage" then
-		local wood = pal.wood or Color3.fromRGB(86, 58, 38)
-		local gold = Color3.fromRGB(235, 185, 60)
+		local wood = pal.wood or C(82, 56, 38)
+		local woodHi = C(122, 88, 58)
+		local gold = C(212, 168, 72)
+		local glow = pal.orb or C(120, 180, 245)
 		local orbZ = -5.9
-		s:block(0.46, 8.0, wood, 0, -1.6, 0.05, 0, WOOD, 0, 0.3)
+		-- shaft
+		s:block(0.5, 8.0, wood, 0, -1.6, 0.05, 0, WOOD, 0, 0.3)
+		s:block(0.14, 7.8, woodHi, 0.12, -1.6, 0.2, 0, WOOD, 0, 0.08)
 		for _, z in ipairs({ 0.4, -1.4, -3.2 }) do
-			s:block(0.75, 0.32, gold, 0, z, 0.1, 0, METAL, 0, 0.36)
+			s:block(0.8, 0.3, darker(gold, 0.65), 0, z, 0.1, 0, METAL, 0, 0.36)
+			s:block(0.8, 0.12, gold, 0, z, 0.14, 0, METAL, 0, 0.38)
 		end
-		s:disc(0.8, gold, 0, 2.4, 0.05, METAL, 0, 0.35)
+		for _, z in ipairs({ -0.5, -2.3, -4.3 }) do
+			s:block(0.1, 0.36, glow, 0, z, 0.22, 0, NEON, 0.35, 0.05)
+		end
+		s:disc(0.86, darker(gold, 0.65), 0, 2.4, 0.05, METAL, 0, 0.35)
+		s:disc(0.5, gold, 0, 2.4, 0.07, METAL, 0, 0.4)
+		-- head: gold ring + four spikes around the orb
+		for i = 0, 9 do
+			local a = i * math.pi / 5
+			local vx, vz = math.cos(a), math.sin(a)
+			s:block(0.34, 0.62, gold, vx * 1.5, orbZ + vz * 1.5, 0.12, radialRot(-vz, vx), METAL, 0, 0.3)
+		end
 		for i = 0, 3 do
 			local a = math.rad(45 + i * 90)
 			local vx, vz = math.cos(a), math.sin(a)
-			s:block(0.3, 1.5, gold, vx * 1.15, orbZ + vz * 1.15, 0.12, radialRot(vx, vz), METAL, 0, 0.3)
+			s:block(0.24, 1.0, darker(gold, 0.8), vx * 2.0, orbZ + vz * 2.0, 0.1, radialRot(vx, vz), METAL, 0, 0.3)
 		end
-		local glow = pal.orb or Color3.fromRGB(120, 190, 255)
-		s:disc(3.0, glow, 0, orbZ, 0.04, NEON, 0.78, 0.1)
-		local o = s:disc(2.1, glow, 0, orbZ, 0.15, NEON, 0.35, 0.4)
-		s:disc(1.1, Color3.fromRGB(235, 248, 255), 0, orbZ, 0.4, NEON, 0, 0.3)
-		s:light(o, glow, 14, 1.2)
+		-- orb
+		local halo = s:disc(3.7, glow, 0, orbZ, 0.04, NEON, 0.86, 0.1)
+		local mid = s:disc(2.4, glow, 0, orbZ, 0.15, NEON, 0.45, 0.4)
+		local core = s:disc(1.2, C(228, 242, 255), 0, orbZ, 0.4, NEON, 0, 0.3)
+		local lt = Instance.new("PointLight")
+		lt.Color = glow
+		lt.Range = 14
+		lt.Brightness = 1
+		lt.Shadows = false
+		lt.Parent = mid
+		-- floating sparks
+		local em = Instance.new("ParticleEmitter")
+		em.Rate = 10
+		em.Lifetime = NumberRange.new(0.7, 1.3)
+		em.Speed = NumberRange.new(0.6, 1.8)
+		em.SpreadAngle = Vector2.new(180, 180)
+		em.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.5 * k),
+			NumberSequenceKeypoint.new(1, 0),
+		})
+		em.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.2),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		em.Color = ColorSequence.new(C(235, 245, 255), glow)
+		em.LightEmission = 1
+		em.LightInfluence = 0
+		em.Parent = core
+		-- gentle idle pulse
+		pcall(function()
+			TweenService:Create(halo, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.68 }):Play()
+		end)
+		out.orb = { halo = halo, glow = mid, core = core, light = lt, emitter = em }
+
 	elseif kind == "Club" then
-		local wood = pal.wood or Color3.fromRGB(100, 68, 40)
+		local wood = pal.wood or C(100, 68, 40)
 		s:block(0.55, 4.4, wood, 0, -1.4, 0.05, 0, WOOD, 0, 0.35)
-		s:disc(1.9, Color3.fromRGB(80, 55, 35), 0, -4.0, 0.08, WOOD, 0, 0.45)
+		s:disc(1.9, C(80, 55, 35), 0, -4.0, 0.08, WOOD, 0, 0.45)
 		for i = 0, 6 do
 			local a = math.rad(i * 51)
 			local vx, vz = math.cos(a), math.sin(a)
-			s:block(0.3, 0.9, Color3.fromRGB(170, 170, 180), vx * 1.0, -4.0 + vz * 1.0, 0.2, radialRot(vx, vz), METAL, 0, 0.25)
+			s:block(0.3, 0.9, C(170, 170, 180), vx * 1.0, -4.0 + vz * 1.0, 0.2, radialRot(vx, vz), METAL, 0, 0.25)
 		end
 	end
-	return { pivot = pivot, weld = w, base = handCF }
+	return out
 end
 
 -- ===================== PLAYER =====================
@@ -2378,25 +2554,6 @@ function M.lobby(folder)
 	label(folder, 0, 8, 12, "Pick a gate  ->  choose a location  ->  survive the waves!", C3(255, 255, 255), 640, 36, 20)
 	label(folder, 0, 8, -40, "THE FOUR GATES", C3(255, 255, 255), 360, 30, 20)
 
-	-- hero statues (decor) along the south road
-	local function statue(cls, x, z, col)
-		disc(folder, 12, C3(40, 40, 50), x, 0.3, z, MAT.Slate, 0, 0.2)
-		glowDisc(folder, 11, col, x, 0.42, z, 0.55)
-		disc(folder, 9, C3(70, 70, 82), x, 0.8, z, MAT.Marble, 0, 0.8)
-		disc(folder, 7, C3(col.R * 255 * 0.55, col.G * 255 * 0.55, col.B * 255 * 0.55), x, 1.4, z, MAT.Marble, 0, 0.4)
-		local root = part(folder, BLK, Vector3.new(1, 1, 1), CFrame.new(x, 1.6, z), C3(255, 255, 255), nil, 1, false)
-		local weaponModel = Instance.new("Model")
-		weaponModel.Name = "Display_" .. cls
-		weaponModel.Parent = folder
-		root.Parent = weaponModel
-		Sprites.weapon(cls, root, weaponModel, CFrame.new(0, 0.6, 0), 1.25)
-		label(folder, x, 6, z + 8, string.upper(cls), col, 220, 30, 20)
-		collider(folder, 8, x, z, 4)
-	end
-	statue("Swordsman", -68, 40, C3(214, 70, 62))
-	statue("Archer", -68, 66, C3(70, 168, 82))
-	statue("Mage", 68, 52, C3(150, 84, 220))
-
 	-- ================= THE FOUR GATES =================
 	local wlabels = { forest = "Forest", cave = "Cave" }
 	for _, zn in ipairs(Config.Lobby.zones) do
@@ -2790,31 +2947,100 @@ local function new(class, props, parent)
 	if parent then o.Parent = parent end
 	return o
 end
-local function corner(o, r) return new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, o) end
-local function stroke(o, color, th, tr) return new("UIStroke", { Color = color or C3(255, 255, 255), Thickness = th or 2, Transparency = tr or 0 }, o) end
+-- ------------------------------------------------------------ THEME (flat, crisp, muted)
+local GOLD = C3(214, 178, 98)
+local INK = C3(12, 14, 20)
+local PANEL = C3(21, 24, 33)
+local CARD = C3(30, 34, 46)
+local LINE = C3(62, 68, 86)
+local TXT = C3(232, 235, 242)
+local TXT2 = C3(150, 157, 175)
+local DISABLED_TXT = C3(124, 130, 148)
+
+-- keeps hues but caps brightness / saturation so nothing screams
+local function tone(c)
+	local h, s, v = c:ToHSV()
+	if s > 0.3 then s = s * 0.72 end
+	if v > 0.62 then v = 0.62 end
+	return Color3.fromHSV(h, s, v)
+end
+
+local function corner(o, r) return new("UICorner", { CornerRadius = UDim.new(0, r or 6) }, o) end
+local function stroke(o, color, th, tr) return new("UIStroke", { Color = color or LINE, Thickness = th or 1.5, Transparency = tr or 0 }, o) end
 local function mkLabel(parent, text, pos, size, ts, color, align, font)
 	return new("TextLabel", {
-		Text = text, Position = pos, Size = size, TextSize = ts or 16, TextColor3 = color or C3(255, 255, 255),
+		Text = text, Position = pos, Size = size, TextSize = ts or 16, TextColor3 = color or TXT,
 		BackgroundTransparency = 1, Font = font or Enum.Font.GothamBold, TextXAlignment = align or Enum.TextXAlignment.Left,
-		TextWrapped = true, TextStrokeTransparency = 0.5,
+		TextWrapped = true, TextStrokeTransparency = 1,
 	}, parent)
 end
 local function mkBar(parent, pos, size, color)
-	local bg = new("Frame", { Position = pos, Size = size, BackgroundColor3 = C3(14, 16, 22), BorderSizePixel = 0 }, parent)
-	corner(bg, 6)
-	local fill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = color, BorderSizePixel = 0 }, bg)
-	corner(fill, 6)
+	local bg = new("Frame", { Position = pos, Size = size, BackgroundColor3 = INK, BorderSizePixel = 0 }, parent)
+	corner(bg, 5)
+	stroke(bg, LINE, 1.5, 0.1)
+	local fill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = tone(color), BorderSizePixel = 0 }, bg)
+	corner(fill, 5)
+	new("UIGradient", { Color = ColorSequence.new(C3(255, 255, 255), C3(176, 176, 176)), Rotation = 90 }, fill)
 	local txt = mkLabel(bg, "", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 13, nil, Enum.TextXAlignment.Center)
 	txt.ZIndex = 3
+	txt.TextStrokeColor3 = INK
+	txt.TextStrokeTransparency = 0.45
 	return { bg = bg, fill = fill, txt = txt }
 end
+
+local function setDisabled(b, dis)
+	b:SetAttribute("Dis", dis and true or false)
+	if dis then b.TextColor3 = DISABLED_TXT end
+end
+
+local function markSelected(b)
+	local st = b:FindFirstChildOfClass("UIStroke")
+	if st then
+		st.Color = GOLD
+		st.Thickness = 2
+		st.Transparency = 0
+	end
+end
+
 local function mkButton(parent, text, pos, size, color, cb)
 	local b = new("TextButton", {
-		Text = text, Position = pos, Size = size, BackgroundColor3 = color, TextColor3 = C3(255, 255, 255),
-		Font = Enum.Font.GothamBold, TextSize = 16, AutoButtonColor = true, BorderSizePixel = 0,
+		Text = text, Position = pos, Size = size, BackgroundColor3 = tone(color), TextColor3 = TXT,
+		Font = Enum.Font.GothamBold, TextSize = 16, AutoButtonColor = false, BorderSizePixel = 0, TextWrapped = true,
 	}, parent)
-	corner(b, 8)
-	if cb then b.MouseButton1Click:Connect(cb) end
+	corner(b, 6)
+	-- crisp dark outline
+	new("UIStroke", { Color = C3(8, 10, 16), Thickness = 1.5, Transparency = 0.25 }, b)
+	-- soft top light (flat bevel)
+	local shine = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(255, 255, 255), BorderSizePixel = 0, Active = false }, b)
+	corner(shine, 6)
+	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.9), NumberSequenceKeypoint.new(0.5, 0.97), NumberSequenceKeypoint.new(1, 1) }), Rotation = 90 }, shine)
+	-- hover / press overlay
+	local hov = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(255, 255, 255), BackgroundTransparency = 1, BorderSizePixel = 0, Active = false }, b)
+	corner(hov, 6)
+	local sc = new("UIScale", {}, b)
+	local function over(tr, t) TweenService:Create(hov, TweenInfo.new(t or 0.1), { BackgroundTransparency = tr }):Play() end
+	b.MouseEnter:Connect(function()
+		if not b:GetAttribute("Dis") then over(0.9) end
+	end)
+	b.MouseLeave:Connect(function()
+		over(1, 0.14)
+		TweenService:Create(sc, TweenInfo.new(0.1), { Scale = 1 }):Play()
+	end)
+	b.MouseButton1Down:Connect(function()
+		if b:GetAttribute("Dis") then return end
+		over(0.8, 0.05)
+		TweenService:Create(sc, TweenInfo.new(0.06), { Scale = 0.97 }):Play()
+	end)
+	b.MouseButton1Up:Connect(function()
+		if b:GetAttribute("Dis") then return end
+		over(0.9, 0.1)
+		TweenService:Create(sc, TweenInfo.new(0.12, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+	end)
+	if cb then
+		b.MouseButton1Click:Connect(function()
+			if not b:GetAttribute("Dis") then cb() end
+		end)
+	end
 	return b
 end
 local function hex(s) return Color3.fromHex(s) end
@@ -2822,32 +3048,34 @@ local function hex(s) return Color3.fromHex(s) end
 local gui = new("ScreenGui", { Name = "HUD", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 5 }, lp:WaitForChild("PlayerGui"))
 
 -- ------------------------------------------------------------ HUD
-local info = new("Frame", { Position = UDim2.fromOffset(14, 14), Size = UDim2.fromOffset(290, 100), BackgroundColor3 = C3(16, 18, 26), BackgroundTransparency = 0.2, BorderSizePixel = 0 }, gui)
-corner(info, 12)
-stroke(info, C3(255, 255, 255), 1, 0.7)
-local lvlLabel = mkLabel(info, "Lv.1", UDim2.fromOffset(12, 6), UDim2.fromOffset(130, 28), 24, C3(255, 214, 74))
+local info = new("Frame", { Position = UDim2.fromOffset(14, 14), Size = UDim2.fromOffset(290, 100), BackgroundColor3 = PANEL, BackgroundTransparency = 0.06, BorderSizePixel = 0 }, gui)
+corner(info, 8)
+stroke(info, LINE, 1.5, 0)
+local lvlLabel = mkLabel(info, "Lv.1", UDim2.fromOffset(12, 6), UDim2.fromOffset(130, 28), 24, GOLD)
 local xpBar = mkBar(info, UDim2.fromOffset(12, 38), UDim2.fromOffset(266, 16), C3(80, 150, 255))
-local coinLabel = mkLabel(info, "Coins: 0", UDim2.fromOffset(12, 60), UDim2.fromOffset(140, 22), 16, C3(255, 214, 74))
-local ptsLabel = mkLabel(info, "Skill points: 0", UDim2.fromOffset(150, 60), UDim2.fromOffset(136, 22), 16, C3(120, 255, 150))
-local classLabel = mkLabel(info, "", UDim2.fromOffset(140, 6), UDim2.fromOffset(140, 28), 16, C3(220, 220, 230), Enum.TextXAlignment.Right)
-local winsLabel = mkLabel(info, "", UDim2.fromOffset(12, 80), UDim2.fromOffset(266, 16), 12, C3(190, 190, 205))
+local coinLabel = mkLabel(info, "Coins: 0", UDim2.fromOffset(12, 60), UDim2.fromOffset(140, 22), 16, GOLD)
+local ptsLabel = mkLabel(info, "Skill points: 0", UDim2.fromOffset(150, 60), UDim2.fromOffset(136, 22), 16, C3(130, 200, 156))
+local classLabel = mkLabel(info, "", UDim2.fromOffset(140, 6), UDim2.fromOffset(140, 28), 16, C3(196, 202, 218), Enum.TextXAlignment.Right)
+local winsLabel = mkLabel(info, "", UDim2.fromOffset(12, 80), UDim2.fromOffset(266, 16), 12, TXT2)
 
 local hpBar = mkBar(gui, UDim2.new(0.5, -200, 1, -50), UDim2.fromOffset(400, 28), C3(80, 210, 90))
 local dashBar = mkBar(gui, UDim2.new(0.5, -200, 1, -76), UDim2.fromOffset(400, 14), C3(90, 200, 255))
 dashBar.txt.TextSize = 11
 
-local waveFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.fromOffset(460, 46), BackgroundColor3 = C3(16, 18, 26), BackgroundTransparency = 0.2, BorderSizePixel = 0, Visible = false }, gui)
-corner(waveFrame, 10)
-local waveTitle = mkLabel(waveFrame, "", UDim2.fromOffset(0, 2), UDim2.new(1, 0, 0, 24), 20, C3(255, 214, 74), Enum.TextXAlignment.Center)
-local waveSub = mkLabel(waveFrame, "", UDim2.fromOffset(0, 24), UDim2.new(1, 0, 0, 20), 14, nil, Enum.TextXAlignment.Center)
+local waveFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.fromOffset(460, 46), BackgroundColor3 = PANEL, BackgroundTransparency = 0.06, BorderSizePixel = 0, Visible = false }, gui)
+corner(waveFrame, 8)
+stroke(waveFrame, LINE, 1.5, 0)
+local waveTitle = mkLabel(waveFrame, "", UDim2.fromOffset(0, 2), UDim2.new(1, 0, 0, 24), 20, GOLD, Enum.TextXAlignment.Center)
+local waveSub = mkLabel(waveFrame, "", UDim2.fromOffset(0, 24), UDim2.new(1, 0, 0, 20), 14, TXT2, Enum.TextXAlignment.Center)
 local bossFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 66), Size = UDim2.fromOffset(620, 40), BackgroundTransparency = 1, Visible = false }, gui)
-local bossName = mkLabel(bossFrame, "", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 18), 18, C3(255, 120, 90), Enum.TextXAlignment.Center)
+local bossName = mkLabel(bossFrame, "", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 18), 18, C3(226, 128, 108), Enum.TextXAlignment.Center)
 local bossBar = mkBar(bossFrame, UDim2.fromOffset(0, 20), UDim2.new(1, 0, 0, 20), C3(220, 50, 50))
 
 local toastLabel = new("TextLabel", {
 	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.22, 0), Size = UDim2.fromOffset(900, 60), BackgroundTransparency = 1,
-	Font = Enum.Font.GothamBlack, TextSize = 40, TextColor3 = C3(255, 255, 255), TextStrokeTransparency = 0, Text = "", TextTransparency = 1, ZIndex = 20,
+	Font = Enum.Font.GothamBlack, TextSize = 38, TextColor3 = TXT, TextStrokeColor3 = INK, TextStrokeTransparency = 0.1, Text = "", TextTransparency = 1, ZIndex = 20,
 }, gui)
+local toastScale = new("UIScale", {}, toastLabel)
 local toastToken = 0
 local function showToast(text, color, dur)
 	toastToken = toastToken + 1
@@ -2855,7 +3083,9 @@ local function showToast(text, color, dur)
 	toastLabel.Text = text
 	toastLabel.TextColor3 = hex(color or "ffffff")
 	toastLabel.TextTransparency = 0
-	toastLabel.TextStrokeTransparency = 0
+	toastLabel.TextStrokeTransparency = 0.1
+	toastScale.Scale = 0.8
+	TweenService:Create(toastScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 	task.delay(dur or 3, function()
 		if my == toastToken then
 			TweenService:Create(toastLabel, TweenInfo.new(0.6), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
@@ -2864,11 +3094,13 @@ local function showToast(text, color, dur)
 end
 
 local hint = mkLabel(gui, "WASD - move   |   Mouse - aim   |   Hold LMB - attack   |   SPACE / SHIFT - dash   |   Wheel - zoom",
-	UDim2.new(0, 14, 1, -30), UDim2.fromOffset(700, 22), 14, C3(220, 220, 230))
+	UDim2.new(0, 14, 1, -30), UDim2.fromOffset(700, 22), 14, C3(196, 202, 218))
+hint.TextStrokeColor3 = INK
+hint.TextStrokeTransparency = 0.5
 local downLabel = new("TextLabel", {
 	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.7, 0), Size = UDim2.fromOffset(700, 50), BackgroundTransparency = 1,
-	Text = "YOU ARE DOWN - you will revive when the next wave starts", TextColor3 = C3(255, 90, 90), Font = Enum.Font.GothamBlack, TextSize = 26,
-	TextStrokeTransparency = 0, Visible = false,
+	Text = "YOU ARE DOWN - you will revive when the next wave starts", TextColor3 = C3(224, 100, 100), Font = Enum.Font.GothamBlack, TextSize = 26,
+	TextStrokeColor3 = INK, TextStrokeTransparency = 0.15, Visible = false,
 }, gui)
 local hurt = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(255, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 0 }, gui)
 
@@ -2876,12 +3108,13 @@ local hurt = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(
 local function makePanel(title, w, h)
 	local f = new("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -24, 0.5, 0), Size = UDim2.fromOffset(w, h),
-		BackgroundColor3 = C3(20, 22, 32), BackgroundTransparency = 0.05, BorderSizePixel = 0, Visible = false,
+		BackgroundColor3 = PANEL, BackgroundTransparency = 0, BorderSizePixel = 0, Visible = false,
 	}, gui)
-	corner(f, 14)
-	local st = stroke(f, C3(255, 214, 74), 2, 0.2)
-	local t = mkLabel(f, title, UDim2.fromOffset(16, 10), UDim2.new(1, -32, 0, 34), 26, C3(255, 214, 74))
-	local sub = mkLabel(f, "", UDim2.fromOffset(16, 44), UDim2.new(1, -32, 0, 36), 14, C3(200, 205, 220), nil, Enum.Font.Gotham)
+	corner(f, 10)
+	local st = stroke(f, LINE, 1.5, 0)
+	local t = mkLabel(f, title, UDim2.fromOffset(16, 10), UDim2.new(1, -32, 0, 34), 26, GOLD, nil, Enum.Font.GothamBlack)
+	local sub = mkLabel(f, "", UDim2.fromOffset(16, 44), UDim2.new(1, -32, 0, 36), 14, TXT2, nil, Enum.Font.Gotham)
+	new("Frame", { Position = UDim2.fromOffset(12, 82), Size = UDim2.new(1, -24, 0, 1), BackgroundColor3 = LINE, BorderSizePixel = 0 }, f)
 	local content = new("Frame", { Position = UDim2.fromOffset(12, 86), Size = UDim2.new(1, -24, 1, -96), BackgroundTransparency = 1 }, f)
 	local lay = new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
 	return { frame = f, title = t, sub = sub, content = content, stroke = st }
@@ -2905,7 +3138,7 @@ local curZone = nil
 local gateViews = {}
 local sel = { loc = Config.LocationOrder[1], diff = 1, max = 2, friends = false }
 local countdownLabel, countdownAt
-local LOC_COLORS = { forest = C3(70, 160, 84), cave = C3(140, 96, 210) }
+local LOC_COLORS = { forest = C3(70, 150, 90), cave = C3(124, 96, 190) }
 
 local function gateNumber(zid)
 	for _, zn in ipairs(Config.Lobby.zones) do
@@ -2920,7 +3153,7 @@ local function toggleRow(parent, labels, current, onPick, disabledFrom)
 		local dis = disabledFrom and i >= disabledFrom
 		local on = (current == i)
 		local b = mkButton(parent, text, UDim2.new((i - 1) / n, 2, 0, 0), UDim2.new(1 / n, -4, 1, 0),
-			on and C3(80, 150, 255) or C3(50, 54, 70), function() onPick(i) end)
+			on and C3(70, 120, 200) or C3(42, 47, 62), function() onPick(i) end)
 		b.TextSize = 14
 	end
 end
@@ -2953,17 +3186,17 @@ local function renderPortal()
 		local br = row(portal.content, 44)
 		if view.mine then
 			if view.hostId == lp.UserId then
-				mkButton(br, "START NOW", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0), C3(60, 170, 80), function() ToServer:FireServer("StartParty") end)
-				mkButton(br, "LEAVE", UDim2.new(0.5, 4, 0, 0), UDim2.new(0.5, -4, 1, 0), C3(180, 60, 60), function() ToServer:FireServer("LeaveParty") end)
+				mkButton(br, "START NOW", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0), C3(64, 140, 92), function() ToServer:FireServer("StartParty") end)
+				mkButton(br, "LEAVE", UDim2.new(0.5, 4, 0, 0), UDim2.new(0.5, -4, 1, 0), C3(160, 66, 66), function() ToServer:FireServer("LeaveParty") end)
 			else
-				mkButton(br, "LEAVE PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(180, 60, 60), function() ToServer:FireServer("LeaveParty") end)
+				mkButton(br, "LEAVE PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(160, 66, 66), function() ToServer:FireServer("LeaveParty") end)
 			end
 		else
 			if view.canJoin then
-				mkButton(br, "JOIN PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(70, 130, 220), function() ToServer:FireServer("JoinParty", view.id) end)
+				mkButton(br, "JOIN PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(70, 120, 200), function() ToServer:FireServer("JoinParty", view.id) end)
 			else
-				local b = mkButton(br, view.why or "UNAVAILABLE", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(70, 72, 82), nil)
-				b.AutoButtonColor = false
+				local b = mkButton(br, view.why or "UNAVAILABLE", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(44, 48, 58), nil)
+				setDisabled(b, true)
 			end
 			local hr = row(portal.content, 40)
 			mkLabel(hr, "Wait for the run to start or use another gate.", UDim2.fromOffset(2, 0), UDim2.fromScale(1, 1), 14, C3(170, 175, 190), nil, Enum.Font.Gotham)
@@ -2978,42 +3211,42 @@ local function renderPortal()
 	if sel.diff > unlocked then sel.diff = unlocked end
 
 	local r1 = row(portal.content, 22)
-	mkLabel(r1, "LOCATION", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	mkLabel(r1, "LOCATION", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, GOLD)
 	local rl = row(portal.content, 56)
 	local nloc = #Config.LocationOrder
 	for i, id in ipairs(Config.LocationOrder) do
 		local l = Config.Locations[id]
 		local on = sel.loc == id
 		local b = mkButton(rl, l.name .. "\nLv." .. l.minLvl .. "-" .. l.maxLvl, UDim2.new((i - 1) / nloc, 2, 0, 0), UDim2.new(1 / nloc, -4, 1, 0),
-			on and (LOC_COLORS[id] or C3(80, 150, 255)) or C3(50, 54, 70), function()
+			on and (LOC_COLORS[id] or C3(70, 120, 200)) or C3(42, 47, 62), function()
 				sel.loc = id
 				renderPortal()
 			end)
 		b.TextSize = 15
-		if on then stroke(b, C3(255, 255, 255), 2, 0.1) end
+		if on then markSelected(b) end
 	end
 	local rd = row(portal.content, 34)
 	mkLabel(rd, loc.desc, UDim2.fromOffset(2, 0), UDim2.fromScale(1, 1), 13, C3(190, 195, 210), nil, Enum.Font.Gotham)
 
 	local r2 = row(portal.content, 22)
-	mkLabel(r2, "DIFFICULTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	mkLabel(r2, "DIFFICULTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, GOLD)
 	local r3 = row(portal.content, 40)
 	for i, d in ipairs(Config.Difficulties) do
 		local locked = i > unlocked
 		local b = mkButton(r3, locked and "LOCKED" or d.name, UDim2.new((i - 1) / 5, 2, 0, 0), UDim2.new(0.2, -4, 1, 0),
-			locked and C3(60, 62, 72) or (sel.diff == i and hex(d.color) or C3(50, 54, 70)), function()
+			locked and C3(44, 48, 58) or (sel.diff == i and hex(d.color) or C3(42, 47, 62)), function()
 				if not locked then sel.diff = i renderPortal() end
 			end)
 		b.TextSize = locked and 11 or 13
-		b.TextColor3 = (sel.diff == i and not locked) and C3(20, 20, 20) or C3(255, 255, 255)
+		if locked then setDisabled(b, true) elseif sel.diff == i then markSelected(b) end
 	end
 
 	local r4 = row(portal.content, 22)
-	mkLabel(r4, "PLAYERS IN PARTY  (including you, 1 = solo)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	mkLabel(r4, "PLAYERS IN PARTY  (including you, 1 = solo)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, GOLD)
 	local r5 = row(portal.content, 38)
 	for i = 1, Config.GateMaxPlayers do
 		mkButton(r5, tostring(i), UDim2.new((i - 1) / Config.GateMaxPlayers, 2, 0, 0), UDim2.new(1 / Config.GateMaxPlayers, -4, 1, 0),
-			sel.max == i and C3(80, 150, 255) or C3(50, 54, 70), function()
+			sel.max == i and C3(70, 120, 200) or C3(42, 47, 62), function()
 				sel.max = i
 				if i == 1 then sel.friends = false end
 				renderPortal()
@@ -3021,32 +3254,33 @@ local function renderPortal()
 	end
 
 	local r6 = row(portal.content, 22)
-	mkLabel(r6, "WHO CAN JOIN", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	mkLabel(r6, "WHO CAN JOIN", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, GOLD)
 	local r7 = row(portal.content, 38)
 	local solo = sel.max == 1
 	local b1 = mkButton(r7, "EVERYONE", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0),
-		(not sel.friends) and C3(70, 170, 100) or C3(50, 54, 70), function()
+		(not sel.friends) and C3(70, 150, 100) or C3(42, 47, 62), function()
 			sel.friends = false
 			renderPortal()
 		end)
 	local b2 = mkButton(r7, "FRIENDS ONLY", UDim2.new(0.5, 4, 0, 0), UDim2.new(0.5, -4, 1, 0),
-		(sel.friends and not solo) and C3(70, 140, 230) or C3(50, 54, 70), function()
+		(sel.friends and not solo) and C3(70, 120, 200) or C3(42, 47, 62), function()
 			if solo then return end
 			sel.friends = true
 			renderPortal()
 		end)
 	b1.TextSize, b2.TextSize = 14, 14
 	if solo then
-		b1.BackgroundColor3 = C3(46, 48, 58)
-		b2.BackgroundColor3 = C3(46, 48, 58)
-		b2.TextColor3 = C3(120, 124, 140)
+		b1.BackgroundColor3 = C3(36, 40, 52)
+		b2.BackgroundColor3 = C3(36, 40, 52)
+		setDisabled(b1, true)
+		setDisabled(b2, true)
 		b1.Text = "SOLO RUN"
 	end
 
 	local dd = Config.Difficulties[sel.diff]
 	local r8 = row(portal.content, 46)
 	local tag = solo and "SOLO" or (sel.max .. "P" .. (sel.friends and ", FRIENDS" or ""))
-	mkButton(r8, "CREATE PARTY  (" .. loc.short .. ", " .. dd.name .. ", " .. tag .. ")", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(60, 170, 80), function()
+	mkButton(r8, "CREATE PARTY  (" .. loc.short .. ", " .. dd.name .. ", " .. tag .. ")", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(64, 140, 92), function()
 		ToServer:FireServer("CreateParty", curZone, sel.loc, sel.diff, sel.max, sel.friends and sel.max > 1)
 	end).TextSize = 15
 end
@@ -3068,10 +3302,10 @@ local function renderUpgrade()
 	clearContent(upPanel)
 	order = 0
 	local r0 = row(upPanel.content, 26)
-	mkLabel(r0, "Skill points: " .. data.points .. "      Coins: " .. data.coins, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 18, C3(120, 255, 150))
+	mkLabel(r0, "Skill points: " .. data.points .. "      Coins: " .. data.coins, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 18, C3(130, 200, 156))
 	local tabs = row(upPanel.content, 40)
 	for i, cls in ipairs(Config.ClassOrder) do
-		local b = mkButton(tabs, string.upper(cls), UDim2.new((i - 1) / 3, 2, 0, 0), UDim2.new(1 / 3, -4, 1, 0), upTab == cls and Config.Classes[cls].color or C3(50, 54, 70), function()
+		local b = mkButton(tabs, string.upper(cls), UDim2.new((i - 1) / 3, 2, 0, 0), UDim2.new(1 / 3, -4, 1, 0), upTab == cls and Config.Classes[cls].color or C3(42, 47, 62), function()
 			upTab = cls
 			renderUpgrade()
 		end)
@@ -3081,33 +3315,35 @@ local function renderUpgrade()
 	for _, s in ipairs(Config.Stats) do
 		local lv = upg[s.id] or 0
 		local r = row(upPanel.content, 62)
-		local bg = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(34, 38, 54), BorderSizePixel = 0 }, r)
-		corner(bg, 8)
+		local bg = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = CARD, BorderSizePixel = 0 }, r)
+		corner(bg, 7)
+		stroke(bg, LINE, 1, 0.35)
 		mkLabel(bg, s.name .. "   Lv." .. lv .. "/" .. s.max, UDim2.fromOffset(10, 4), UDim2.new(1, -90, 0, 22), 17)
 		local nextUpg = {}
 		for k, v in pairs(upg) do nextUpg[k] = v end
 		nextUpg[s.id] = lv + 1
 		local now = statText(upTab, s.id, upg)
 		local nxt = lv >= s.max and "MAX" or statText(upTab, s.id, nextUpg)
-		mkLabel(bg, now .. "  ->  " .. nxt, UDim2.fromOffset(10, 26), UDim2.new(1, -90, 0, 16), 14, C3(130, 220, 255), nil, Enum.Font.Gotham)
-		mkLabel(bg, s.fmt, UDim2.fromOffset(10, 42), UDim2.new(1, -90, 0, 16), 11, C3(160, 165, 185), nil, Enum.Font.Gotham)
+		mkLabel(bg, now .. "  ->  " .. nxt, UDim2.fromOffset(10, 26), UDim2.new(1, -90, 0, 16), 14, C3(130, 190, 226), nil, Enum.Font.Gotham)
+		mkLabel(bg, s.fmt, UDim2.fromOffset(10, 42), UDim2.new(1, -90, 0, 16), 11, TXT2, nil, Enum.Font.Gotham)
 		local can = data.points >= 1 and lv < s.max
-		mkButton(bg, lv >= s.max and "MAX" or "+1", UDim2.new(1, -74, 0, 12), UDim2.fromOffset(64, 38), can and C3(60, 170, 80) or C3(70, 72, 82), function()
+		setDisabled(mkButton(bg, lv >= s.max and "MAX" or "+1", UDim2.new(1, -74, 0, 12), UDim2.fromOffset(64, 38), can and C3(64, 140, 92) or C3(44, 48, 58), function()
 			if can then ToServer:FireServer("Upgrade", upTab, s.id) end
-		end)
+		end), not can)
 	end
 	local rh = row(upPanel.content, 22)
-	mkLabel(rh, "HERO UPGRADES (coins)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	mkLabel(rh, "HERO UPGRADES (coins)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, GOLD)
 	local function coinRow(name, lvl, max, cost, desc, action)
 		local r = row(upPanel.content, 52)
-		local bg = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(34, 38, 54), BorderSizePixel = 0 }, r)
-		corner(bg, 8)
+		local bg = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = CARD, BorderSizePixel = 0 }, r)
+		corner(bg, 7)
+		stroke(bg, LINE, 1, 0.35)
 		mkLabel(bg, name .. "   Lv." .. lvl .. "/" .. max, UDim2.fromOffset(10, 4), UDim2.new(1, -120, 0, 22), 17)
-		mkLabel(bg, desc, UDim2.fromOffset(10, 28), UDim2.new(1, -120, 0, 18), 12, C3(160, 165, 185), nil, Enum.Font.Gotham)
+		mkLabel(bg, desc, UDim2.fromOffset(10, 28), UDim2.new(1, -120, 0, 18), 12, TXT2, nil, Enum.Font.Gotham)
 		local can = lvl < max and data.coins >= cost
-		mkButton(bg, lvl >= max and "MAX" or (cost .. " coins"), UDim2.new(1, -108, 0, 8), UDim2.fromOffset(98, 36), can and C3(200, 150, 40) or C3(70, 72, 82), function()
+		setDisabled(mkButton(bg, lvl >= max and "MAX" or (cost .. " coins"), UDim2.new(1, -108, 0, 8), UDim2.fromOffset(98, 36), can and C3(190, 150, 60) or C3(44, 48, 58), function()
 			if can then ToServer:FireServer(action) end
-		end)
+		end), not can)
 	end
 	coinRow("Vitality", data.vit, Config.VitMax, Config.vitCost(data.vit), "+12 max HP per level", "BuyVit")
 	coinRow("Swiftness", data.swift, Config.SwiftMax, Config.swiftCost(data.swift), "+0.25 move speed per level", "BuySwift")
@@ -3115,18 +3351,18 @@ end
 
 -- ------------------------------------------------------------ WEAPON SELECT PANEL (3 buttons)
 local wgui = new("ScreenGui", { Name = "WeaponSelect", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 20 }, lp:WaitForChild("PlayerGui"))
-local wDim = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(6, 8, 14), BackgroundTransparency = 0.35, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false }, wgui)
+local wDim = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(6, 8, 14), BackgroundTransparency = 0.3, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false }, wgui)
 local wFrame = new("Frame", {
 	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(760, 430),
-	BackgroundColor3 = C3(20, 22, 32), BorderSizePixel = 0,
+	BackgroundColor3 = PANEL, BorderSizePixel = 0,
 }, wDim)
-corner(wFrame, 18)
-stroke(wFrame, C3(255, 214, 74), 3, 0.1)
+corner(wFrame, 12)
+stroke(wFrame, LINE, 2, 0)
 new("UIScale", {}, wFrame)
-mkLabel(wFrame, "CHOOSE YOUR WEAPON", UDim2.fromOffset(0, 14), UDim2.new(1, 0, 0, 40), 34, C3(255, 214, 74), Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
-local wSub = mkLabel(wFrame, "Pick your hero class. You can change it later in the lobby.", UDim2.fromOffset(0, 56), UDim2.new(1, 0, 0, 22), 15, C3(200, 205, 220), Enum.TextXAlignment.Center, Enum.Font.Gotham)
+mkLabel(wFrame, "CHOOSE YOUR WEAPON", UDim2.fromOffset(0, 14), UDim2.new(1, 0, 0, 40), 34, GOLD, Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
+local wSub = mkLabel(wFrame, "Pick your hero class. You can change it later in the lobby.", UDim2.fromOffset(0, 56), UDim2.new(1, 0, 0, 22), 15, TXT2, Enum.TextXAlignment.Center, Enum.Font.Gotham)
 
-local function iconPart(parent, size, t, ang, color, shape, axis)
+local function iconPart(parent, size, t, ang, color, shape, axis, outline)
 	-- places a frame along a 45deg axis (up-right) at distance t from the icon centre
 	local k = 0.7071
 	local f = new("Frame", {
@@ -3134,36 +3370,80 @@ local function iconPart(parent, size, t, ang, color, shape, axis)
 		Rotation = ang, BackgroundColor3 = color, BorderSizePixel = 0,
 	}, parent)
 	if shape == "round" then corner(f, 100) end
+	if outline then stroke(f, C3(10, 12, 18), 1, 0.35) end
+	return f
+end
+
+-- free placed piece (pixel coordinates inside the 120x120 icon)
+local function iconAt(parent, w, h, x, y, rot, color, round, outline)
+	local f = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h),
+		Rotation = rot or 0, BackgroundColor3 = color, BorderSizePixel = 0,
+	}, parent)
+	if round then corner(f, 100) end
+	if outline then stroke(f, C3(10, 12, 18), 1, 0.35) end
 	return f
 end
 
 local ICONS = {
 	Swordsman = function(c)
-		iconPart(c, Vector2.new(9, 84), 6, 45, C3(225, 232, 240))
-		iconPart(c, Vector2.new(3, 76), 6, 45, C3(255, 255, 255))
-		iconPart(c, Vector2.new(38, 8), -30, 45, C3(255, 205, 80))
-		iconPart(c, Vector2.new(8, 22), -44, 45, C3(130, 84, 48))
-		iconPart(c, Vector2.new(12, 12), -57, 45, C3(255, 205, 80), "round")
+		local steel, face, gold = C3(150, 162, 182), C3(222, 230, 241), C3(204, 164, 74)
+		iconPart(c, Vector2.new(12, 78), 14, 45, steel, nil, nil, true)
+		iconPart(c, Vector2.new(6, 72), 14, 45, face)
+		iconPart(c, Vector2.new(2, 52), 12, 45, C3(120, 134, 158))
+		iconPart(c, Vector2.new(9, 9), 54, 0, steel, nil, nil, true)
+		iconPart(c, Vector2.new(42, 9), -26, 45, gold, nil, nil, true)
+		iconPart(c, Vector2.new(8, 24), -42, 45, C3(104, 68, 42), nil, nil, true)
+		iconPart(c, Vector2.new(14, 14), -56, 0, gold, "round", nil, true)
+		iconPart(c, Vector2.new(7, 7), -26, 0, C3(176, 58, 70), "round")
 	end,
 	Archer = function(c)
-		for _, ax in ipairs({ 1, -1 }) do
-			local rot = 45 * ax
-			iconPart(c, Vector2.new(4, 92), 0, rot, C3(196, 154, 100), nil, ax)
-			iconPart(c, Vector2.new(17, 17), 50, 0, C3(220, 226, 236), nil, ax)
-			for _, tt in ipairs({ -42, -34 }) do
-				iconPart(c, Vector2.new(15, 3), tt, 0, C3(110, 220, 130), nil, ax)
-				iconPart(c, Vector2.new(3, 15), tt, 0, C3(110, 220, 130), nil, ax)
+		local wood, woodHi = C3(132, 88, 48), C3(176, 128, 76)
+		-- bow limb (arc of short segments)
+		local cx, cy, R = 78, 60, 48
+		local prev
+		for i = 0, 10 do
+			local th = math.rad(180 - 56 + i * 11.2)
+			local pt = Vector2.new(cx + R * math.cos(th), cy + R * math.sin(th))
+			if prev then
+				local v = pt - prev
+				local m = (pt + prev) / 2
+				local rot = math.deg(math.atan2(v.X, -v.Y))
+				iconAt(c, 7, v.Magnitude + 2, m.X, m.Y, rot, wood, false, true)
+				iconAt(c, 3, v.Magnitude + 1, m.X - 1, m.Y, rot, woodHi)
 			end
+			prev = pt
 		end
+		local tipX = cx + R * math.cos(math.rad(124))
+		local tipY = R * math.sin(math.rad(56))
+		iconAt(c, 8, 8, tipX, cy - tipY, 0, C3(204, 164, 74), true)
+		iconAt(c, 8, 8, tipX, cy + tipY, 0, C3(204, 164, 74), true)
+		iconAt(c, 2, tipY * 2, tipX, cy, 0, C3(228, 224, 206))
+		iconAt(c, 8, 18, 30, cy, 0, C3(70, 46, 30), false, true)
+		-- arrow
+		iconAt(c, 62, 3, 70, cy, 0, C3(232, 222, 188), false, true)
+		iconAt(c, 11, 11, 102, cy, 45, C3(176, 188, 206), false, true)
+		iconAt(c, 10, 3, 42, cy - 3, 25, C3(190, 70, 70))
+		iconAt(c, 10, 3, 42, cy + 3, -25, C3(190, 70, 70))
 	end,
 	Mage = function(c)
-		iconPart(c, Vector2.new(7, 94), -6, 45, C3(130, 86, 50))
-		iconPart(c, Vector2.new(15, 15), 32, 0, C3(190, 140, 255))
-		local orb = iconPart(c, Vector2.new(30, 30), 46, 0, C3(170, 100, 255), "round")
-		stroke(orb, C3(255, 255, 255), 2, 0.3)
-		iconPart(c, Vector2.new(12, 12), 46, 0, C3(255, 255, 255), "round")
-		local halo = iconPart(c, Vector2.new(46, 46), 46, 0, C3(170, 100, 255), "round")
-		halo.BackgroundTransparency = 0.75
+		local gold = C3(204, 164, 74)
+		iconPart(c, Vector2.new(8, 94), -6, 45, C3(98, 66, 42), nil, nil, true)
+		iconPart(c, Vector2.new(3, 88), -6, 45, C3(140, 102, 66))
+		iconPart(c, Vector2.new(14, 6), -30, 45, gold, nil, nil, true)
+		iconPart(c, Vector2.new(14, 6), -6, 45, gold, nil, nil, true)
+		local ring = iconPart(c, Vector2.new(38, 38), 46, 0, C3(40, 30, 60), "round")
+		ring.BackgroundTransparency = 1
+		stroke(ring, gold, 3, 0)
+		local halo = iconPart(c, Vector2.new(46, 46), 46, 0, C3(110, 140, 230), "round")
+		halo.BackgroundTransparency = 0.8
+		local orb = iconPart(c, Vector2.new(28, 28), 46, 0, C3(110, 150, 226), "round")
+		stroke(orb, C3(200, 222, 255), 1.5, 0.3)
+		iconPart(c, Vector2.new(12, 12), 46, 0, C3(228, 240, 255), "round")
+		for _, a in ipairs({ 45, 135, 225, 315 }) do
+			local vx, vz = math.cos(math.rad(a)), math.sin(math.rad(a))
+			iconPart(c, Vector2.new(5, 5), 46, 0, gold, "round").Position = UDim2.new(0.5, 46 * 0.7071 + vx * 23, 0.5, -46 * 0.7071 + vz * 23)
+		end
 	end,
 }
 local TAGLINE = {
@@ -3179,8 +3459,8 @@ end
 local function refreshWeaponCards()
 	for cls, c in pairs(wCards) do
 		local cur = data.class == cls
-		c.stroke.Color = cur and C3(255, 214, 74) or Config.Classes[cls].color
-		c.stroke.Thickness = cur and 4 or 2
+		c.stroke.Color = cur and GOLD or tone(Config.Classes[cls].color)
+		c.stroke.Thickness = cur and 3 or 2
 		c.btn.Text = cur and "CONTINUE" or "SELECT"
 		c.badge.Visible = cur
 	end
@@ -3199,30 +3479,32 @@ local statDefs = {
 local cardOrder = { "Archer", "Swordsman", "Mage" }
 for i, cls in ipairs(cardOrder) do
 	local cdef = Config.Classes[cls]
+	local ccol = tone(cdef.color)
 	local card = new("Frame", {
 		Position = UDim2.new(0, 20 + (i - 1) * 240, 0, 92), Size = UDim2.fromOffset(220, 322),
-		BackgroundColor3 = C3(30, 33, 48), BorderSizePixel = 0,
+		BackgroundColor3 = CARD, BorderSizePixel = 0,
 	}, wFrame)
-	corner(card, 14)
-	local cs = stroke(card, cdef.color, 2, 0)
-	local head = new("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = cdef.color, BorderSizePixel = 0 }, card)
-	corner(head, 14)
-	new("Frame", { Position = UDim2.new(0, 0, 1, -14), Size = UDim2.new(1, 0, 0, 14), BackgroundColor3 = cdef.color, BorderSizePixel = 0 }, head)
-	mkLabel(head, string.upper(cdef.name), UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 22, C3(255, 255, 255), Enum.TextXAlignment.Center, Enum.Font.GothamBlack).ZIndex = 3
-	local badge = mkLabel(card, "CURRENT", UDim2.new(1, -82, 0, 46), UDim2.fromOffset(76, 16), 11, C3(255, 214, 74), Enum.TextXAlignment.Right)
+	corner(card, 10)
+	local cs = stroke(card, ccol, 2, 0)
+	local head = new("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = ccol, BorderSizePixel = 0 }, card)
+	corner(head, 10)
+	new("Frame", { Position = UDim2.new(0, 0, 1, -14), Size = UDim2.new(1, 0, 0, 14), BackgroundColor3 = ccol, BorderSizePixel = 0 }, head)
+	mkLabel(head, string.upper(cdef.name), UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 22, TXT, Enum.TextXAlignment.Center, Enum.Font.GothamBlack).ZIndex = 3
+	local badge = mkLabel(card, "CURRENT", UDim2.new(1, -82, 0, 46), UDim2.fromOffset(76, 16), 11, GOLD, Enum.TextXAlignment.Right)
 	local icon = new("Frame", { Position = UDim2.new(0.5, -60, 0, 52), Size = UDim2.fromOffset(120, 120), BackgroundColor3 = C3(22, 24, 36), BorderSizePixel = 0, ClipsDescendants = true }, card)
 	corner(icon, 60)
-	stroke(icon, cdef.color, 2, 0.5)
+	stroke(icon, ccol, 2, 0.3)
 	ICONS[cls](icon)
-	mkLabel(card, TAGLINE[cls], UDim2.fromOffset(8, 176), UDim2.new(1, -16, 0, 18), 12, C3(210, 214, 228), Enum.TextXAlignment.Center, Enum.Font.Gotham)
+	mkLabel(card, TAGLINE[cls], UDim2.fromOffset(8, 176), UDim2.new(1, -16, 0, 18), 12, C3(196, 202, 218), Enum.TextXAlignment.Center, Enum.Font.Gotham)
 	for k, sdef in ipairs(statDefs) do
 		local y = 200 + (k - 1) * 22
-		mkLabel(card, sdef[1], UDim2.fromOffset(12, y), UDim2.fromOffset(62, 16), 11, C3(170, 176, 196))
-		local bar = new("Frame", { Position = UDim2.fromOffset(76, y + 2), Size = UDim2.fromOffset(100, 12), BackgroundColor3 = C3(14, 16, 22), BorderSizePixel = 0 }, card)
-		corner(bar, 6)
-		local fill = new("Frame", { Size = UDim2.fromScale(math.clamp(sdef[2](cdef), 0.08, 1), 1), BackgroundColor3 = cdef.color, BorderSizePixel = 0 }, bar)
-		corner(fill, 6)
-		mkLabel(card, sdef[3](cdef), UDim2.fromOffset(180, y), UDim2.fromOffset(34, 16), 12, C3(255, 255, 255), Enum.TextXAlignment.Right)
+		mkLabel(card, sdef[1], UDim2.fromOffset(12, y), UDim2.fromOffset(62, 16), 11, TXT2)
+		local bar = new("Frame", { Position = UDim2.fromOffset(76, y + 2), Size = UDim2.fromOffset(100, 12), BackgroundColor3 = INK, BorderSizePixel = 0 }, card)
+		corner(bar, 5)
+		stroke(bar, LINE, 1, 0.3)
+		local fill = new("Frame", { Size = UDim2.fromScale(math.clamp(sdef[2](cdef), 0.08, 1), 1), BackgroundColor3 = ccol, BorderSizePixel = 0 }, bar)
+		corner(fill, 5)
+		mkLabel(card, sdef[3](cdef), UDim2.fromOffset(180, y), UDim2.fromOffset(34, 16), 12, TXT, Enum.TextXAlignment.Right)
 	end
 	local btn = mkButton(card, "SELECT", UDim2.new(0, 14, 1, -52), UDim2.new(1, -28, 0, 40), cdef.color, function()
 		if data.class ~= cls then
@@ -3249,11 +3531,10 @@ if workspace.CurrentCamera then
 end
 
 -- "change weapon" button under the info card (lobby only)
-local changeBtn = mkButton(gui, "CHANGE WEAPON", UDim2.fromOffset(14, 122), UDim2.fromOffset(290, 34), C3(60, 66, 96), function()
+local changeBtn = mkButton(gui, "CHANGE WEAPON", UDim2.fromOffset(14, 122), UDim2.fromOffset(290, 34), C3(52, 58, 86), function()
 	openWeaponPanel()
 end)
 changeBtn.TextSize = 15
-stroke(changeBtn, C3(255, 255, 255), 1, 0.7)
 local function refreshChangeBtn()
 	changeBtn.Visible = not lp:GetAttribute("InRun")
 end
@@ -3261,13 +3542,13 @@ end
 -- ------------------------------------------------------------ RESULT PANEL
 local result = new("Frame", {
 	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(480, 340),
-	BackgroundColor3 = C3(20, 22, 32), BorderSizePixel = 0, Visible = false, ZIndex = 30,
+	BackgroundColor3 = PANEL, BorderSizePixel = 0, Visible = false, ZIndex = 30,
 }, gui)
-corner(result, 16)
-local resStroke = stroke(result, C3(255, 214, 74), 3)
-local resTitle = mkLabel(result, "", UDim2.fromOffset(0, 14), UDim2.new(1, 0, 0, 50), 42, C3(255, 214, 74), Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
+corner(result, 10)
+local resStroke = stroke(result, GOLD, 2)
+local resTitle = mkLabel(result, "", UDim2.fromOffset(0, 14), UDim2.new(1, 0, 0, 50), 42, GOLD, Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
 local resBody = mkLabel(result, "", UDim2.fromOffset(20, 76), UDim2.new(1, -40, 0, 190), 20, nil, Enum.TextXAlignment.Center)
-mkButton(result, "RETURN TO LOBBY", UDim2.new(0.5, -110, 1, -60), UDim2.fromOffset(220, 44), C3(70, 130, 220), function()
+mkButton(result, "RETURN TO LOBBY", UDim2.new(0.5, -110, 1, -60), UDim2.fromOffset(220, 44), C3(70, 120, 200), function()
 	ToServer:FireServer("ReturnLobby")
 end)
 
@@ -3394,7 +3675,7 @@ RunService.RenderStepped:Connect(function()
 	if h then
 		local frac = math.clamp(h.Health / math.max(1, h.MaxHealth), 0, 1)
 		hpBar.fill.Size = UDim2.fromScale(frac, 1)
-		hpBar.fill.BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.75, 0.9)
+		hpBar.fill.BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.55, 0.66)
 		hpBar.txt.Text = "HP  " .. math.ceil(h.Health) .. " / " .. math.ceil(h.MaxHealth)
 	end
 	local dleft = math.max(0, dashReady - os.clock())
@@ -3464,29 +3745,155 @@ end
 local function fxDisc(d, x, y, z, color, trans, mat, thick)
 	return fxPart(Enum.PartType.Cylinder, Vector3.new(thick or 0.2, d, d), CFrame.new(x, y, z) * CFrame.Angles(0, 0, math.pi / 2), color, mat, trans)
 end
-local function tw(o, t, props, style)
-	TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+local function tw(o, t, props, style, dir)
+	TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props):Play()
+end
+
+-- crisp expanding ring (an outlined circle drawn on the top face of a thin part)
+local function ringFx(x, y, z, d0, d1, color, dur, thick, startTrans, endTrans)
+	local p = fxPart(Enum.PartType.Block, Vector3.new(d0, 0.05, d0), CFrame.new(x, y, z), color, Enum.Material.SmoothPlastic, 1)
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Top
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+	sg.CanvasSize = Vector2.new(256, 256)
+	sg.LightInfluence = 0
+	sg.Brightness = 1.4
+	sg.Parent = p
+	local f = Instance.new("Frame")
+	f.Size = UDim2.fromScale(1, 1)
+	f.BackgroundTransparency = 1
+	f.BorderSizePixel = 0
+	f.Parent = sg
+	local uc = Instance.new("UICorner")
+	uc.CornerRadius = UDim.new(0.5, 0)
+	uc.Parent = f
+	local us = Instance.new("UIStroke")
+	us.Color = color
+	us.Thickness = thick or 8
+	us.Transparency = startTrans or 0.1
+	us.Parent = f
+	tw(p, dur, { Size = Vector3.new(d1, 0.05, d1) })
+	tw(us, dur, { Transparency = endTrans or 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	Debris:AddItem(p, dur + 0.1)
+	return p
+end
+
+-- one-shot particle burst
+local function burst(x, y, z, color, count, smin, smax, size, life, color2, dirX, dirZ, spread)
+	local cf = CFrame.new(x, y, z)
+	if dirX then
+		local pos = Vector3.new(x, y, z)
+		cf = CFrame.lookAt(pos, pos + Vector3.new(dirX, 0, dirZ)) * CFrame.Angles(-math.pi / 2, 0, 0)
+	end
+	local p = fxPart(Enum.PartType.Block, Vector3.new(0.2, 0.2, 0.2), cf, color, Enum.Material.SmoothPlastic, 1)
+	local e = Instance.new("ParticleEmitter")
+	e.Enabled = false
+	e.Rate = 0
+	e.Color = ColorSequence.new(color, color2 or color)
+	e.LightEmission = 0.9
+	e.LightInfluence = 0
+	e.Lifetime = NumberRange.new(life * 0.6, life)
+	e.Speed = NumberRange.new(smin, smax)
+	e.SpreadAngle = spread and Vector2.new(spread, spread) or Vector2.new(180, 180)
+	e.Drag = 3
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, size), NumberSequenceKeypoint.new(1, 0) })
+	e.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(0.6, 0.25),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	e.Parent = p
+	e:Emit(count)
+	Debris:AddItem(p, life + 0.3)
+end
+
+local function addTrail(part, c0, c1, width, life, off)
+	local a0 = Instance.new("Attachment")
+	a0.Position = Vector3.new(-width / 2, 0, off or 0)
+	a0.Parent = part
+	local a1 = Instance.new("Attachment")
+	a1.Position = Vector3.new(width / 2, 0, off or 0)
+	a1.Parent = part
+	local t = Instance.new("Trail")
+	t.Attachment0 = a0
+	t.Attachment1 = a1
+	t.Lifetime = life
+	t.Color = ColorSequence.new(c0, c1)
+	t.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.2),
+		NumberSequenceKeypoint.new(0.6, 0.6),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	t.LightEmission = 0.8
+	t.LightInfluence = 0
+	t.MinLength = 0.04
+	t.FaceCamera = false
+	t.Parent = part
+	return t
+end
+
+local function addEmbers(part, c0, c1, rate, size, life, speed)
+	local e = Instance.new("ParticleEmitter")
+	e.Rate = rate
+	e.Color = ColorSequence.new(c0, c1)
+	e.LightEmission = 1
+	e.LightInfluence = 0
+	e.Lifetime = NumberRange.new(life * 0.6, life)
+	e.Speed = NumberRange.new(speed * 0.3, speed)
+	e.SpreadAngle = Vector2.new(180, 180)
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, size), NumberSequenceKeypoint.new(1, 0) })
+	e.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) })
+	e.Parent = part
+	return e
 end
 
 local H = {}
 
-H.Slash = function(x, z, dx, dz, range, arcDeg, crit)
-	local col = crit and C3(255, 215, 80) or C3(190, 235, 255)
-	local N = 10
+-- sword arc: layered crescent that sweeps in the direction of the swing, with sparks
+H.Slash = function(x, z, dx, dz, range, arcDeg, crit, swingDir)
+	local col = crit and C3(255, 196, 84) or C3(150, 190, 235)
+	local core = crit and C3(255, 238, 190) or C3(236, 246, 255)
+	local N = 14
 	local half = math.rad(arcDeg) / 2
+	local dir = swingDir or 1
+	local segLen = (half * 2 / N) * range * 1.55
 	for i = 0, N - 1 do
-		local phi = -half + (i / (N - 1)) * half * 2
+		local a = i / (N - 1)
+		local phi = -half + a * half * 2
 		local c, s = math.cos(phi), math.sin(phi)
 		local rx, rz = dx * c - dz * s, dx * s + dz * c
-		local pos = Vector3.new(x + rx * range * 0.85, 2.2, z + rz * range * 0.85)
+		local taper = math.sin(a * math.pi) ^ 0.6
+		local order = dir == 1 and (N - 1 - i) or i
+		local r0 = range * 0.8
+		local r1 = range * 0.98
 		local tx, tz = -rz, rx
-		local seg = fxPart(Enum.PartType.Block, Vector3.new(0.7, 0.12, (half * 2 / N) * range * 1.5), CFrame.lookAt(pos, pos + Vector3.new(tx, 0, tz)), col, NEON, 1)
-		task.delay(i * 0.01, function()
-			seg.Transparency = 0.05
-			tw(seg, 0.28, { Transparency = 1 })
-			Debris:AddItem(seg, 0.4)
+		local function place(r)
+			local pos = Vector3.new(x + rx * r, 2.2, z + rz * r)
+			return CFrame.lookAt(pos, pos + Vector3.new(tx, 0, tz))
+		end
+		local wOut = 0.5 + 2.4 * taper
+		local wIn = 0.15 + 0.7 * taper
+		local outer = fxPart(Enum.PartType.Block, Vector3.new(wOut, 0.1, segLen), place(r0), col, NEON, 1)
+		local inner = fxPart(Enum.PartType.Block, Vector3.new(wIn, 0.12, segLen), place(r0 + 0.2), core, NEON, 1)
+		task.delay(order * 0.0075, function()
+			outer.Transparency = 0.38
+			inner.Transparency = 0.02
+			tw(outer, 0.26, { Transparency = 1, Size = Vector3.new(wOut * 0.35, 0.1, segLen), CFrame = place(r1) })
+			tw(inner, 0.2, { Transparency = 1, Size = Vector3.new(wIn * 0.3, 0.12, segLen), CFrame = place(r1 + 0.2) })
+			Debris:AddItem(outer, 0.35)
+			Debris:AddItem(inner, 0.35)
 		end)
+		-- sparks flying off the tip of the arc
+		if i % 4 == 0 then
+			task.delay(order * 0.0075, function()
+				burst(x + rx * range * 0.95, 2.2, z + rz * range * 0.95, core, 2, 6, 14, 0.4, 0.3, col, -tx * dir, -tz * dir, 50)
+			end)
+		end
 	end
+	-- soft flash at the hero
+	local flash = fxDisc(3.4, x + dx * 1.6, 2.0, z + dz * 1.6, core, 0.55, NEON, 0.1)
+	tw(flash, 0.16, { Size = Vector3.new(0.1, 5.2, 5.2), Transparency = 1 })
+	Debris:AddItem(flash, 0.25)
 end
 
 local projs = {}
@@ -3501,23 +3908,42 @@ H.Proj = function(id, kind, x, z, dx, dz, speed, range)
 	local B, CY = Enum.PartType.Block, Enum.PartType.Cylinder
 	local flat = CFrame.Angles(0, 0, math.pi / 2)
 	if kind == "arrow" then
-		addProjPart(pr, B, Vector3.new(0.22, 0.16, 2.6), CFrame.new(), C3(235, 225, 190), Enum.Material.Wood)
-		addProjPart(pr, B, Vector3.new(0.55, 0.16, 0.55), CFrame.new(0, 0, -1.4) * CFrame.Angles(0, math.pi / 4, 0), C3(210, 220, 235), Enum.Material.Metal)
-		addProjPart(pr, B, Vector3.new(0.75, 0.12, 0.5), CFrame.new(0, 0, 1.1), C3(215, 60, 60), Enum.Material.Fabric)
+		local shaft = addProjPart(pr, B, Vector3.new(0.2, 0.14, 2.8), CFrame.new(), C3(232, 222, 188), Enum.Material.Wood)
+		addProjPart(pr, B, Vector3.new(0.6, 0.16, 0.6), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), C3(176, 188, 206), Enum.Material.Metal)
+		addProjPart(pr, B, Vector3.new(0.34, 0.2, 0.34), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), C3(232, 238, 246), Enum.Material.Metal)
+		addProjPart(pr, B, Vector3.new(0.16, 0.12, 0.7), CFrame.new(-0.2, 0, 1.15) * CFrame.Angles(0, 0.3, 0), C3(196, 62, 62), Enum.Material.Fabric)
+		addProjPart(pr, B, Vector3.new(0.16, 0.12, 0.7), CFrame.new(0.2, 0, 1.15) * CFrame.Angles(0, -0.3, 0), C3(196, 62, 62), Enum.Material.Fabric)
+		addProjPart(pr, B, Vector3.new(0.14, 0.12, 0.6), CFrame.new(0, 0, 0.6), C3(236, 236, 236), Enum.Material.Fabric)
+		addTrail(shaft, C3(255, 246, 215), C3(190, 215, 240), 0.5, 0.16, 1.3)
+		burst(x, 2.2, z, C3(255, 244, 210), 5, 8, 18, 0.35, 0.2, C3(190, 210, 235), dx, dz, 35)
 	elseif kind == "fireball" then
-		local o = addProjPart(pr, CY, Vector3.new(0.5, 3.0, 3.0), flat, C3(255, 120, 30), NEON, 0.25)
-		addProjPart(pr, CY, Vector3.new(0.6, 1.7, 1.7), CFrame.new(0, 0.1, 0) * flat, C3(255, 230, 120), NEON, 0)
+		local halo = addProjPart(pr, CY, Vector3.new(0.4, 3.6, 3.6), flat, C3(255, 100, 30), NEON, 0.72)
+		local o = addProjPart(pr, CY, Vector3.new(0.5, 2.5, 2.5), CFrame.new(0, 0.05, 0) * flat, C3(255, 142, 44), NEON, 0.15)
+		local c = addProjPart(pr, CY, Vector3.new(0.6, 1.3, 1.3), CFrame.new(0, 0.1, 0) * flat, C3(255, 236, 170), NEON, 0)
 		local l = Instance.new("PointLight")
 		l.Color = C3(255, 140, 50)
-		l.Range = 22
-		l.Brightness = 2
+		l.Range = 20
+		l.Brightness = 1.6
 		l.Parent = o
+		addTrail(halo, C3(255, 170, 60), C3(150, 30, 10), 2.0, 0.28, 0)
+		addEmbers(c, C3(255, 214, 120), C3(255, 70, 20), 38, 0.9, 0.5, 4)
+		burst(x, 2.2, z, C3(255, 210, 120), 10, 6, 16, 0.7, 0.35, C3(255, 90, 30), dx, dz, 50)
+		ringFx(x, 1.0, z, 1.2, 4.2, C3(255, 150, 60), 0.3, 8)
 	elseif kind == "spit" then
-		addProjPart(pr, CY, Vector3.new(0.5, 1.7, 1.7), flat, C3(120, 255, 60), NEON, 0.1)
-		addProjPart(pr, CY, Vector3.new(0.6, 0.8, 0.8), CFrame.new(0, 0.1, 0) * flat, C3(220, 255, 170), NEON, 0)
+		local o = addProjPart(pr, CY, Vector3.new(0.5, 1.7, 1.7), flat, C3(112, 220, 62), NEON, 0.15)
+		local c = addProjPart(pr, CY, Vector3.new(0.6, 0.8, 0.8), CFrame.new(0, 0.1, 0) * flat, C3(222, 255, 176), NEON, 0)
+		addTrail(o, C3(150, 255, 90), C3(40, 110, 30), 1.0, 0.24, 0)
+		addEmbers(c, C3(190, 255, 120), C3(70, 170, 40), 18, 0.5, 0.45, 2)
 	else
-		addProjPart(pr, B, Vector3.new(0.3, 0.15, 1.7), CFrame.new(), C3(185, 190, 200), Enum.Material.Metal)
+		local blade = addProjPart(pr, B, Vector3.new(0.3, 0.15, 1.7), CFrame.new(), C3(200, 206, 216), Enum.Material.Metal)
 		addProjPart(pr, B, Vector3.new(0.9, 0.15, 0.25), CFrame.new(0, 0, 0.5), C3(110, 70, 40), Enum.Material.Wood)
+		addProjPart(pr, B, Vector3.new(0.12, 0.2, 1.3), CFrame.new(0, 0, -0.2), C3(250, 252, 255), Enum.Material.Metal)
+		addTrail(blade, C3(230, 236, 246), C3(130, 140, 160), 0.4, 0.14, 0.8)
+	end
+	do -- start every part at its first pose so trails don't streak from the origin
+		local p0 = Vector3.new(x, 2.2, z)
+		local b0 = CFrame.lookAt(p0, p0 + Vector3.new(dx, 0, dz))
+		for _, e in ipairs(pr.parts) do e[1].CFrame = b0 * e[2] end
 	end
 	projs[id] = pr
 end
@@ -3531,73 +3957,91 @@ local function killProj(id)
 end
 
 H.ProjEnd = function(id, x, z, kind, radius)
-	killProj(id)
+	local pr = killProj(id)
 	if kind == "fireball" then
-		local a = fxDisc(radius * 0.6, x, 2, z, C3(255, 130, 30), 0.15, NEON, 0.3)
-		tw(a, 0.35, { Size = Vector3.new(0.3, radius * 2.1, radius * 2.1), Transparency = 1 })
-		local b = fxDisc(radius * 0.3, x, 2.2, z, C3(255, 235, 140), 0, NEON, 0.3)
-		tw(b, 0.25, { Size = Vector3.new(0.3, radius * 1.2, radius * 1.2), Transparency = 1 })
-		local c = fxDisc(radius * 1.0, x, 0.3, z, C3(40, 20, 10), 0.4, Enum.Material.SmoothPlastic, 0.1)
-		tw(c, 0.8, { Transparency = 1 })
+		local fl = fxDisc(radius * 0.7, x, 2.2, z, C3(255, 238, 170), 0.05, NEON, 0.3)
+		tw(fl, 0.2, { Size = Vector3.new(0.3, radius * 1.5, radius * 1.5), Transparency = 1 })
+		local a = fxDisc(radius * 0.6, x, 2, z, C3(255, 120, 34), 0.2, NEON, 0.3)
+		tw(a, 0.38, { Size = Vector3.new(0.3, radius * 2.1, radius * 2.1), Transparency = 1 })
+		local scorch = fxDisc(radius * 1.2, x, 0.3, z, C3(36, 20, 12), 0.45, Enum.Material.SmoothPlastic, 0.1)
+		tw(scorch, 1.0, { Transparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		ringFx(x, 0.6, z, radius * 0.6, radius * 2.3, C3(255, 170, 70), 0.45, 10)
+		ringFx(x, 0.7, z, radius * 0.3, radius * 1.5, C3(255, 236, 170), 0.3, 6)
+		burst(x, 2.2, z, C3(255, 214, 120), 26, 14, 34, 1.1, 0.7, C3(255, 70, 20), nil, nil, nil)
+		burst(x, 1.0, z, C3(90, 60, 45), 10, 4, 12, 2.2, 0.9, C3(40, 28, 22), nil, nil, nil)
+		Debris:AddItem(fl, 0.3)
 		Debris:AddItem(a, 0.5)
-		Debris:AddItem(b, 0.5)
-		Debris:AddItem(c, 0.9)
+		Debris:AddItem(scorch, 1.1)
 	else
-		local col = kind == "spit" and C3(130, 255, 70) or (kind == "arrow" and C3(255, 240, 190) or C3(200, 200, 210))
-		local a = fxDisc(1.0, x, 2, z, col, 0.1, NEON, 0.2)
-		tw(a, 0.25, { Size = Vector3.new(0.2, 3.2, 3.2), Transparency = 1 })
-		Debris:AddItem(a, 0.4)
+		local col = kind == "spit" and C3(130, 240, 76) or (kind == "arrow" and C3(255, 238, 190) or C3(205, 210, 222))
+		local a = fxDisc(1.0, x, 2, z, col, 0.15, NEON, 0.2)
+		tw(a, 0.2, { Size = Vector3.new(0.2, 3.0, 3.0), Transparency = 1 })
+		Debris:AddItem(a, 0.3)
+		ringFx(x, 1.0, z, 0.8, 4.0, col, 0.25, 7)
+		burst(x, 2.2, z, col, 8, 8, 20, 0.45, 0.3, C3(255, 255, 255), nil, nil, nil)
 	end
 end
 
 H.Dmg = function(x, z, amount, crit, onPlayer)
 	local a = fxPart(Enum.PartType.Block, Vector3.new(0.5, 0.5, 0.5), CFrame.new(x + (math.random() - 0.5) * 3, 5, z), C3(255, 255, 255), Enum.Material.SmoothPlastic, 1)
 	local g = Instance.new("BillboardGui")
-	g.Size = UDim2.fromOffset(120, 44)
+	g.Size = UDim2.fromOffset(140, 56)
 	g.AlwaysOnTop = true
 	g.LightInfluence = 0
 	g.Adornee = a
 	local t = Instance.new("TextLabel")
+	t.AnchorPoint = Vector2.new(0.5, 0.5)
+	t.Position = UDim2.fromScale(0.5, 0.5)
 	t.Size = UDim2.fromScale(1, 1)
 	t.BackgroundTransparency = 1
 	t.Font = Enum.Font.GothamBlack
-	t.TextSize = crit and 32 or 22
+	t.TextSize = crit and 34 or 22
 	t.Text = tostring(amount) .. (crit and "!" or "")
-	t.TextColor3 = onPlayer and C3(255, 80, 80) or (crit and C3(255, 220, 70) or C3(255, 255, 255))
-	t.TextStrokeTransparency = 0
+	t.TextColor3 = onPlayer and C3(232, 96, 96) or (crit and C3(255, 205, 90) or C3(240, 242, 248))
+	t.TextStrokeColor3 = C3(14, 16, 22)
+	t.TextStrokeTransparency = 0.15
 	t.Parent = g
+	local sc = Instance.new("UIScale")
+	sc.Scale = 0.4
+	sc.Parent = t
 	g.Parent = a
+	tw(sc, 0.14, { Scale = crit and 1.25 or 1.1 }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	task.delay(0.14, function() tw(sc, 0.12, { Scale = 1 }) end)
 	tw(a, 0.8, { Position = a.Position + Vector3.new(0, 0, -5) })
 	task.delay(0.45, function()
 		tw(t, 0.35, { TextTransparency = 1, TextStrokeTransparency = 1 }, Enum.EasingStyle.Linear)
 	end)
 	Debris:AddItem(a, 0.9)
+	if not onPlayer then
+		burst(x, 2.4, z, crit and C3(255, 214, 110) or C3(255, 255, 255), crit and 8 or 4, 8, 18, crit and 0.55 or 0.35, 0.25, nil, nil, nil, nil)
+	end
 end
 
 H.Tele = function(x, z, r, dur)
-	local base = fxDisc(r * 2, x, 0.3, z, C3(255, 40, 40), 0.78, NEON, 0.05)
-	local ringp = fxDisc(r * 2 + 0.8, x, 0.25, z, C3(255, 90, 60), 0.4, NEON, 0.05)
-	local fill = fxDisc(0.5, x, 0.35, z, C3(255, 60, 40), 0.5, NEON, 0.05)
+	local base = fxDisc(r * 2, x, 0.3, z, C3(210, 50, 50), 0.82, NEON, 0.05)
+	local fill = fxDisc(0.5, x, 0.35, z, C3(235, 70, 55), 0.55, NEON, 0.05)
 	tw(fill, dur, { Size = Vector3.new(0.05, r * 2, r * 2) }, Enum.EasingStyle.Linear)
+	ringFx(x, 0.4, z, r * 2, r * 2, C3(255, 96, 76), dur, 10, 0.05, 0.2)
 	task.delay(dur, function()
 		base:Destroy()
-		ringp:Destroy()
 		fill:Destroy()
 	end)
 end
 
 local rocks = {}
 H.Rock = function(sx, sz, tx, tz, dur)
-	local a = fxPart(Enum.PartType.Cylinder, Vector3.new(2, 4.4, 4.4), CFrame.new(sx, 3, sz) * CFrame.Angles(0, 0, math.pi / 2), C3(120, 120, 126), Enum.Material.Slate)
-	local b = fxPart(Enum.PartType.Cylinder, Vector3.new(2.4, 2.8, 2.8), CFrame.new(sx, 3, sz) * CFrame.Angles(0, 0, math.pi / 2), C3(150, 150, 156), Enum.Material.Slate)
+	local a = fxPart(Enum.PartType.Cylinder, Vector3.new(2, 4.4, 4.4), CFrame.new(sx, 3, sz) * CFrame.Angles(0, 0, math.pi / 2), C3(112, 112, 120), Enum.Material.Slate)
+	local b = fxPart(Enum.PartType.Cylinder, Vector3.new(2.4, 2.8, 2.8), CFrame.new(sx, 3, sz) * CFrame.Angles(0, 0, math.pi / 2), C3(146, 146, 154), Enum.Material.Slate)
 	table.insert(rocks, { a = a, b = b, t = 0, dur = dur, sx = sx, sz = sz, tx = tx, tz = tz })
 end
 
 H.Boom = function(x, z, r)
-	local a = fxDisc(r * 1.2, x, 0.5, z, C3(190, 170, 140), 0.35, Enum.Material.SmoothPlastic, 0.2)
+	local a = fxDisc(r * 1.2, x, 0.5, z, C3(176, 158, 132), 0.4, Enum.Material.SmoothPlastic, 0.2)
 	tw(a, 0.6, { Size = Vector3.new(0.2, r * 2.6, r * 2.6), Transparency = 1 })
-	local b = fxDisc(r * 0.8, x, 0.6, z, C3(255, 200, 120), 0.2, NEON, 0.2)
+	local b = fxDisc(r * 0.8, x, 0.6, z, C3(240, 188, 112), 0.25, NEON, 0.2)
 	tw(b, 0.35, { Size = Vector3.new(0.2, r * 1.8, r * 1.8), Transparency = 1 })
+	ringFx(x, 0.8, z, r * 0.8, r * 2.5, C3(240, 200, 140), 0.5, 10)
+	burst(x, 1.5, z, C3(150, 142, 130), 22, 10, 30, 2.0, 0.8, C3(90, 86, 80), nil, nil, nil)
 	for i = 1, 8 do
 		local ang = i * math.pi / 4
 		local d = fxDisc(0.9, x, 1.5, z, C3(110, 110, 116), 0, Enum.Material.Slate, 0.5)
@@ -3610,29 +4054,34 @@ end
 
 H.Death = function(x, z, r, kind)
 	local col = C3(120, 190, 80)
-	if kind == "titan" then col = C3(140, 140, 146) elseif kind == "king" then col = C3(255, 205, 70) elseif kind == "goblin" then col = C3(150, 210, 70) end
+	if kind == "titan" then col = C3(140, 140, 146) elseif kind == "king" then col = C3(240, 196, 70) elseif kind == "goblin" then col = C3(150, 210, 70) end
 	for i = 1, 8 do
 		local ang = i * math.pi / 4 + math.random() * 0.4
 		local d = fxDisc(r * 0.5, x, 1.5, z, col, 0.1, Enum.Material.SmoothPlastic, 0.3)
 		tw(d, 0.5, { Position = Vector3.new(x + math.cos(ang) * r * 1.8, 1.5, z + math.sin(ang) * r * 1.8), Transparency = 1, Size = Vector3.new(0.1, 0.2, 0.2) })
 		Debris:AddItem(d, 0.6)
 	end
-	local puff = fxDisc(r * 1.6, x, 1.0, z, C3(255, 255, 255), 0.3, NEON, 0.2)
+	local puff = fxDisc(r * 1.6, x, 1.0, z, C3(235, 238, 245), 0.45, NEON, 0.2)
 	tw(puff, 0.4, { Size = Vector3.new(0.1, r * 3, r * 3), Transparency = 1 })
 	Debris:AddItem(puff, 0.5)
+	ringFx(x, 0.9, z, r * 1.0, r * 3.4, col, 0.45, 7)
+	burst(x, 2, z, col, 14 + math.floor(r * 3), 8, 22, 0.9, 0.55, C3(255, 255, 255), nil, nil, nil)
 end
 
 H.DashFx = function(x, z)
 	for i = 1, 3 do
-		local d = fxDisc(2.2 - i * 0.4, x, 0.6 + i * 0.05, z, C3(200, 235, 255), 0.4, NEON, 0.1)
+		local d = fxDisc(2.2 - i * 0.4, x, 0.6 + i * 0.05, z, C3(190, 218, 240), 0.5, NEON, 0.1)
 		tw(d, 0.4, { Size = Vector3.new(0.1, 6, 6), Transparency = 1 })
 		Debris:AddItem(d, 0.5)
 	end
+	ringFx(x, 0.8, z, 2, 8, C3(200, 226, 245), 0.35, 6)
+	burst(x, 1.2, z, C3(200, 205, 212), 10, 6, 14, 1.4, 0.5, C3(150, 154, 162), nil, nil, nil)
 end
 
 H.Hurt = function()
-	hurt.BackgroundTransparency = 0.7
-	tw(hurt, 0.35, { BackgroundTransparency = 1 })
+	hurt.BackgroundColor3 = C3(150, 24, 24)
+	hurt.BackgroundTransparency = 0.78
+	tw(hurt, 0.4, { BackgroundTransparency = 1 })
 end
 
 -- projectile + rock simulation
@@ -3645,14 +4094,6 @@ RunService.Heartbeat:Connect(function(dt)
 		local pos = Vector3.new(pr.x, 2.2, pr.z)
 		local base = CFrame.lookAt(pos, pos + Vector3.new(pr.dx, 0, pr.dz))
 		for _, e in ipairs(pr.parts) do e[1].CFrame = base * e[2] end
-		pr.acc = pr.acc + dt
-		if (pr.kind == "fireball" or pr.kind == "spit") and pr.acc > 0.035 then
-			pr.acc = 0
-			local col = pr.kind == "fireball" and C3(255, 150, 40) or C3(120, 255, 70)
-			local t = fxDisc(pr.kind == "fireball" and 1.8 or 1.0, pr.x, 2.0, pr.z, col, 0.3, NEON, 0.2)
-			tw(t, 0.3, { Size = Vector3.new(0.1, 0.2, 0.2), Transparency = 1 })
-			Debris:AddItem(t, 0.4)
-		end
 		if pr.left < -4 then killProj(id) end
 	end
 	for i = #rocks, 1, -1 do
@@ -3747,7 +4188,7 @@ H.Result = function(r)
 	bossFrame.Visible = false
 	result.Visible = true
 	resTitle.Text = r.won and "VICTORY!" or "DEFEAT"
-	resTitle.TextColor3 = r.won and C3(255, 214, 74) or C3(255, 90, 90)
+	resTitle.TextColor3 = r.won and GOLD or C3(214, 100, 100)
 	resStroke.Color = resTitle.TextColor3
 	local txt = r.loc .. "  [" .. r.diff .. "]\n\nKills: " .. r.kills .. "\nXP earned: +" .. r.xp .. "\nCoins earned: +" .. r.coins .. "\nYour level: " .. r.level
 	if r.unlocked then txt = txt .. "\n\nNEW DIFFICULTY UNLOCKED: " .. string.upper(r.unlocked) .. "!" end
