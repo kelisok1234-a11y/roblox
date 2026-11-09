@@ -111,7 +111,7 @@ Config.Locations = {
 				pal = { skin = Color3.fromRGB(95, 125, 85), cloth = Color3.fromRGB(90, 60, 40), hair = Color3.fromRGB(25, 20, 20) } },
 		},
 		boss = { id = "Titan", name = "Zombie Titan", kind = "titan", boss = "titan", minLvl = 5, maxLvl = 5,
-			hp = 2600, dmg = 26, speed = 7.5, r = 5.2, atkCd = 1.5, rockR = 6.5,
+			hp = 1300, dmg = 26, speed = 7.5, r = 5.2, atkCd = 1.5, rockR = 6.5,
 			pal = { skin = Color3.fromRGB(88, 120, 78), cloth = Color3.fromRGB(70, 55, 40), hair = Color3.fromRGB(30, 40, 25) } },
 	},
 	cave = {
@@ -139,16 +139,18 @@ Config.Locations = {
 }
 Config.LocationOrder = { "forest", "cave" }
 
+-- Lobby: 4 identical "gates". Step into a gate to open its panel: pick a location,
+-- difficulty, party size and who may join (everyone / friends only).
+Config.GateMaxPlayers = 4
 Config.Lobby = {
 	spawn = Vector3.new(0, 4, 32),
 	half = 100,
 	zones = {
-		{ id = "class_Swordsman", kind = "class", class = "Swordsman", x = -32, z = 62, r = 8 },
-		{ id = "class_Archer", kind = "class", class = "Archer", x = 0, z = 62, r = 8 },
-		{ id = "class_Mage", kind = "class", class = "Mage", x = 32, z = 62, r = 8 },
-		{ id = "forest", kind = "portal", x = -62, z = -22, r = 14 },
-		{ id = "cave", kind = "portal", x = 62, z = -22, r = 14 },
-		{ id = "upgrade", kind = "upgrade", x = 0, z = -58, r = 13 },
+		{ id = "gate1", kind = "gate", n = 1, x = -72, z = -60, r = 11 },
+		{ id = "gate2", kind = "gate", n = 2, x = -24, z = -60, r = 11 },
+		{ id = "gate3", kind = "gate", n = 3, x = 24, z = -60, r = 11 },
+		{ id = "gate4", kind = "gate", n = 4, x = 72, z = -60, r = 11 },
+		{ id = "upgrade", kind = "upgrade", x = 0, z = 72, r = 13 },
 	},
 }
 
@@ -297,6 +299,10 @@ local function buildPlate(p, hrp)
 	g.LightInfluence = 0
 	g.MaxDistance = 500
 	g.Adornee = hrp
+	-- name + HP are shown to everybody EXCEPT the owner
+	pcall(function()
+		g.PlayerToHideFrom = p
+	 end)
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.Size = UDim2.new(1, 0, 0, 22)
@@ -487,7 +493,7 @@ end
 local lobbyFolder = Instance.new("Folder")
 lobbyFolder.Name = "Lobby"
 lobbyFolder.Parent = Workspace
-MapBuilder.lobby(lobbyFolder)
+local lobbyGates = MapBuilder.lobby(lobbyFolder)
 
 -- ============================================================ PARTIES
 local parties = {}
@@ -495,25 +501,92 @@ local partySeq = 0
 local runs = {}
 local slots = {}
 
+-- gate zones lookup
+local gateZones = {}
+for _, zn in ipairs(Config.Lobby.zones) do
+	if zn.kind == "gate" then gateZones[zn.id] = zn end
+end
+
+local friendCache = {}
+local function areFriends(a, b)
+	if a == b then return true end
+	local key = math.min(a.UserId, b.UserId) .. ":" .. math.max(a.UserId, b.UserId)
+	local v = friendCache[key]
+	if v == nil then
+		local ok, res = pcall(function() return a:IsFriendsWith(b.UserId) end)
+		v = ok and res == true or false
+		friendCache[key] = v
+	end
+	return v
+end
+
+local function gateParty(gate)
+	for _, pt in pairs(parties) do
+		if pt.gate == gate then return pt end
+	end
+	return nil
+end
+
 local function partyView(pt)
 	local names = {}
 	for _, m in ipairs(pt.members) do table.insert(names, m.DisplayName) end
-	return { id = pt.id, host = pt.host.DisplayName, hostId = pt.host.UserId, diff = pt.diff, max = pt.max, n = #pt.members, names = names, startAt = pt.startAt }
+	return {
+		id = pt.id, gate = pt.gate, loc = pt.loc, host = pt.host.DisplayName, hostId = pt.host.UserId, diff = pt.diff,
+		max = pt.max, n = #pt.members, names = names, friendsOnly = pt.friendsOnly, startAt = pt.startAt,
+	}
 end
 
-sendParties = function(p, loc)
-	local list = {}
-	for _, pt in pairs(parties) do
-		if pt.loc == loc then table.insert(list, partyView(pt)) end
+-- can player p join party pt? returns ok, reason
+local function joinCheck(p, pt)
+	if table.find(pt.members, p) then return true end
+	if #pt.members >= pt.max then return false, "FULL" end
+	if pt.friendsOnly and not areFriends(p, pt.host) then return false, "FRIENDS ONLY" end
+	if pt.diff > ((D[p] and D[p].unlocked[pt.loc]) or 1) then return false, "LOCKED" end
+	return true
+end
+
+local function updateGateSign(gate)
+	local g = lobbyGates and lobbyGates[gate]
+	if not g then return end
+	local pt = gateParty(gate)
+	if not pt then
+		g.sub.Text = "FREE - step in to host a run"
+		g.sub.TextColor3 = Color3.fromRGB(255, 255, 255)
+		g.glow.Color = g.color
+		return
 	end
-	table.sort(list, function(a, b) return a.id < b.id end)
-	local st = S[p]
-	ToClient:FireClient(p, "Parties", loc, list, st and st.party and st.party.id or nil)
+	local loc = Config.Locations[pt.loc]
+	local tag = pt.friendsOnly and "FRIENDS ONLY" or "OPEN"
+	g.sub.Text = string.upper(loc.short) .. " - " .. Config.Difficulties[pt.diff].name .. "  |  " .. #pt.members .. "/" .. pt.max .. "  |  " .. tag
+	if pt.friendsOnly then
+		g.sub.TextColor3 = Color3.fromRGB(120, 200, 255)
+		g.glow.Color = Color3.fromRGB(90, 170, 255)
+	elseif #pt.members >= pt.max then
+		g.sub.TextColor3 = Color3.fromRGB(255, 110, 110)
+		g.glow.Color = Color3.fromRGB(255, 80, 80)
+	else
+		g.sub.TextColor3 = Color3.fromRGB(255, 220, 120)
+		g.glow.Color = Color3.fromRGB(255, 190, 70)
+	end
 end
 
-broadcastParties = function(loc)
+sendParties = function(p, gate)
+	local pt = gateParty(gate)
+	local view = nil
+	if pt then
+		view = partyView(pt)
+		view.mine = table.find(pt.members, p) ~= nil
+		local ok, why = joinCheck(p, pt)
+		view.canJoin = ok and not view.mine
+		view.why = why
+	end
+	ToClient:FireClient(p, "Gate", gate, view)
+end
+
+broadcastParties = function(gate)
+	updateGateSign(gate)
 	for p, st in pairs(S) do
-		if st.zone == loc then sendParties(p, loc) end
+		if st.zone == gate then task.spawn(sendParties, p, gate) end
 	end
 end
 
@@ -530,24 +603,35 @@ leaveParty = function(p)
 		if pt.host == p then pt.host = pt.members[1] end
 		pt.startAt = nil
 	end
-	broadcastParties(pt.loc)
+	broadcastParties(pt.gate)
 end
 
-local function createParty(p, loc, diff, max)
+local function createParty(p, gate, loc, diff, max, friendsOnly)
 	local st = S[p]
-	if not st or st.run or st.party or type(loc) ~= "string" or st.zone ~= loc then return end
-	if not Config.Locations[loc] or type(diff) ~= "number" or type(max) ~= "number" then return end
+	if not st or st.run or st.party or type(gate) ~= "string" or st.zone ~= gate or not gateZones[gate] then return end
+	if type(loc) ~= "string" or not Config.Locations[loc] or type(diff) ~= "number" or type(max) ~= "number" then return end
+	if not D[p].class then
+		toast(p, "Pick a weapon first!", "ff6060", 2.5)
+		return
+	end
+	if gateParty(gate) then
+		toast(p, "This gate is already taken!", "ff6060", 2.5)
+		return
+	end
 	diff = math.floor(diff)
-	max = math.clamp(math.floor(max), 1, 4)
+	max = math.clamp(math.floor(max), 1, Config.GateMaxPlayers)
 	if diff < 1 or diff > #Config.Difficulties or diff > (D[p].unlocked[loc] or 1) then
 		toast(p, "That difficulty is locked!", "ff6060", 2.5)
 		return
 	end
 	partySeq = partySeq + 1
-	local pt = { id = partySeq, host = p, loc = loc, diff = diff, max = max, members = { p } }
+	local pt = {
+		id = partySeq, host = p, gate = gate, loc = loc, diff = diff, max = max,
+		friendsOnly = friendsOnly == true and max > 1, members = { p },
+	}
 	parties[pt.id] = pt
 	st.party = pt
-	broadcastParties(loc)
+	broadcastParties(gate)
 	if max == 1 then
 		toast(p, "Starting solo run...", "ffffff", 1.5)
 		task.delay(1.2, function()
@@ -560,9 +644,20 @@ local function joinParty(p, id)
 	local st = S[p]
 	if not st or st.run or st.party or type(id) ~= "number" then return end
 	local pt = parties[id]
-	if not pt or st.zone ~= pt.loc or #pt.members >= pt.max then return end
-	if pt.diff > (D[p].unlocked[pt.loc] or 1) then
-		toast(p, "You haven't unlocked that difficulty yet!", "ff6060", 2.5)
+	if not pt or st.zone ~= pt.gate then return end
+	if not D[p].class then
+		toast(p, "Pick a weapon first!", "ff6060", 2.5)
+		return
+	end
+	local ok, why = joinCheck(p, pt)
+	if not ok then
+		if why == "FRIENDS ONLY" then
+			toast(p, "This party is for the host's friends only!", "ff6060", 2.5)
+		elseif why == "LOCKED" then
+			toast(p, "You haven't unlocked that difficulty yet!", "ff6060", 2.5)
+		else
+			toast(p, "Party is full!", "ff6060", 2.5)
+		end
 		return
 	end
 	table.insert(pt.members, p)
@@ -574,7 +669,7 @@ local function joinParty(p, id)
 			if parties[pt.id] and pt.startAt == t then startRun(pt) end
 		end)
 	end
-	broadcastParties(pt.loc)
+	broadcastParties(pt.gate)
 end
 
 -- ============================================================ RUNS
@@ -1218,7 +1313,7 @@ startRun = function(pt)
 	if #members > 0 then
 		createRun(pt.loc, pt.diff, members)
 	end
-	broadcastParties(pt.loc)
+	broadcastParties(pt.gate)
 end
 
 returnToLobby = function(p)
@@ -1326,7 +1421,7 @@ onDied = function(p, char)
 end
 
 -- ============================================================ REMOTES
-ToServer.OnServerEvent:Connect(function(p, action, a, b, c)
+ToServer.OnServerEvent:Connect(function(p, action, a, b, c, d, e)
 	local st = S[p]
 	if not st or type(action) ~= "string" then return end
 	if action == "Attack" then
@@ -1340,8 +1435,12 @@ ToServer.OnServerEvent:Connect(function(p, action, a, b, c)
 		if hrp then
 			ToClient:FireAllClients("DashFx", hrp.Position.X, hrp.Position.Z)
 		end
+	elseif action == "ChooseClass" then
+		if not st.run and not st.party and type(a) == "string" and Config.Classes[a] then
+			if D[p].class ~= a then chooseClass(p, a) end
+		end
 	elseif action == "CreateParty" then
-		createParty(p, a, b, c)
+		createParty(p, a, b, c, d, e)
 	elseif action == "JoinParty" then
 		joinParty(p, a)
 	elseif action == "LeaveParty" then
@@ -1453,12 +1552,9 @@ task.spawn(function()
 				local zid = zone and zone.id or nil
 				if zid ~= st.zone then
 					st.zone = zid
-					if st.party and st.party.loc ~= zid then leaveParty(p) end
+					if st.party and st.party.gate ~= zid then leaveParty(p) end
 					ToClient:FireClient(p, "Zone", zid)
-					if zid and Config.Locations[zid] then sendParties(p, zid) end
-					if zone and zone.kind == "class" and D[p].class ~= zone.class then
-						chooseClass(p, zone.class)
-					end
+					if zid and gateZones[zid] then task.spawn(sendParties, p, zid) end
 				end
 			end
 		end
@@ -2043,11 +2139,85 @@ local function lamp(parent, x, z)
 end
 
 -- ===================================================== LOBBY
+local GATE_COLORS = {
+	C3(90, 255, 130), C3(90, 190, 255), C3(200, 120, 255), C3(255, 160, 70),
+}
+
+local function glowDisc(parent, d, color, x, y, z, trans)
+	return disc(parent, d, color, x, y, z, MAT.Neon, trans or 0.8, 0.08)
+end
+
+local function torch(parent, x, z, color)
+	color = color or C3(255, 150, 50)
+	disc(parent, 1.8, C3(55, 50, 56), x, 0.6, z, MAT.Slate, 0, 1.2)
+	disc(parent, 1.2, C3(30, 28, 32), x, 1.4, z, MAT.Metal, 0, 0.4)
+	local f = disc(parent, 0.9, color, x, 1.7, z, MAT.Neon, 0.1, 0.3)
+	local pe = Instance.new("ParticleEmitter")
+	pe.Rate = 14
+	pe.Lifetime = NumberRange.new(0.6, 1.1)
+	pe.Speed = NumberRange.new(1.5, 3)
+	pe.EmissionDirection = Enum.NormalId.Right
+	pe.SpreadAngle = Vector2.new(25, 25)
+	pe.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.7), NumberSequenceKeypoint.new(1, 0) })
+	pe.Transparency = NumberSequence.new(0.1, 1)
+	pe.Color = ColorSequence.new(color, C3(255, 70, 30))
+	pe.LightEmission = 1
+	pe.Parent = f
+	addLight(f, color, 18, 1.4)
+	collider(parent, 1.6, x, z, 4)
+end
+
+local function bench(parent, x, z, rot)
+	local cf = CFrame.new(x, 0, z) * CFrame.Angles(0, rot, 0)
+	local function b(sx, sy, sz, ox, oy, oz, col, mat)
+		part(parent, BLK, Vector3.new(sx, sy, sz), cf * CFrame.new(ox, oy, oz), col, mat, 0, false)
+	end
+	b(6, 0.4, 2, 0, 1.2, 0, C3(150, 104, 60), MAT.WoodPlanks)
+	b(0.5, 1.2, 1.6, -2.5, 0.6, 0, C3(50, 50, 58), MAT.Metal)
+	b(0.5, 1.2, 1.6, 2.5, 0.6, 0, C3(50, 50, 58), MAT.Metal)
+	b(6, 0.8, 0.4, 0, 1.9, -0.9, C3(130, 90, 52), MAT.WoodPlanks)
+end
+
+local function banner(parent, x, z, color, rot)
+	block(parent, 0.5, 6.2, 0.5, C3(60, 44, 34), x, 3.1, z, 0, MAT.Wood, 0, false)
+	block(parent, 3.2, 0.2, 5, color, x, 6.4, z + 2.6, rot or 0, MAT.Fabric, 0, false)
+	block(parent, 3.6, 0.3, 0.4, C3(255, 214, 90), x, 6.6, z + 0.2, 0, MAT.Metal, 0, false)
+end
+
+local function hedge(parent, x, z, sx, sz)
+	block(parent, sx, 2.2, sz, C3(38, 104, 46), x, 1.1, z, 0, MAT.Grass, 0, true)
+	block(parent, sx - 0.8, 0.4, sz - 0.8, C3(64, 140, 62), x, 2.3, z, 0, MAT.Grass, 0, false)
+end
+
+local function pillar(parent, x, z, color)
+	disc(parent, 2.6, C3(36, 36, 44), x, 0.45, z, MAT.Slate, 0, 0.9)
+	disc(parent, 2.0, C3(92, 92, 106), x, 2.6, z, MAT.Marble, 0, 4.2)
+	disc(parent, 2.6, C3(36, 36, 44), x, 4.9, z, MAT.Slate, 0, 0.6)
+	local cap = disc(parent, 1.5, color, x, 5.3, z, MAT.Neon, 0.05, 0.4)
+	addLight(cap, color, 14, 1)
+	return cap
+end
+
+-- builds a live label on an invisible anchor and returns the TextLabel
+local function liveLabel(parent, x, y, z, text, color, w, h, size)
+	local a = label(parent, x, y, z, text, color, w, h, size)
+	return a:FindFirstChildOfClass("BillboardGui"):FindFirstChildOfClass("TextLabel")
+end
+
 function M.lobby(folder)
 	local rng = Random.new(42)
 	local H = Config.Lobby.half
-	-- outer grass
+	local gates = {}
+
+	-- outer grass with a darker rim
 	part(folder, BLK, Vector3.new(520, 1, 520), CFrame.new(0, -0.5, 0), C3(84, 140, 70), MAT.Grass, 0, true)
+	for i = 1, 70 do
+		local x, z = rng:NextNumber(-250, 250), rng:NextNumber(-250, 250)
+		if math.abs(x) > H + 8 or math.abs(z) > H + 8 then
+			disc(folder, rng:NextNumber(10, 26), rng:NextNumber() < 0.5 and C3(76, 130, 64) or C3(94, 152, 78), x, 0.04, z, MAT.Grass, 0, 0.04)
+		end
+	end
+
 	-- stone plaza (checker)
 	local tile = 20
 	for ix = -5, 4 do
@@ -2055,10 +2225,15 @@ function M.lobby(folder)
 			local even = (ix + iz) % 2 == 0
 			part(folder, BLK, Vector3.new(tile - 0.3, 0.2, tile - 0.3),
 				CFrame.new(ix * tile + tile / 2, 0.1, iz * tile + tile / 2),
-				even and C3(150, 150, 158) or C3(124, 124, 134), even and MAT.Cobblestone or MAT.Slate, 0, true)
+				even and C3(158, 154, 150) or C3(128, 124, 128), even and MAT.Cobblestone or MAT.Slate, 0, true)
 		end
 	end
-	-- walls
+	-- golden border inlay around the plaza
+	for _, e in ipairs({ { 0, -H + 2.5, H * 2 - 4, 1 }, { 0, H - 2.5, H * 2 - 4, 1 }, { -H + 2.5, 0, 1, H * 2 - 4 }, { H - 2.5, 0, 1, H * 2 - 4 } }) do
+		block(folder, e[3], 0.06, e[4], C3(214, 170, 70), e[1], 0.23, e[2], 0, MAT.Metal, 0, false)
+	end
+
+	-- walls with crenellations
 	local wallC = C3(112, 80, 60)
 	local function wall(sx, sz, x, z)
 		block(folder, sx, 7, sz, wallC, x, 3.5, z, 0, MAT.Brick, 0, true)
@@ -2068,15 +2243,48 @@ function M.lobby(folder)
 	wall(H * 2 + 6, 3, 0, H + 1.5)
 	wall(3, H * 2, -H - 1.5, 0)
 	wall(3, H * 2, H + 1.5, 0)
+	for i = -9, 9 do
+		local o = i * 10.5
+		block(folder, 3.4, 1.8, 3.4, C3(150, 112, 82), o, 8.2, -H - 1.5, 0, MAT.Cobblestone, 0, false)
+		block(folder, 3.4, 1.8, 3.4, C3(150, 112, 82), o, 8.2, H + 1.5, 0, MAT.Cobblestone, 0, false)
+		block(folder, 3.4, 1.8, 3.4, C3(150, 112, 82), -H - 1.5, 8.2, o, 0, MAT.Cobblestone, 0, false)
+		block(folder, 3.4, 1.8, 3.4, C3(150, 112, 82), H + 1.5, 8.2, o, 0, MAT.Cobblestone, 0, false)
+	end
+	-- corner towers
+	for _, c in ipairs({ { -H - 3, -H - 3 }, { H + 3, -H - 3 }, { -H - 3, H + 3 }, { H + 3, H + 3 } }) do
+		disc(folder, 13, C3(136, 100, 76), c[1], 5.5, c[2], MAT.Brick, 0, 11)
+		disc(folder, 15, C3(170, 130, 95), c[1], 11.2, c[2], MAT.Cobblestone, 0, 1.2)
+		disc(folder, 9, C3(90, 62, 50), c[1], 11.9, c[2], MAT.Slate, 0, 0.3)
+		local f = disc(folder, 3, C3(255, 160, 60), c[1], 12.2, c[2], MAT.Neon, 0.2, 0.5)
+		addLight(f, C3(255, 170, 80), 30, 1.5)
+		collider(folder, 13, c[1], c[2], 12)
+	end
+
 	-- outside forest decoration
-	for i = 1, 90 do
+	for i = 1, 110 do
 		local side = rng:NextInteger(1, 4)
-		local a, b = rng:NextNumber(-H - 30, H + 30), rng:NextNumber(H + 8, H + 55)
+		local a, b = rng:NextNumber(-H - 30, H + 30), rng:NextNumber(H + 14, H + 60)
 		local x, z
 		if side == 1 then x, z = a, -b elseif side == 2 then x, z = a, b elseif side == 3 then x, z = -b, a else x, z = b, a end
 		tree(folder, x, z, rng:NextNumber(4, 7), rng:NextInteger(1, 3))
 	end
-	-- fountain
+
+	-- main avenue (spawn -> fountain -> gates street) and gate street
+	local avenue = C3(190, 158, 112)
+	block(folder, 14, 0.06, H * 2 - 8, avenue, 0, 0.23, 0, 0, MAT.Cobblestone, 0, false)
+	block(folder, 15.5, 0.05, H * 2 - 8, C3(120, 90, 62), 0, 0.22, 0, 0, MAT.Slate, 0, false)
+	block(folder, H * 2 - 8, 0.06, 12, avenue, 0, 0.23, -60, 0, MAT.Cobblestone, 0, false)
+	block(folder, H * 2 - 8, 0.05, 13.5, C3(120, 90, 62), 0, 0.22, -60, 0, MAT.Slate, 0, false)
+	-- red carpet to the gates
+	block(folder, 5, 0.04, 80, C3(170, 40, 50), 0, 0.3, -20, 0, MAT.Fabric, 0, false)
+	block(folder, 5.8, 0.03, 80.8, C3(230, 190, 80), 0, 0.28, -20, 0, MAT.Fabric, 0, false)
+
+	-- fountain (bigger, with outer ring of light)
+	disc(folder, 30, C3(120, 118, 128), 0, 0.5, 0, MAT.Slate, 0, 1)
+	for i = 0, 23 do
+		local a = i * math.pi / 12
+		glowDisc(folder, 1.1, i % 2 == 0 and C3(120, 220, 255) or C3(255, 230, 150), math.cos(a) * 14.2, 1.1, math.sin(a) * 14.2, 0.1)
+	end
 	disc(folder, 24, C3(176, 176, 186), 0, 0.7, 0, MAT.Marble, 0, 1.2)
 	collider(folder, 24, 0, 0, 5)
 	disc(folder, 20.5, C3(70, 160, 230), 0, 1.0, 0, MAT.Glass, 0.15, 1.0)
@@ -2086,8 +2294,10 @@ function M.lobby(folder)
 	disc(folder, 6.5, C3(70, 160, 230), 0, 2.45, 0, MAT.Glass, 0.15, 0.2)
 	disc(folder, 3, C3(235, 245, 255), 0, 2.6, 0, MAT.Marble, 0, 0.3)
 	local spout = disc(folder, 1.4, C3(190, 240, 255), 0, 3.0, 0, MAT.Neon, 0.2, 0.3)
+	addLight(spout, C3(150, 220, 255), 40, 1.4)
 	local pe = Instance.new("ParticleEmitter")
-	pe.Rate = 40
+	pe.Rate = 60
+	pe.EmissionDirection = Enum.NormalId.Right
 	pe.Lifetime = NumberRange.new(1, 1.6)
 	pe.Speed = NumberRange.new(10, 14)
 	pe.SpreadAngle = Vector2.new(25, 25)
@@ -2097,14 +2307,46 @@ function M.lobby(folder)
 	pe.Color = ColorSequence.new(C3(170, 230, 255))
 	pe.LightEmission = 0.6
 	pe.Parent = spout
-	-- lamps
-	for _, p in ipairs({ { -40, -40 }, { 40, -40 }, { -40, 40 }, { 40, 40 }, { -85, -85 }, { 85, -85 }, { -85, 85 }, { 85, 85 }, { -20, 12 }, { 20, 12 } }) do
+
+	-- spawn runes
+	disc(folder, 20, C3(40, 36, 60), 0, 0.31, 32, MAT.Slate, 0, 0.06)
+	glowDisc(folder, 18, C3(255, 214, 90), 0, 0.34, 32, 0.8)
+	glowDisc(folder, 13, C3(40, 36, 60), 0, 0.36, 32, 0)
+	glowDisc(folder, 12, C3(255, 214, 90), 0, 0.38, 32, 0.85)
+	for i = 0, 7 do
+		local a = i * math.pi / 4
+		block(folder, 0.6, 0.1, 2.6, C3(255, 214, 90), math.cos(a) * 7.6, 0.45, 32 + math.sin(a) * 7.6, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0.1, false)
+	end
+
+	-- lamps / torches
+	for _, p in ipairs({ { -40, -20 }, { 40, -20 }, { -40, 40 }, { 40, 40 }, { -85, -85 }, { 85, -85 }, { -85, 85 }, { 85, 85 }, { -20, 12 }, { 20, 12 } }) do
 		lamp(folder, p[1], p[2])
 	end
-	-- flowers & bushes along the walls
-	for i = 1, 120 do
+	for _, p in ipairs({ { -8, -88 }, { 8, -88 }, { -8, 88 }, { 8, 88 }, { -88, -30 }, { 88, -30 }, { -88, 30 }, { 88, 30 } }) do
+		torch(folder, p[1], p[2])
+	end
+
+	-- hedges & benches & banners
+	hedge(folder, -50, 2, 2, 24)
+	hedge(folder, 50, 2, 2, 24)
+	hedge(folder, -50, 40, 2, 12)
+	hedge(folder, 50, 40, 2, 12)
+	bench(folder, -44, 2, math.pi / 2)
+	bench(folder, 44, 2, -math.pi / 2)
+	bench(folder, -30, -22, 0)
+	bench(folder, 30, -22, math.pi)
+	bench(folder, -12, 50, 0)
+	bench(folder, 12, 50, 0)
+	for i = -3, 3 do
+		if i ~= 0 then
+			banner(folder, i * 25, -H + 5, GATE_COLORS[(math.abs(i) % 4) + 1], 0)
+		end
+	end
+
+	-- flowers & bushes
+	for i = 1, 200 do
 		local x, z = rng:NextNumber(-H + 4, H - 4), rng:NextNumber(-H + 4, H - 4)
-		if math.abs(x) > 86 or math.abs(z) > 86 then
+		if (math.abs(x) > 56 or math.abs(z) > 82) and (math.abs(x) > 9) and not (z < -48 and z > -72) then
 			if i % 3 == 0 then bush(folder, x, z, rng:NextNumber(1.5, 2.4)) else flower(folder, x, z, rng) end
 		end
 	end
@@ -2112,71 +2354,94 @@ function M.lobby(folder)
 		bush(folder, -92 + i * 3, -93, 2.2)
 		bush(folder, 92 - i * 3, -93, 2.2)
 	end
+
+	-- fireflies drifting over the whole plaza
+	do
+		local a = part(folder, BLK, Vector3.new(190, 6, 190), CFrame.new(0, 4, 0), C3(255, 255, 255), nil, 1, false)
+		local ff = Instance.new("ParticleEmitter")
+		ff.Rate = 28
+		ff.Lifetime = NumberRange.new(5, 8)
+		ff.Speed = NumberRange.new(0.5, 1.8)
+		ff.SpreadAngle = Vector2.new(180, 180)
+		ff.Shape = Enum.ParticleEmitterShape.Box
+		ff.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+		ff.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 0.45), NumberSequenceKeypoint.new(1, 0) })
+		ff.Transparency = NumberSequence.new(0.1)
+		ff.Color = ColorSequence.new(C3(255, 240, 150), C3(170, 255, 170))
+		ff.LightEmission = 1
+		ff.LightInfluence = 0
+		ff.Parent = a
+	end
+
 	-- title
 	label(folder, 0, 8, 22, "TOP-DOWN HEROES", C3(255, 235, 140), 520, 70, 46)
-	label(folder, 0, 8, 14, "Pick a weapon  ->  walk into a portal  ->  survive the waves!", C3(255, 255, 255), 640, 36, 20)
+	label(folder, 0, 8, 12, "Pick a gate  ->  choose a location  ->  survive the waves!", C3(255, 255, 255), 640, 36, 20)
+	label(folder, 0, 8, -40, "THE FOUR GATES", C3(255, 255, 255), 360, 30, 20)
 
-	-- class pedestals
-	local classInfo = {
-		Swordsman = { c = C3(214, 70, 62), t = "SWORDSMAN" },
-		Archer = { c = C3(70, 168, 82), t = "ARCHER" },
-		Mage = { c = C3(150, 84, 220), t = "MAGE" },
-	}
+	-- hero statues (decor) along the south road
+	local function statue(cls, x, z, col)
+		disc(folder, 12, C3(40, 40, 50), x, 0.3, z, MAT.Slate, 0, 0.2)
+		glowDisc(folder, 11, col, x, 0.42, z, 0.55)
+		disc(folder, 9, C3(70, 70, 82), x, 0.8, z, MAT.Marble, 0, 0.8)
+		disc(folder, 7, C3(col.R * 255 * 0.55, col.G * 255 * 0.55, col.B * 255 * 0.55), x, 1.4, z, MAT.Marble, 0, 0.4)
+		local root = part(folder, BLK, Vector3.new(1, 1, 1), CFrame.new(x, 1.6, z), C3(255, 255, 255), nil, 1, false)
+		local weaponModel = Instance.new("Model")
+		weaponModel.Name = "Display_" .. cls
+		weaponModel.Parent = folder
+		root.Parent = weaponModel
+		Sprites.weapon(cls, root, weaponModel, CFrame.new(0, 0.6, 0), 1.25)
+		label(folder, x, 6, z + 8, string.upper(cls), col, 220, 30, 20)
+		collider(folder, 8, x, z, 4)
+	end
+	statue("Swordsman", -68, 40, C3(214, 70, 62))
+	statue("Archer", -68, 66, C3(70, 168, 82))
+	statue("Mage", 68, 52, C3(150, 84, 220))
+
+	-- ================= THE FOUR GATES =================
+	local wlabels = { forest = "Forest", cave = "Cave" }
 	for _, zn in ipairs(Config.Lobby.zones) do
-		if zn.kind == "class" then
-			local info = classInfo[zn.class]
-			ring(folder, zn.r * 2, 0.6, info.c, zn.x, 0.28, zn.z)
-			disc(folder, zn.r * 1.5, C3(60, 60, 70), zn.x, 0.5, zn.z, MAT.Marble, 0, 0.5)
-			disc(folder, zn.r * 1.2, C3(info.c.R * 255 * 0.6, info.c.G * 255 * 0.6, info.c.B * 255 * 0.6), zn.x, 0.8, zn.z, MAT.Marble, 0, 0.2)
-			for i = 0, 11 do
-				local a = i * math.pi / 6
-				block(folder, 0.4, 0.15, 1.2, info.c, zn.x + math.cos(a) * zn.r * 0.88, 0.5, zn.z + math.sin(a) * zn.r * 0.88, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
+		if zn.kind == "gate" then
+			local col = GATE_COLORS[zn.n]
+			local dark = C3(col.R * 255 * 0.22, col.G * 255 * 0.22, col.B * 255 * 0.22)
+			-- stone dais
+			disc(folder, zn.r * 2 + 3, C3(52, 50, 62), zn.x, 0.26, zn.z, MAT.Slate, 0, 0.12)
+			disc(folder, zn.r * 2 + 1, C3(30, 30, 38), zn.x, 0.3, zn.z, MAT.Slate, 0, 0.1)
+			ring(folder, zn.r * 2, 0.9, col, zn.x, 0.34, zn.z)
+			disc(folder, zn.r * 1.7, dark, zn.x, 0.5, zn.z, MAT.Marble, 0, 0.3)
+			local glow = glowDisc(folder, zn.r * 1.5, col, zn.x, 0.66, zn.z, 0.78)
+			glowDisc(folder, zn.r * 1.0, col, zn.x, 0.7, zn.z, 0.7)
+			glowDisc(folder, zn.r * 0.5, col, zn.x, 0.74, zn.z, 0.6)
+			-- rune dashes
+			for i = 0, 15 do
+				local a = i * math.pi / 8
+				block(folder, 0.5, 0.12, 1.5, col, zn.x + math.cos(a) * zn.r * 0.78, 0.8, zn.z + math.sin(a) * zn.r * 0.78, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
 			end
-			local root = part(folder, BLK, Vector3.new(1, 1, 1), CFrame.new(zn.x, 1.0, zn.z + 2.5), C3(255, 255, 255), nil, 1, false)
-			local weaponModel = Instance.new("Model")
-			weaponModel.Name = "Display_" .. zn.class
-			weaponModel.Parent = folder
-			root.Parent = weaponModel
-			Sprites.weapon(zn.class, root, weaponModel, CFrame.new(0, 0.6, 0), 1.25)
-			label(folder, zn.x, 6, zn.z - zn.r - 3.5, info.t, info.c, 260, 44, 28)
-			label(folder, zn.x, 6, zn.z - zn.r - 0.5, Config.Classes[zn.class].desc, C3(255, 255, 255), 250, 46, 14)
+			-- pillars around
+			for i = 0, 5 do
+				local a = i * math.pi / 3 + math.pi / 6
+				local cap = pillar(folder, zn.x + math.cos(a) * (zn.r + 2.2), zn.z + math.sin(a) * (zn.r + 2.2), col)
+				if i == 0 then cap.Name = "GateCap" end
+			end
+			-- sparkles rising
+			local em = disc(folder, 1, col, zn.x, 1.0, zn.z, MAT.Neon, 1, 0.1)
+			local pe2 = Instance.new("ParticleEmitter")
+			pe2.Rate = 22
+			pe2.Lifetime = NumberRange.new(1.2, 2.2)
+			pe2.Speed = NumberRange.new(3, 6)
+			pe2.SpreadAngle = Vector2.new(35, 35)
+			pe2.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.5), NumberSequenceKeypoint.new(1, 0) })
+			pe2.Transparency = NumberSequence.new(0, 1)
+			pe2.Color = ColorSequence.new(col, C3(255, 255, 255))
+			pe2.LightEmission = 1
+			pe2.EmissionDirection = Enum.NormalId.Right
+			pe2.Parent = em
+			addLight(em, col, 26, 1.3)
+			-- labels
+			label(folder, zn.x, 7, zn.z - 1.5, tostring(zn.n), col, 120, 90, 80)
+			label(folder, zn.x, 7, zn.z - zn.r - 4.5, "GATE " .. zn.n, col, 300, 40, 30)
+			local sub = liveLabel(folder, zn.x, 7, zn.z - zn.r - 1.2, "FREE - step in to host a run", C3(255, 255, 255), 340, 40, 15)
+			gates[zn.id] = { sub = sub, glow = glow, color = col, n = zn.n }
 		end
-	end
-	label(folder, 0, 6, 46, "CHOOSE YOUR WEAPON  (step on a pedestal)", C3(255, 255, 255), 460, 30, 18)
-
-	-- portals
-	local function portal(zn, c1, c2, title, sub)
-		ring(folder, zn.r * 2, 0.9, c1, zn.x, 0.28, zn.z)
-		disc(folder, zn.r * 1.7, c2, zn.x, 0.5, zn.z, MAT.Slate, 0, 0.4)
-		disc(folder, zn.r * 1.2, c1, zn.x, 0.62, zn.z, MAT.Neon, 0.85, 0.1)
-		disc(folder, zn.r * 0.7, c1, zn.x, 0.66, zn.z, MAT.Neon, 0.75, 0.1)
-		for i = 0, 15 do
-			local a = i * math.pi / 8
-			block(folder, 0.5, 0.15, 1.5, c1, zn.x + math.cos(a) * zn.r * 0.78, 0.75, zn.z + math.sin(a) * zn.r * 0.78, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
-		end
-		label(folder, zn.x, 7, zn.z - zn.r - 4, title, c1, 380, 48, 32)
-		label(folder, zn.x, 7, zn.z - zn.r - 0.8, sub, C3(255, 255, 255), 380, 28, 16)
-	end
-	local fz, cz
-	for _, zn in ipairs(Config.Lobby.zones) do
-		if zn.id == "forest" then fz = zn elseif zn.id == "cave" then cz = zn end
-	end
-	portal(fz, C3(90, 255, 110), C3(40, 90, 44), "FOREST", "Zombies Lv.1-5  |  Boss: Zombie Titan")
-	for i = 1, 4 do
-		tree(folder, fz.x - 20 + (i % 2) * 2, fz.z - 6 + i * 6, 3.2, 2)
-	end
-	for i = 1, 8 do
-		mushroom(folder, fz.x + rng:NextNumber(-10, 10), fz.z + rng:NextNumber(-10, 10), false)
-	end
-	portal(cz, C3(190, 110, 255), C3(52, 48, 66), "CAVE", "Goblins Lv.5-10  |  Boss: Goblin King")
-	for i = 1, 4 do
-		rock(folder, cz.x + 20 - (i % 2) * 2, cz.z - 6 + i * 6, 2.8, true, true)
-	end
-	for i = 1, 5 do
-		local x, z = cz.x + rng:NextNumber(-12, 12), cz.z + rng:NextNumber(-12, 12)
-		local c = disc(folder, 1.6, C3(180, 110, 255), x, 0.9, z, MAT.Neon, 0.1, 1.6)
-		disc(folder, 0.8, C3(230, 190, 255), x, 1.8, z, MAT.Neon, 0, 0.3)
-		if i == 1 then addLight(c, C3(190, 110, 255), 18, 1.2) end
 	end
 
 	-- upgrade zone (yellow)
@@ -2184,7 +2449,8 @@ function M.lobby(folder)
 	for _, zn in ipairs(Config.Lobby.zones) do
 		if zn.id == "upgrade" then uz = zn end
 	end
-	ring(folder, uz.r * 2, 1.0, C3(255, 214, 40), uz.x, 0.28, uz.z)
+	disc(folder, uz.r * 2 + 3, C3(52, 50, 62), uz.x, 0.26, uz.z, MAT.Slate, 0, 0.12)
+	ring(folder, uz.r * 2, 1.0, C3(255, 214, 40), uz.x, 0.34, uz.z)
 	disc(folder, uz.r * 1.7, C3(90, 74, 30), uz.x, 0.5, uz.z, MAT.Marble, 0, 0.4)
 	disc(folder, uz.r * 1.3, C3(255, 214, 40), uz.x, 0.62, uz.z, MAT.Neon, 0.82, 0.1)
 	for i = 0, 15 do
@@ -2204,11 +2470,13 @@ function M.lobby(folder)
 	collider(folder, 5, uz.x, uz.z, 4)
 	label(folder, uz.x, 7, uz.z - uz.r - 4, "UPGRADES", C3(255, 214, 40), 380, 48, 34)
 	label(folder, uz.x, 7, uz.z - uz.r - 0.8, "Spend skill points & coins", C3(255, 255, 255), 380, 28, 16)
+
 	-- crates
-	for _, p in ipairs({ { -88, 60 }, { -84, 66 }, { 88, 60 }, { 85, 67 }, { 70, -70 }, { -70, -70 } }) do
+	for _, p in ipairs({ { -88, 60 }, { -84, 66 }, { 88, 60 }, { 85, 67 }, { 90, -20 }, { -90, -20 } }) do
 		block(folder, 5, 4, 5, C3(150, 108, 60), p[1], 2.2, p[2], rng:NextNumber(0, 1), MAT.WoodPlanks, 0, true)
 		block(folder, 5.2, 0.4, 1, C3(100, 70, 40), p[1], 4.3, p[2], 0, MAT.Wood, 0, false)
 	end
+	return gates
 end
 
 -- ===================================================== ARENAS
@@ -2597,12 +2865,6 @@ end
 
 local hint = mkLabel(gui, "WASD - move   |   Mouse - aim   |   Hold LMB - attack   |   SPACE / SHIFT - dash   |   Wheel - zoom",
 	UDim2.new(0, 14, 1, -30), UDim2.fromOffset(700, 22), 14, C3(220, 220, 230))
-local classPrompt = new("TextLabel", {
-	AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 70), Size = UDim2.fromOffset(700, 40), BackgroundColor3 = C3(214, 70, 62),
-	BackgroundTransparency = 0.1, Text = "Choose your weapon: step onto a pedestal at the south of the lobby!", TextColor3 = C3(255, 255, 255),
-	Font = Enum.Font.GothamBold, TextSize = 20, BorderSizePixel = 0, Visible = false,
-}, gui)
-corner(classPrompt, 10)
 local downLabel = new("TextLabel", {
 	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.7, 0), Size = UDim2.fromOffset(700, 50), BackgroundTransparency = 1,
 	Text = "YOU ARE DOWN - you will revive when the next wave starts", TextColor3 = C3(255, 90, 90), Font = Enum.Font.GothamBlack, TextSize = 26,
@@ -2637,97 +2899,156 @@ local function row(parent, h)
 	return new("Frame", { Size = UDim2.new(1, 0, 0, h), BackgroundTransparency = 1, LayoutOrder = order }, parent)
 end
 
--- ------------------------------------------------------------ PORTAL PANEL
-local portal = makePanel("", 430, 560)
+-- ------------------------------------------------------------ GATE PANEL
+local portal = makePanel("", 430, 540)
 local curZone = nil
-local partyLists = {}
-local myPartyId = nil
-local sel = { diff = 1, max = 1 }
+local gateViews = {}
+local sel = { loc = Config.LocationOrder[1], diff = 1, max = 2, friends = false }
 local countdownLabel, countdownAt
+local LOC_COLORS = { forest = C3(70, 160, 84), cave = C3(140, 96, 210) }
+
+local function gateNumber(zid)
+	for _, zn in ipairs(Config.Lobby.zones) do
+		if zn.id == zid then return zn.n end
+	end
+	return 0
+end
+
+local function toggleRow(parent, labels, current, onPick, disabledFrom)
+	local n = #labels
+	for i, text in ipairs(labels) do
+		local dis = disabledFrom and i >= disabledFrom
+		local on = (current == i)
+		local b = mkButton(parent, text, UDim2.new((i - 1) / n, 2, 0, 0), UDim2.new(1 / n, -4, 1, 0),
+			on and C3(80, 150, 255) or C3(50, 54, 70), function() onPick(i) end)
+		b.TextSize = 14
+	end
+end
 
 local function renderPortal()
-	local loc = Config.Locations[curZone]
-	if not loc then return end
+	local zn = gateNumber(curZone)
+	if zn == 0 then return end
 	clearContent(portal)
-	portal.title.Text = loc.name
-	portal.sub.Text = loc.desc
+	portal.title.Text = "GATE " .. zn
 	order = 0
-	local unlocked = data.unlocked[loc.id] or 1
-	if sel.diff > unlocked then sel.diff = unlocked end
-	local list = partyLists[curZone] or {}
-	local mine
-	for _, pt in ipairs(list) do
-		if pt.id == myPartyId then mine = pt end
-	end
 	countdownLabel = nil
-	if mine then
-		local d = Config.Difficulties[mine.diff]
+	local view = gateViews[curZone]
+
+	-- ---------- a party already stands in this gate
+	if view then
+		local loc = Config.Locations[view.loc]
+		local d = Config.Difficulties[view.diff]
+		portal.sub.Text = view.mine and "You are in this party." or "This gate is already taken."
 		local r = row(portal.content, 30)
-		mkLabel(r, "YOUR PARTY  -  " .. d.name, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 20, hex(d.color))
-		local names = row(portal.content, 24 * #mine.names + 8)
-		for i, n in ipairs(mine.names) do
-			mkLabel(names, (n == mine.host and "[HOST] " or "") .. n, UDim2.fromOffset(8, (i - 1) * 24), UDim2.new(1, -8, 0, 24), 17)
+		mkLabel(r, string.upper(loc.name), UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 20, LOC_COLORS[view.loc] and LOC_COLORS[view.loc]:Lerp(C3(255, 255, 255), 0.35) or C3(255, 255, 255))
+		local r2 = row(portal.content, 24)
+		mkLabel(r2, d.name .. "   -   " .. (view.friendsOnly and "FRIENDS ONLY" or "OPEN TO EVERYONE"), UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 16, view.friendsOnly and C3(120, 200, 255) or hex(d.color))
+		local names = row(portal.content, 24 * #view.names + 8)
+		for i, n in ipairs(view.names) do
+			mkLabel(names, (n == view.host and "[HOST] " or "") .. n, UDim2.fromOffset(8, (i - 1) * 24), UDim2.new(1, -8, 0, 24), 17)
 		end
 		local st = row(portal.content, 26)
-		countdownLabel = mkLabel(st, "Players " .. mine.n .. " / " .. mine.max .. "  -  waiting...", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 16, C3(200, 220, 255))
-		countdownAt = mine.startAt
+		countdownLabel = mkLabel(st, "Players " .. view.n .. " / " .. view.max .. "  -  waiting...", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 16, C3(200, 220, 255))
+		countdownAt = view.startAt
 		local br = row(portal.content, 44)
-		if mine.hostId == lp.UserId then
-			mkButton(br, "START NOW", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0), C3(60, 170, 80), function() ToServer:FireServer("StartParty") end)
-			mkButton(br, "LEAVE", UDim2.fromScale(0.5, 0), UDim2.new(0.5, 0, 1, 0), C3(180, 60, 60), function() ToServer:FireServer("LeaveParty") end).Position = UDim2.new(0.5, 4, 0, 0)
+		if view.mine then
+			if view.hostId == lp.UserId then
+				mkButton(br, "START NOW", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0), C3(60, 170, 80), function() ToServer:FireServer("StartParty") end)
+				mkButton(br, "LEAVE", UDim2.new(0.5, 4, 0, 0), UDim2.new(0.5, -4, 1, 0), C3(180, 60, 60), function() ToServer:FireServer("LeaveParty") end)
+			else
+				mkButton(br, "LEAVE PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(180, 60, 60), function() ToServer:FireServer("LeaveParty") end)
+			end
 		else
-			mkButton(br, "LEAVE PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(180, 60, 60), function() ToServer:FireServer("LeaveParty") end)
+			if view.canJoin then
+				mkButton(br, "JOIN PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(70, 130, 220), function() ToServer:FireServer("JoinParty", view.id) end)
+			else
+				local b = mkButton(br, view.why or "UNAVAILABLE", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(70, 72, 82), nil)
+				b.AutoButtonColor = false
+			end
+			local hr = row(portal.content, 40)
+			mkLabel(hr, "Wait for the run to start or use another gate.", UDim2.fromOffset(2, 0), UDim2.fromScale(1, 1), 14, C3(170, 175, 190), nil, Enum.Font.Gotham)
 		end
 		return
 	end
-	-- difficulty
+
+	-- ---------- free gate: create a party
+	portal.sub.Text = "Pick a location, difficulty, party size and who may join."
+	local loc = Config.Locations[sel.loc]
+	local unlocked = data.unlocked[sel.loc] or 1
+	if sel.diff > unlocked then sel.diff = unlocked end
+
 	local r1 = row(portal.content, 22)
-	mkLabel(r1, "DIFFICULTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
-	local r2 = row(portal.content, 44)
+	mkLabel(r1, "LOCATION", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	local rl = row(portal.content, 56)
+	local nloc = #Config.LocationOrder
+	for i, id in ipairs(Config.LocationOrder) do
+		local l = Config.Locations[id]
+		local on = sel.loc == id
+		local b = mkButton(rl, l.name .. "\nLv." .. l.minLvl .. "-" .. l.maxLvl, UDim2.new((i - 1) / nloc, 2, 0, 0), UDim2.new(1 / nloc, -4, 1, 0),
+			on and (LOC_COLORS[id] or C3(80, 150, 255)) or C3(50, 54, 70), function()
+				sel.loc = id
+				renderPortal()
+			end)
+		b.TextSize = 15
+		if on then stroke(b, C3(255, 255, 255), 2, 0.1) end
+	end
+	local rd = row(portal.content, 34)
+	mkLabel(rd, loc.desc, UDim2.fromOffset(2, 0), UDim2.fromScale(1, 1), 13, C3(190, 195, 210), nil, Enum.Font.Gotham)
+
+	local r2 = row(portal.content, 22)
+	mkLabel(r2, "DIFFICULTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	local r3 = row(portal.content, 40)
 	for i, d in ipairs(Config.Difficulties) do
 		local locked = i > unlocked
-		local b = mkButton(r2, locked and "LOCKED" or d.name, UDim2.new((i - 1) / 5, 2, 0, 0), UDim2.new(0.2, -4, 1, 0),
+		local b = mkButton(r3, locked and "LOCKED" or d.name, UDim2.new((i - 1) / 5, 2, 0, 0), UDim2.new(0.2, -4, 1, 0),
 			locked and C3(60, 62, 72) or (sel.diff == i and hex(d.color) or C3(50, 54, 70)), function()
 				if not locked then sel.diff = i renderPortal() end
 			end)
 		b.TextSize = locked and 11 or 13
 		b.TextColor3 = (sel.diff == i and not locked) and C3(20, 20, 20) or C3(255, 255, 255)
 	end
-	local r3 = row(portal.content, 22)
-	mkLabel(r3, "MAX PLAYERS  (1 = solo)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
-	local r4 = row(portal.content, 40)
-	for i = 1, 4 do
-		mkButton(r4, tostring(i), UDim2.new((i - 1) / 4, 2, 0, 0), UDim2.new(0.25, -4, 1, 0), sel.max == i and C3(80, 150, 255) or C3(50, 54, 70), function()
-			sel.max = i
+
+	local r4 = row(portal.content, 22)
+	mkLabel(r4, "PLAYERS IN PARTY  (including you, 1 = solo)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	local r5 = row(portal.content, 38)
+	for i = 1, Config.GateMaxPlayers do
+		mkButton(r5, tostring(i), UDim2.new((i - 1) / Config.GateMaxPlayers, 2, 0, 0), UDim2.new(1 / Config.GateMaxPlayers, -4, 1, 0),
+			sel.max == i and C3(80, 150, 255) or C3(50, 54, 70), function()
+				sel.max = i
+				if i == 1 then sel.friends = false end
+				renderPortal()
+			end)
+	end
+
+	local r6 = row(portal.content, 22)
+	mkLabel(r6, "WHO CAN JOIN", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	local r7 = row(portal.content, 38)
+	local solo = sel.max == 1
+	local b1 = mkButton(r7, "EVERYONE", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0),
+		(not sel.friends) and C3(70, 170, 100) or C3(50, 54, 70), function()
+			sel.friends = false
 			renderPortal()
 		end)
+	local b2 = mkButton(r7, "FRIENDS ONLY", UDim2.new(0.5, 4, 0, 0), UDim2.new(0.5, -4, 1, 0),
+		(sel.friends and not solo) and C3(70, 140, 230) or C3(50, 54, 70), function()
+			if solo then return end
+			sel.friends = true
+			renderPortal()
+		end)
+	b1.TextSize, b2.TextSize = 14, 14
+	if solo then
+		b1.BackgroundColor3 = C3(46, 48, 58)
+		b2.BackgroundColor3 = C3(46, 48, 58)
+		b2.TextColor3 = C3(120, 124, 140)
+		b1.Text = "SOLO RUN"
 	end
+
 	local dd = Config.Difficulties[sel.diff]
-	local r5 = row(portal.content, 44)
-	mkButton(r5, "CREATE PARTY  (" .. dd.name .. ", " .. sel.max .. "P)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(60, 170, 80), function()
-		ToServer:FireServer("CreateParty", curZone, sel.diff, sel.max)
-	end)
-	local r6 = row(portal.content, 22)
-	mkLabel(r6, "OPEN PARTIES", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
-	if #list == 0 then
-		local e = row(portal.content, 30)
-		mkLabel(e, "No open parties - create one!", UDim2.fromOffset(6, 0), UDim2.fromScale(1, 1), 14, C3(170, 175, 190), nil, Enum.Font.Gotham)
-	end
-	for i, pt in ipairs(list) do
-		if i <= 5 then
-			local d = Config.Difficulties[pt.diff]
-			local r = row(portal.content, 40)
-			local bg = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(36, 40, 56), BorderSizePixel = 0 }, r)
-			corner(bg, 8)
-			mkLabel(bg, pt.host .. "'s party", UDim2.fromOffset(10, 2), UDim2.new(0.55, 0, 0, 20), 15)
-			mkLabel(bg, d.name .. "  " .. pt.n .. "/" .. pt.max, UDim2.fromOffset(10, 20), UDim2.new(0.55, 0, 0, 18), 13, hex(d.color))
-			local can = pt.diff <= unlocked and pt.n < pt.max
-			mkButton(bg, pt.n >= pt.max and "FULL" or (pt.diff > unlocked and "LOCKED" or "JOIN"), UDim2.new(1, -92, 0, 6), UDim2.fromOffset(84, 28),
-				can and C3(70, 130, 220) or C3(70, 72, 82), function()
-					if can then ToServer:FireServer("JoinParty", pt.id) end
-				end)
-		end
-	end
+	local r8 = row(portal.content, 46)
+	local tag = solo and "SOLO" or (sel.max .. "P" .. (sel.friends and ", FRIENDS" or ""))
+	mkButton(r8, "CREATE PARTY  (" .. loc.short .. ", " .. dd.name .. ", " .. tag .. ")", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(60, 170, 80), function()
+		ToServer:FireServer("CreateParty", curZone, sel.loc, sel.diff, sel.max, sel.friends and sel.max > 1)
+	end).TextSize = 15
 end
 
 -- ------------------------------------------------------------ UPGRADE PANEL
@@ -2792,6 +3113,151 @@ local function renderUpgrade()
 	coinRow("Swiftness", data.swift, Config.SwiftMax, Config.swiftCost(data.swift), "+0.25 move speed per level", "BuySwift")
 end
 
+-- ------------------------------------------------------------ WEAPON SELECT PANEL (3 buttons)
+local wgui = new("ScreenGui", { Name = "WeaponSelect", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 20 }, lp:WaitForChild("PlayerGui"))
+local wDim = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(6, 8, 14), BackgroundTransparency = 0.35, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false }, wgui)
+local wFrame = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(760, 430),
+	BackgroundColor3 = C3(20, 22, 32), BorderSizePixel = 0,
+}, wDim)
+corner(wFrame, 18)
+stroke(wFrame, C3(255, 214, 74), 3, 0.1)
+new("UIScale", {}, wFrame)
+mkLabel(wFrame, "CHOOSE YOUR WEAPON", UDim2.fromOffset(0, 14), UDim2.new(1, 0, 0, 40), 34, C3(255, 214, 74), Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
+local wSub = mkLabel(wFrame, "Pick your hero class. You can change it later in the lobby.", UDim2.fromOffset(0, 56), UDim2.new(1, 0, 0, 22), 15, C3(200, 205, 220), Enum.TextXAlignment.Center, Enum.Font.Gotham)
+
+local function iconPart(parent, size, t, ang, color, shape, axis)
+	-- places a frame along a 45deg axis (up-right) at distance t from the icon centre
+	local k = 0.7071
+	local f = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, t * k * (axis or 1), 0.5, -t * k), Size = UDim2.fromOffset(size.X, size.Y),
+		Rotation = ang, BackgroundColor3 = color, BorderSizePixel = 0,
+	}, parent)
+	if shape == "round" then corner(f, 100) end
+	return f
+end
+
+local ICONS = {
+	Swordsman = function(c)
+		iconPart(c, Vector2.new(9, 84), 6, 45, C3(225, 232, 240))
+		iconPart(c, Vector2.new(3, 76), 6, 45, C3(255, 255, 255))
+		iconPart(c, Vector2.new(38, 8), -30, 45, C3(255, 205, 80))
+		iconPart(c, Vector2.new(8, 22), -44, 45, C3(130, 84, 48))
+		iconPart(c, Vector2.new(12, 12), -57, 45, C3(255, 205, 80), "round")
+	end,
+	Archer = function(c)
+		for _, ax in ipairs({ 1, -1 }) do
+			local rot = 45 * ax
+			iconPart(c, Vector2.new(4, 92), 0, rot, C3(196, 154, 100), nil, ax)
+			iconPart(c, Vector2.new(17, 17), 50, 0, C3(220, 226, 236), nil, ax)
+			for _, tt in ipairs({ -42, -34 }) do
+				iconPart(c, Vector2.new(15, 3), tt, 0, C3(110, 220, 130), nil, ax)
+				iconPart(c, Vector2.new(3, 15), tt, 0, C3(110, 220, 130), nil, ax)
+			end
+		end
+	end,
+	Mage = function(c)
+		iconPart(c, Vector2.new(7, 94), -6, 45, C3(130, 86, 50))
+		iconPart(c, Vector2.new(15, 15), 32, 0, C3(190, 140, 255))
+		local orb = iconPart(c, Vector2.new(30, 30), 46, 0, C3(170, 100, 255), "round")
+		stroke(orb, C3(255, 255, 255), 2, 0.3)
+		iconPart(c, Vector2.new(12, 12), 46, 0, C3(255, 255, 255), "round")
+		local halo = iconPart(c, Vector2.new(46, 46), 46, 0, C3(170, 100, 255), "round")
+		halo.BackgroundTransparency = 0.75
+	end,
+}
+local TAGLINE = {
+	Swordsman = "Close range  -  hits groups",
+	Archer = "Long range  -  fastest hero",
+	Mage = "Area damage  -  burns crowds",
+}
+
+local wCards = {}
+local function closeWeaponPanel()
+	wDim.Visible = false
+end
+local function refreshWeaponCards()
+	for cls, c in pairs(wCards) do
+		local cur = data.class == cls
+		c.stroke.Color = cur and C3(255, 214, 74) or Config.Classes[cls].color
+		c.stroke.Thickness = cur and 4 or 2
+		c.btn.Text = cur and "CONTINUE" or "SELECT"
+		c.badge.Visible = cur
+	end
+end
+local function openWeaponPanel()
+	if lp:GetAttribute("InRun") then return end
+	refreshWeaponCards()
+	wDim.Visible = true
+end
+
+local statDefs = {
+	{ "HP", function(c) return c.hp / 150 end, function(c) return tostring(c.hp) end },
+	{ "DAMAGE", function(c) return c.damage / 26 end, function(c) return tostring(c.damage) end },
+	{ "SPEED", function(c) return c.speed / 22 end, function(c) return tostring(c.speed) end },
+}
+local cardOrder = { "Archer", "Swordsman", "Mage" }
+for i, cls in ipairs(cardOrder) do
+	local cdef = Config.Classes[cls]
+	local card = new("Frame", {
+		Position = UDim2.new(0, 20 + (i - 1) * 240, 0, 92), Size = UDim2.fromOffset(220, 322),
+		BackgroundColor3 = C3(30, 33, 48), BorderSizePixel = 0,
+	}, wFrame)
+	corner(card, 14)
+	local cs = stroke(card, cdef.color, 2, 0)
+	local head = new("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = cdef.color, BorderSizePixel = 0 }, card)
+	corner(head, 14)
+	new("Frame", { Position = UDim2.new(0, 0, 1, -14), Size = UDim2.new(1, 0, 0, 14), BackgroundColor3 = cdef.color, BorderSizePixel = 0 }, head)
+	mkLabel(head, string.upper(cdef.name), UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 22, C3(255, 255, 255), Enum.TextXAlignment.Center, Enum.Font.GothamBlack).ZIndex = 3
+	local badge = mkLabel(card, "CURRENT", UDim2.new(1, -82, 0, 46), UDim2.fromOffset(76, 16), 11, C3(255, 214, 74), Enum.TextXAlignment.Right)
+	local icon = new("Frame", { Position = UDim2.new(0.5, -60, 0, 52), Size = UDim2.fromOffset(120, 120), BackgroundColor3 = C3(22, 24, 36), BorderSizePixel = 0, ClipsDescendants = true }, card)
+	corner(icon, 60)
+	stroke(icon, cdef.color, 2, 0.5)
+	ICONS[cls](icon)
+	mkLabel(card, TAGLINE[cls], UDim2.fromOffset(8, 176), UDim2.new(1, -16, 0, 18), 12, C3(210, 214, 228), Enum.TextXAlignment.Center, Enum.Font.Gotham)
+	for k, sdef in ipairs(statDefs) do
+		local y = 200 + (k - 1) * 22
+		mkLabel(card, sdef[1], UDim2.fromOffset(12, y), UDim2.fromOffset(62, 16), 11, C3(170, 176, 196))
+		local bar = new("Frame", { Position = UDim2.fromOffset(76, y + 2), Size = UDim2.fromOffset(100, 12), BackgroundColor3 = C3(14, 16, 22), BorderSizePixel = 0 }, card)
+		corner(bar, 6)
+		local fill = new("Frame", { Size = UDim2.fromScale(math.clamp(sdef[2](cdef), 0.08, 1), 1), BackgroundColor3 = cdef.color, BorderSizePixel = 0 }, bar)
+		corner(fill, 6)
+		mkLabel(card, sdef[3](cdef), UDim2.fromOffset(180, y), UDim2.fromOffset(34, 16), 12, C3(255, 255, 255), Enum.TextXAlignment.Right)
+	end
+	local btn = mkButton(card, "SELECT", UDim2.new(0, 14, 1, -52), UDim2.new(1, -28, 0, 40), cdef.color, function()
+		if data.class ~= cls then
+			ToServer:FireServer("ChooseClass", cls)
+			data.class = cls
+			if onData then onData() end
+		end
+		closeWeaponPanel()
+	end)
+	btn.TextSize = 18
+	btn.Font = Enum.Font.GothamBlack
+	wCards[cls] = { stroke = cs, btn = btn, badge = badge }
+end
+
+-- scale the panel down on small screens
+local function fitWeaponPanel()
+	local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+	local sc = math.clamp(math.min(vp.X / 800, vp.Y / 470), 0.5, 1.15)
+	wFrame:FindFirstChildOfClass("UIScale").Scale = sc
+end
+fitWeaponPanel()
+if workspace.CurrentCamera then
+	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitWeaponPanel)
+end
+
+-- "change weapon" button under the info card (lobby only)
+local changeBtn = mkButton(gui, "CHANGE WEAPON", UDim2.fromOffset(14, 122), UDim2.fromOffset(290, 34), C3(60, 66, 96), function()
+	openWeaponPanel()
+end)
+changeBtn.TextSize = 15
+stroke(changeBtn, C3(255, 255, 255), 1, 0.7)
+local function refreshChangeBtn()
+	changeBtn.Visible = not lp:GetAttribute("InRun")
+end
+
 -- ------------------------------------------------------------ RESULT PANEL
 local result = new("Frame", {
 	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(480, 340),
@@ -2813,14 +3279,18 @@ onData = function()
 	coinLabel.Text = "Coins: " .. data.coins
 	ptsLabel.Text = "Skill points: " .. data.points
 	classLabel.Text = data.class and string.upper(data.class) or "NO WEAPON"
-	classPrompt.Visible = (data.class == nil) and not lp:GetAttribute("InRun")
+	refreshWeaponCards()
 	if curZone == "upgrade" then renderUpgrade() end
-	if Config.Locations[curZone or ""] then renderPortal() end
+	if curZone and gateNumber(curZone) > 0 and portal.frame.Visible then renderPortal() end
 end
 lp:GetAttributeChangedSignal("Data"):Connect(readData)
 lp:GetAttributeChangedSignal("InRun"):Connect(function()
-	classPrompt.Visible = (data.class == nil) and not lp:GetAttribute("InRun")
+	refreshChangeBtn()
+	if lp:GetAttribute("InRun") then closeWeaponPanel() end
 end)
+refreshChangeBtn()
+-- the weapon panel pops up as soon as you enter the game
+openWeaponPanel()
 readData()
 onData()
 
@@ -2955,8 +3425,18 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
-lp.CharacterAdded:Connect(function()
+-- your own name + HP plate is only for OTHER players to see
+local function hideOwnPlate(c)
+	local function chk(o)
+		if o.Name == "Plate" and o:IsA("BillboardGui") then o.Enabled = false end
+	end
+	for _, o in ipairs(c:GetDescendants()) do chk(o) end
+	c.DescendantAdded:Connect(chk)
+end
+if lp.Character then hideOwnPlate(lp.Character) end
+lp.CharacterAdded:Connect(function(c)
 	downLabel.Visible = false
+	hideOwnPlate(c)
 end)
 
 -- ============================================================ FX
@@ -3199,7 +3679,7 @@ cc.Parent = Lighting
 local bloom = Instance.new("BloomEffect")
 bloom.Parent = Lighting
 local ENV = {
-	lobby = { amb = C3(150, 150, 160), out = C3(160, 160, 170), br = 2.2, clock = 14, tint = C3(255, 250, 240), sat = 0.12, con = 0.05, bloom = 0.3 },
+	lobby = { amb = C3(150, 146, 162), out = C3(166, 160, 172), br = 2.3, clock = 17.2, tint = C3(255, 238, 218), sat = 0.22, con = 0.1, bloom = 0.5 },
 	forest = { amb = C3(100, 120, 98), out = C3(125, 145, 112), br = 1.9, clock = 16.5, tint = C3(255, 244, 214), sat = 0.18, con = 0.1, bloom = 0.35 },
 	cave = { amb = C3(88, 82, 120), out = C3(80, 74, 112), br = 1.2, clock = 0, tint = C3(205, 205, 255), sat = 0.05, con = 0.12, bloom = 0.7 },
 }
@@ -3228,16 +3708,17 @@ H.Zone = function(zid)
 	if zid == "upgrade" then
 		upPanel.frame.Visible = true
 		renderUpgrade()
-	elseif zid and Config.Locations[zid] then
-		portal.frame.Visible = true
-		renderPortal()
+	elseif zid and gateNumber(zid) > 0 then
+		gateViews[zid] = nil -- wait for the server to tell us the gate state
 	end
 end
 
-H.Parties = function(loc, list, mineId)
-	partyLists[loc] = list
-	myPartyId = mineId
-	if curZone == loc then renderPortal() end
+H.Gate = function(gate, view)
+	gateViews[gate] = view or false
+	if curZone == gate then
+		portal.frame.Visible = true
+		renderPortal()
+	end
 end
 
 H.Run = function(d)
