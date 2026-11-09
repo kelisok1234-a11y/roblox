@@ -1,0 +1,3294 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+<Meta name="ExplicitAutoJoints">true</Meta>
+<Item class="Workspace" referent="RBX0">
+<Properties>
+<string name="Name">Workspace</string>
+</Properties>
+</Item>
+<Item class="Lighting" referent="RBX1">
+<Properties>
+<string name="Name">Lighting</string>
+<bool name="GlobalShadows">false</bool>
+</Properties>
+</Item>
+<Item class="ReplicatedStorage" referent="RBX2">
+<Properties>
+<string name="Name">ReplicatedStorage</string>
+</Properties>
+<Item class="ModuleScript" referent="RBX3">
+<Properties>
+<string name="Name">Config</string>
+<ProtectedString name="Source"><![CDATA[-- Shared configuration (ReplicatedStorage.Config)
+local Config = {}
+
+Config.MaxLevel = 100
+Config.DashCooldown = 4
+
+Config.Classes = {
+	Swordsman = {
+		name = "Swordsman", kind = "melee", color = Color3.fromRGB(214, 70, 62),
+		hp = 150, speed = 20, damage = 22, cooldown = 0.45, range = 8.5, arc = 140, crit = 0.05,
+		desc = "Fast sword arcs hit every enemy in front of you. Highest HP.",
+	},
+	Archer = {
+		name = "Archer", kind = "arrow", color = Color3.fromRGB(70, 168, 82),
+		hp = 100, speed = 22, damage = 15, cooldown = 0.38, range = 62, projSpeed = 105, crit = 0.10,
+		desc = "Long range arrows, fast shooting and the best speed.",
+	},
+	Mage = {
+		name = "Mage", kind = "fireball", color = Color3.fromRGB(150, 84, 220),
+		hp = 110, speed = 20, damage = 26, cooldown = 0.85, range = 48, projSpeed = 62, radius = 7, crit = 0.05,
+		desc = "Fireballs explode and burn whole groups of enemies.",
+	},
+}
+Config.ClassOrder = { "Swordsman", "Archer", "Mage" }
+
+-- weapon upgrades (cost: 1 skill point per level)
+Config.Stats = {
+	{ id = "Damage", name = "Damage", per = 0.10, max = 30, fmt = "+10% base damage per level" },
+	{ id = "Speed", name = "Attack Speed", per = 0.05, max = 30, fmt = "+5% attack speed per level" },
+	{ id = "Range", name = "Range", per = 0.03, max = 30, fmt = "+3% range per level" },
+	{ id = "Crit", name = "Crit Chance", per = 0.02, max = 25, fmt = "+2% crit chance per level (x2 damage)" },
+}
+
+function Config.weaponStats(cls, upg)
+	local c = Config.Classes[cls]
+	upg = upg or {}
+	local dl, sl, rl, cl = upg.Damage or 0, upg.Speed or 0, upg.Range or 0, upg.Crit or 0
+	return {
+		damage = c.damage * (1 + 0.10 * dl),
+		cooldown = math.max(0.12, c.cooldown / (1 + 0.05 * sl)),
+		range = c.range * (1 + 0.03 * rl),
+		crit = math.min(0.75, c.crit + 0.02 * cl),
+	}
+end
+
+-- coin upgrades
+Config.VitMax = 50
+Config.SwiftMax = 20
+function Config.vitCost(lv) return math.floor(60 * (lv + 1) ^ 1.5) end
+function Config.swiftCost(lv) return math.floor(150 * (lv + 1) ^ 1.6) end
+function Config.maxHp(cls, vit)
+	local base = cls and Config.Classes[cls].hp or 100
+	return base + 12 * (vit or 0)
+end
+function Config.walkSpeed(cls, swift)
+	local base = cls and Config.Classes[cls].speed or 20
+	return base + 0.25 * (swift or 0)
+end
+
+-- levelling is intentionally slow
+function Config.xpNeed(level)
+	if level >= Config.MaxLevel then return 999999999 end
+	return math.floor(120 * level ^ 1.8)
+end
+
+Config.Difficulties = {
+	{ name = "Easy", hp = 1.0, dmg = 1.0, extra = 0, reward = 1.0, color = "6bd66b" },
+	{ name = "Normal", hp = 1.8, dmg = 1.5, extra = 8, reward = 2.2, color = "ffd84a" },
+	{ name = "Hard", hp = 3.0, dmg = 2.2, extra = 16, reward = 4.0, color = "ff9a3c" },
+	{ name = "Insane", hp = 5.0, dmg = 3.2, extra = 24, reward = 7.0, color = "ff4d4d" },
+	{ name = "Impossible", hp = 8.0, dmg = 4.5, extra = 34, reward = 12.0, color = "c24dff" },
+}
+
+Config.Locations = {
+	forest = {
+		id = "forest", name = "Whispering Forest", short = "FOREST",
+		desc = "A dark little forest full of zombies (Lv.1-5). Boss: Zombie Titan.",
+		minLvl = 1, maxLvl = 5, xp = 700, coins = 250,
+		enemies = {
+			{ id = "Walker", name = "Zombie", kind = "zombie", weight = 40, minWave = 1, minLvl = 1, maxLvl = 4,
+				hp = 60, dmg = 8, speed = 9, r = 1.7, atkCd = 1.0,
+				pal = { skin = Color3.fromRGB(110, 150, 90), cloth = Color3.fromRGB(70, 80, 110), hair = Color3.fromRGB(40, 30, 25) } },
+			{ id = "Runner", name = "Runner Zombie", kind = "zombie", weight = 25, minWave = 1, minLvl = 2, maxLvl = 5,
+				hp = 35, dmg = 6, speed = 15, r = 1.4, atkCd = 0.7,
+				pal = { skin = Color3.fromRGB(150, 160, 95), cloth = Color3.fromRGB(150, 70, 40), hair = Color3.fromRGB(60, 45, 30) } },
+			{ id = "Toxic", name = "Toxic Zombie", kind = "zombie", variant = "toxic", weight = 20, minWave = 2, minLvl = 3, maxLvl = 5,
+				hp = 45, dmg = 9, speed = 8, r = 1.7, atkCd = 2.0, ranged = true, projKind = "spit", projSpeed = 38, shootRange = 38, keep = 18,
+				pal = { skin = Color3.fromRGB(120, 190, 70), cloth = Color3.fromRGB(80, 110, 50), hair = Color3.fromRGB(30, 60, 20) } },
+			{ id = "Brute", name = "Zombie Brute", kind = "zombie", variant = "brute", weight = 15, minWave = 2, minLvl = 4, maxLvl = 5,
+				hp = 190, dmg = 20, speed = 6.5, r = 2.8, atkCd = 1.4,
+				pal = { skin = Color3.fromRGB(95, 125, 85), cloth = Color3.fromRGB(90, 60, 40), hair = Color3.fromRGB(25, 20, 20) } },
+		},
+		boss = { id = "Titan", name = "Zombie Titan", kind = "titan", boss = "titan", minLvl = 5, maxLvl = 5,
+			hp = 2600, dmg = 26, speed = 7.5, r = 5.2, atkCd = 1.5, rockR = 6.5,
+			pal = { skin = Color3.fromRGB(88, 120, 78), cloth = Color3.fromRGB(70, 55, 40), hair = Color3.fromRGB(30, 40, 25) } },
+	},
+	cave = {
+		id = "cave", name = "Gloomrock Cave", short = "CAVE",
+		desc = "A deep cave crawling with goblins (Lv.5-10). Boss: Goblin King.",
+		minLvl = 5, maxLvl = 10, xp = 1500, coins = 600,
+		enemies = {
+			{ id = "Grunt", name = "Goblin Grunt", kind = "goblin", weight = 40, minWave = 1, minLvl = 5, maxLvl = 8,
+				hp = 70, dmg = 12, speed = 11, r = 1.6, atkCd = 0.9,
+				pal = { skin = Color3.fromRGB(110, 160, 70), cloth = Color3.fromRGB(120, 80, 45), hair = Color3.fromRGB(60, 40, 30) } },
+			{ id = "Sneaker", name = "Goblin Sneaker", kind = "goblin", variant = "sneaker", weight = 25, minWave = 1, minLvl = 6, maxLvl = 9,
+				hp = 45, dmg = 10, speed = 17, r = 1.4, atkCd = 0.6,
+				pal = { skin = Color3.fromRGB(90, 140, 90), cloth = Color3.fromRGB(50, 50, 70), hair = Color3.fromRGB(20, 20, 30) } },
+			{ id = "Slinger", name = "Goblin Slinger", kind = "goblin", variant = "slinger", weight = 20, minWave = 2, minLvl = 6, maxLvl = 10,
+				hp = 55, dmg = 13, speed = 9, r = 1.6, atkCd = 1.6, ranged = true, projKind = "knife", projSpeed = 46, shootRange = 44, keep = 20,
+				pal = { skin = Color3.fromRGB(130, 170, 60), cloth = Color3.fromRGB(140, 60, 50), hair = Color3.fromRGB(70, 50, 30) } },
+			{ id = "Hobgoblin", name = "Hobgoblin", kind = "goblin", variant = "brute", weight = 15, minWave = 2, minLvl = 8, maxLvl = 10,
+				hp = 220, dmg = 26, speed = 7.5, r = 2.8, atkCd = 1.3,
+				pal = { skin = Color3.fromRGB(120, 140, 70), cloth = Color3.fromRGB(90, 90, 100), hair = Color3.fromRGB(40, 30, 20) } },
+		},
+		boss = { id = "King", name = "Goblin King", kind = "king", boss = "king", minLvl = 10, maxLvl = 10,
+			hp = 4200, dmg = 55, speed = 17, r = 4.6, atkCd = 1.5,
+			pal = { skin = Color3.fromRGB(100, 150, 60), cloth = Color3.fromRGB(110, 30, 40), hair = Color3.fromRGB(30, 25, 20) } },
+	},
+}
+Config.LocationOrder = { "forest", "cave" }
+
+Config.Lobby = {
+	spawn = Vector3.new(0, 4, 32),
+	half = 100,
+	zones = {
+		{ id = "class_Swordsman", kind = "class", class = "Swordsman", x = -32, z = 62, r = 8 },
+		{ id = "class_Archer", kind = "class", class = "Archer", x = 0, z = 62, r = 8 },
+		{ id = "class_Mage", kind = "class", class = "Mage", x = 32, z = 62, r = 8 },
+		{ id = "forest", kind = "portal", x = -62, z = -22, r = 14 },
+		{ id = "cave", kind = "portal", x = 62, z = -22, r = 14 },
+		{ id = "upgrade", kind = "upgrade", x = 0, z = -58, r = 13 },
+	},
+}
+
+return Config
+]]></ProtectedString>
+</Properties>
+</Item>
+</Item>
+<Item class="ServerScriptService" referent="RBX4">
+<Properties>
+<string name="Name">ServerScriptService</string>
+</Properties>
+<Item class="Script" referent="RBX5">
+<Properties>
+<string name="Name">GameServer</string>
+<ProtectedString name="Source"><![CDATA[-- GameServer: lobby, parties, dungeon runs, enemies, combat, progression
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local DataStoreService = game:GetService("DataStoreService")
+local Lighting = game:GetService("Lighting")
+local PhysicsService = game:GetService("PhysicsService")
+
+local Config = require(RS:WaitForChild("Config"))
+local Sprites = require(script:WaitForChild("Sprites"))
+local MapBuilder = require(script:WaitForChild("MapBuilder"))
+
+Players.CharacterAutoLoads = false
+Lighting.GlobalShadows = false
+
+pcall(function()
+	PhysicsService:RegisterCollisionGroup("Heroes")
+	PhysicsService:CollisionGroupSetCollidable("Heroes", "Heroes", false)
+end)
+
+-- ============================================================ NETWORK
+local Net = Instance.new("Folder")
+Net.Name = "Net"
+local ToServer = Instance.new("RemoteEvent")
+ToServer.Name = "ToServer"
+ToServer.Parent = Net
+local ToClient = Instance.new("RemoteEvent")
+ToClient.Name = "ToClient"
+ToClient.Parent = Net
+Net.Parent = RS
+
+-- ============================================================ DATA
+local D = {} -- persistent profile per player
+local S = {} -- session state per player
+local STORE
+pcall(function()
+	STORE = DataStoreService:GetDataStore("TopDownHeroesV1")
+end)
+
+local function newData()
+	return {
+		level = 1, xp = 0, points = 0, coins = 0, vit = 0, swift = 0, wins = 0,
+		unlocked = { forest = 1, cave = 1 },
+		upg = { Swordsman = {}, Archer = {}, Mage = {} },
+	}
+end
+
+local function merge(dst, src)
+	for k, v in pairs(src) do
+		if type(v) == "table" and type(dst[k]) == "table" then
+			merge(dst[k], v)
+		else
+			dst[k] = v
+		end
+	end
+end
+
+local function loadData(p)
+	local d = newData()
+	if STORE then
+		local ok, res = pcall(function()
+			return STORE:GetAsync("P" .. p.UserId)
+		end)
+		if ok and type(res) == "table" then
+			merge(d, res)
+		end
+	end
+	return d
+end
+
+local function saveData(p)
+	local d = D[p]
+	if not STORE or not d then return end
+	pcall(function()
+		STORE:SetAsync("P" .. p.UserId, d)
+	end)
+end
+
+local function pushData(p)
+	local d = D[p]
+	if not d then return end
+	local payload = {
+		level = d.level, xp = d.xp, need = Config.xpNeed(d.level), points = d.points, coins = d.coins,
+		class = d.class, upg = d.upg, vit = d.vit, swift = d.swift, unlocked = d.unlocked,
+	}
+	p:SetAttribute("Data", HttpService:JSONEncode(payload))
+end
+
+-- ============================================================ HELPERS
+local function getChar(p)
+	local c = p.Character
+	if not c then return nil end
+	local h = c:FindFirstChildOfClass("Humanoid")
+	local r = c:FindFirstChild("HumanoidRootPart")
+	if h and r then return c, h, r end
+	return nil
+end
+
+local function toast(p, text, color, dur)
+	ToClient:FireClient(p, "Toast", text, color or "ffffff", dur or 3)
+end
+
+local function runFx(run, name, ...)
+	for _, p in ipairs(run.players) do
+		ToClient:FireClient(p, name, ...)
+	end
+end
+
+local function runToast(run, text, color, dur)
+	for _, p in ipairs(run.players) do
+		toast(p, text, color, dur)
+	end
+end
+
+local damagePlayer, damageEnemy, killEnemy, spawnProj
+local leaveParty, broadcastParties, sendParties, startRun
+local returnToLobby, endRun, finishRun, checkDefeat, onDied, chooseClass, buildSprite
+
+-- ============================================================ PLAYER PLATES / SPRITES
+local function buildPlate(p, hrp)
+	local old = hrp:FindFirstChild("Plate")
+	if old then old:Destroy() end
+	local g = Instance.new("BillboardGui")
+	g.Name = "Plate"
+	g.Size = UDim2.fromOffset(190, 50)
+	g.StudsOffsetWorldSpace = Vector3.new(0, 0, -4.6)
+	g.AlwaysOnTop = true
+	g.LightInfluence = 0
+	g.MaxDistance = 500
+	g.Adornee = hrp
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.Size = UDim2.new(1, 0, 0, 22)
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 17
+	title.TextColor3 = Color3.new(1, 1, 1)
+	title.TextStrokeTransparency = 0.2
+	title.Parent = g
+	local bar = Instance.new("Frame")
+	bar.Name = "Bar"
+	bar.Position = UDim2.new(0.08, 0, 0, 25)
+	bar.Size = UDim2.new(0.84, 0, 0, 15)
+	bar.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+	bar.BackgroundTransparency = 0.2
+	bar.BorderSizePixel = 0
+	bar.Parent = g
+	local bc = Instance.new("UICorner")
+	bc.CornerRadius = UDim.new(0, 5)
+	bc.Parent = bar
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = Color3.fromRGB(80, 220, 90)
+	fill.BorderSizePixel = 0
+	fill.Parent = bar
+	local fc = Instance.new("UICorner")
+	fc.CornerRadius = UDim.new(0, 5)
+	fc.Parent = fill
+	local txt = Instance.new("TextLabel")
+	txt.Name = "Txt"
+	txt.Size = UDim2.fromScale(1, 1)
+	txt.BackgroundTransparency = 1
+	txt.Font = Enum.Font.GothamBold
+	txt.TextSize = 11
+	txt.TextColor3 = Color3.new(1, 1, 1)
+	txt.TextStrokeTransparency = 0.4
+	txt.ZIndex = 3
+	txt.Parent = bar
+	g.Parent = hrp
+end
+
+local function updatePlate(p)
+	local c, h, r = getChar(p)
+	if not c then return end
+	local g = r:FindFirstChild("Plate")
+	if not g then return end
+	local d = D[p]
+	g.Title.Text = "Lv." .. (d and d.level or 1) .. "  " .. p.DisplayName
+	local frac = math.clamp(h.Health / math.max(1, h.MaxHealth), 0, 1)
+	g.Bar.Fill.Size = UDim2.fromScale(frac, 1)
+	g.Bar.Fill.BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.75, 0.95)
+	g.Bar.Txt.Text = math.ceil(h.Health) .. " / " .. math.ceil(h.MaxHealth)
+end
+
+buildSprite = function(p)
+	local c, h, r = getChar(p)
+	if not c then return end
+	local st = S[p]
+	local old = c:FindFirstChild("Sprite")
+	if old then old:Destroy() end
+	local f = Instance.new("Folder")
+	f.Name = "Sprite"
+	f.Parent = c
+	local cls = D[p].class
+	local color = cls and Config.Classes[cls].color or Color3.fromRGB(150, 150, 160)
+	st.weapon = Sprites.player(cls, color, r, f)
+end
+
+local function applyStats(p, heal)
+	local c, h = getChar(p)
+	if not c then return end
+	local d = D[p]
+	local mh = Config.maxHp(d.class, d.vit)
+	h.MaxHealth = mh
+	if heal then h.Health = mh end
+	local sp = Config.walkSpeed(d.class, d.swift)
+	h.WalkSpeed = sp
+	p:SetAttribute("WalkSpeed", sp)
+	updatePlate(p)
+end
+
+local function swingWeapon(st, cls)
+	local w = st.weapon
+	if not w or not w.weld.Parent then return end
+	local base = w.base
+	local weld = w.weld
+	if cls == "Swordsman" then
+		weld.C0 = CFrame.Angles(0, -1.2, 0) * base
+		TweenService:Create(weld, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { C0 = CFrame.Angles(0, 1.2, 0) * base }):Play()
+		task.delay(0.16, function()
+			if weld.Parent then
+				TweenService:Create(weld, TweenInfo.new(0.2), { C0 = base }):Play()
+			end
+		end)
+	else
+		local dz = cls == "Archer" and 0.9 or -1.0
+		weld.C0 = base * CFrame.new(0, 0, dz)
+		TweenService:Create(weld, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { C0 = base }):Play()
+	end
+end
+
+local lobbyRng = Random.new()
+local function lobbySpawnPos()
+	return Config.Lobby.spawn + Vector3.new(lobbyRng:NextInteger(-8, 8), 0, lobbyRng:NextInteger(-4, 4))
+end
+
+local function setupCharacter(p, c)
+	local st = S[p]
+	if not st or not D[p] then return end
+	local hum = c:WaitForChild("Humanoid", 10)
+	local hrp = c:WaitForChild("HumanoidRootPart", 10)
+	if not hum or not hrp then return end
+
+	local function hide(d)
+		if d:IsA("Accessory") or d:IsA("Clothing") or d:IsA("ShirtGraphic") or d:IsA("BodyColors") or d:IsA("CharacterMesh") then
+			d:Destroy()
+		elseif d:IsA("BasePart") then
+			if d ~= hrp and not d:FindFirstAncestor("Sprite") then
+				d.Transparency = 1
+			end
+			pcall(function()
+				d.CollisionGroup = "Heroes"
+			end)
+		end
+	end
+	for _, d in ipairs(c:GetDescendants()) do hide(d) end
+	c.DescendantAdded:Connect(hide)
+
+	hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+	hum.UseJumpPower = true
+	hum.JumpPower = 0
+	pcall(function()
+		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+	end)
+
+	local pos
+	if st.run then
+		local info = st.run.info
+		pos = info.spawn + Vector3.new(lobbyRng:NextInteger(-8, 8), 0, lobbyRng:NextInteger(-4, 4))
+	else
+		pos = lobbySpawnPos()
+	end
+	c:PivotTo(CFrame.new(pos))
+	applyStats(p, true)
+	buildSprite(p)
+	buildPlate(p, hrp)
+	updatePlate(p)
+	hum.HealthChanged:Connect(function() updatePlate(p) end)
+	hum.Died:Connect(function() onDied(p, c) end)
+	ToClient:FireClient(p, "Env", st.run and st.run.cfg.id or "lobby")
+end
+
+-- ============================================================ PROGRESSION
+local function grantXP(p, amount)
+	local d = D[p]
+	if not d then return 0 end
+	local ups = 0
+	d.xp = d.xp + amount
+	while d.level < Config.MaxLevel and d.xp >= Config.xpNeed(d.level) do
+		d.xp = d.xp - Config.xpNeed(d.level)
+		d.level = d.level + 1
+		d.points = d.points + 1
+		ups = ups + 1
+	end
+	if d.level >= Config.MaxLevel then d.xp = 0 end
+	if ups > 0 then
+		toast(p, "LEVEL UP!  Lv." .. d.level .. "  (+" .. ups .. " skill point)", "ffd84a", 3.5)
+		updatePlate(p)
+	end
+	pushData(p)
+	return ups
+end
+
+chooseClass = function(p, cls)
+	local d = D[p]
+	d.class = cls
+	applyStats(p, false)
+	local _, h = getChar(p)
+	if h then h.Health = h.MaxHealth end
+	buildSprite(p)
+	pushData(p)
+	toast(p, "Weapon selected: " .. string.upper(cls), "ffffff", 2.5)
+end
+
+-- ============================================================ LOBBY
+local lobbyFolder = Instance.new("Folder")
+lobbyFolder.Name = "Lobby"
+lobbyFolder.Parent = Workspace
+MapBuilder.lobby(lobbyFolder)
+
+-- ============================================================ PARTIES
+local parties = {}
+local partySeq = 0
+local runs = {}
+local slots = {}
+
+local function partyView(pt)
+	local names = {}
+	for _, m in ipairs(pt.members) do table.insert(names, m.DisplayName) end
+	return { id = pt.id, host = pt.host.DisplayName, hostId = pt.host.UserId, diff = pt.diff, max = pt.max, n = #pt.members, names = names, startAt = pt.startAt }
+end
+
+sendParties = function(p, loc)
+	local list = {}
+	for _, pt in pairs(parties) do
+		if pt.loc == loc then table.insert(list, partyView(pt)) end
+	end
+	table.sort(list, function(a, b) return a.id < b.id end)
+	local st = S[p]
+	ToClient:FireClient(p, "Parties", loc, list, st and st.party and st.party.id or nil)
+end
+
+broadcastParties = function(loc)
+	for p, st in pairs(S) do
+		if st.zone == loc then sendParties(p, loc) end
+	end
+end
+
+leaveParty = function(p)
+	local st = S[p]
+	local pt = st and st.party
+	if not pt then return end
+	st.party = nil
+	local i = table.find(pt.members, p)
+	if i then table.remove(pt.members, i) end
+	if #pt.members == 0 then
+		parties[pt.id] = nil
+	else
+		if pt.host == p then pt.host = pt.members[1] end
+		pt.startAt = nil
+	end
+	broadcastParties(pt.loc)
+end
+
+local function createParty(p, loc, diff, max)
+	local st = S[p]
+	if not st or st.run or st.party or type(loc) ~= "string" or st.zone ~= loc then return end
+	if not Config.Locations[loc] or type(diff) ~= "number" or type(max) ~= "number" then return end
+	diff = math.floor(diff)
+	max = math.clamp(math.floor(max), 1, 4)
+	if diff < 1 or diff > #Config.Difficulties or diff > (D[p].unlocked[loc] or 1) then
+		toast(p, "That difficulty is locked!", "ff6060", 2.5)
+		return
+	end
+	partySeq = partySeq + 1
+	local pt = { id = partySeq, host = p, loc = loc, diff = diff, max = max, members = { p } }
+	parties[pt.id] = pt
+	st.party = pt
+	broadcastParties(loc)
+	if max == 1 then
+		toast(p, "Starting solo run...", "ffffff", 1.5)
+		task.delay(1.2, function()
+			if parties[pt.id] then startRun(pt) end
+		end)
+	end
+end
+
+local function joinParty(p, id)
+	local st = S[p]
+	if not st or st.run or st.party or type(id) ~= "number" then return end
+	local pt = parties[id]
+	if not pt or st.zone ~= pt.loc or #pt.members >= pt.max then return end
+	if pt.diff > (D[p].unlocked[pt.loc] or 1) then
+		toast(p, "You haven't unlocked that difficulty yet!", "ff6060", 2.5)
+		return
+	end
+	table.insert(pt.members, p)
+	st.party = pt
+	if #pt.members >= pt.max then
+		local t = Workspace:GetServerTimeNow() + 5
+		pt.startAt = t
+		task.delay(5, function()
+			if parties[pt.id] and pt.startAt == t then startRun(pt) end
+		end)
+	end
+	broadcastParties(pt.loc)
+end
+
+-- ============================================================ RUNS
+local function pickLevel(cfg, wave, def)
+	local span = cfg.maxLvl - cfg.minLvl
+	local center = cfg.minLvl + span * ((wave - 1) * 0.35 + 0.15)
+	local lvl = math.floor(center + (math.random() * 2 - 1) * 1.3 + 0.5)
+	return math.clamp(lvl, math.max(cfg.minLvl, def.minLvl), math.min(cfg.maxLvl, def.maxLvl))
+end
+
+local function buildQueue(run, wave)
+	local cfg = run.cfg
+	local pool, tw = {}, 0
+	for _, def in ipairs(cfg.enemies) do
+		if def.minWave <= wave then
+			table.insert(pool, def)
+			tw = tw + def.weight
+		end
+	end
+	local q = {}
+	if wave == 3 then
+		table.insert(q, { def = cfg.boss, lvl = cfg.boss.maxLvl, boss = true })
+	end
+	for _ = 1, run.waveCounts[wave] do
+		local r = math.random() * tw
+		local pick = pool[1]
+		for _, def in ipairs(pool) do
+			r = r - def.weight
+			if r <= 0 then pick = def break end
+		end
+		table.insert(q, { def = pick, lvl = pickLevel(cfg, wave, pick) })
+	end
+	return q
+end
+
+local function schedule(run, t, fn)
+	table.insert(run.events, { t = t, fn = fn })
+end
+
+local function buildEnemyGui(e, root)
+	local boss = e.boss
+	local g = Instance.new("BillboardGui")
+	g.Size = boss and UDim2.fromOffset(300, 46) or UDim2.fromOffset(120, 34)
+	g.StudsOffsetWorldSpace = Vector3.new(0, 0, -(e.r + (boss and 3.2 or 2.2)))
+	g.AlwaysOnTop = true
+	g.LightInfluence = 0
+	g.MaxDistance = 400
+	g.Adornee = root
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, 0, 0, boss and 24 or 16)
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = boss and 20 or 13
+	title.Text = "Lv." .. e.lvl .. " " .. e.def.name
+	title.TextColor3 = boss and Color3.fromRGB(255, 200, 70) or Color3.fromRGB(255, 255, 255)
+	title.TextStrokeTransparency = 0.2
+	title.Parent = g
+	local bar = Instance.new("Frame")
+	bar.Position = UDim2.new(0.08, 0, 0, boss and 26 or 17)
+	bar.Size = UDim2.new(0.84, 0, 0, boss and 14 or 8)
+	bar.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+	bar.BorderSizePixel = 0
+	bar.Parent = g
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = boss and Color3.fromRGB(230, 50, 50) or Color3.fromRGB(220, 70, 70)
+	fill.BorderSizePixel = 0
+	fill.Parent = bar
+	g.Parent = root
+	e.fill = fill
+end
+
+local function spawnEnemy(run, def, lvl, x, z)
+	local dc = run.dcfg
+	local n = #run.players
+	local boss = def.boss ~= nil
+	local hpMul = (1 + 0.22 * (lvl - 1)) * dc.hp * (1 + (boss and 0.6 or 0.35) * (n - 1))
+	local dmgMul = boss and dc.dmg or ((1 + 0.12 * (lvl - 1)) * dc.dmg)
+	local e = {
+		def = def, lvl = lvl, x = x, z = z, r = def.r, boss = boss,
+		maxHp = math.floor(def.hp * hpMul), dmg = def.dmg * dmgMul, speed = def.speed,
+		nextAtk = os.clock() + 1, fx = 0, fz = -1,
+	}
+	e.hp = e.maxHp
+	local model = Instance.new("Model")
+	model.Name = def.name
+	local root = Instance.new("Part")
+	root.Name = "Root"
+	root.Size = Vector3.new(1, 1, 1)
+	root.Transparency = 1
+	root.Anchored = true
+	root.CanCollide = false
+	root.CanQuery = false
+	root.CanTouch = false
+	root.CastShadow = false
+	root.CFrame = CFrame.new(x, 0.2, z)
+	root.Parent = model
+	model.PrimaryPart = root
+	e.weapon = Sprites.enemy(def, root, model)
+	e.model, e.root = model, root
+	buildEnemyGui(e, root)
+	if boss then
+		e.nextRock = os.clock() + 3
+		e.nextSlam = os.clock() + 4
+		e.nextSweep = os.clock() + 3
+	end
+	model.Parent = run.enemyFolder
+	table.insert(run.enemies, e)
+	if boss then run.boss = e end
+	return e
+end
+
+local function pickSpawn(run)
+	local info = run.info
+	local half = info.half
+	local first
+	for _ = 1, 14 do
+		local side = math.random(1, 3)
+		local x, z
+		if side == 1 then
+			x = info.ox + (math.random() * 2 - 1) * (half - 8)
+			z = -half + 8
+		elseif side == 2 then
+			x = info.ox - half + 8
+			z = (math.random() * 2 - 1) * (half - 12)
+		else
+			x = info.ox + half - 8
+			z = (math.random() * 2 - 1) * (half - 12)
+		end
+		first = first or { x, z }
+		local ok = true
+		for _, o in ipairs(info.obstacles) do
+			local dx, dz = x - o.x, z - o.z
+			if dx * dx + dz * dz < (o.r + 3) * (o.r + 3) then ok = false break end
+		end
+		if ok then
+			for _, t in ipairs(run.targets) do
+				local dx, dz = x - t.x, z - t.z
+				if dx * dx + dz * dz < 1225 then ok = false break end
+			end
+		end
+		if ok then return x, z end
+	end
+	return first[1], first[2]
+end
+
+local function moveEnemy(run, e, dx, dz)
+	local nx, nz = e.x + dx, e.z + dz
+	local info = run.info
+	local collided = false
+	for _, o in ipairs(info.obstacles) do
+		local ddx, ddz = nx - o.x, nz - o.z
+		local minD = o.r + e.r * 0.7
+		local d2 = ddx * ddx + ddz * ddz
+		if d2 < minD * minD then
+			local d = math.sqrt(d2)
+			if d < 0.01 then d = 0.01 ddx = 1 end
+			nx = o.x + ddx / d * minD
+			nz = o.z + ddz / d * minD
+			-- slide around the obstacle
+			local len = math.sqrt(dx * dx + dz * dz)
+			nx = nx + (-ddz / d) * (e.side or 1) * len * 0.8
+			nz = nz + (ddx / d) * (e.side or 1) * len * 0.8
+			collided = true
+		end
+	end
+	local lim = info.half - e.r - 1
+	e.x = math.clamp(nx, info.ox - lim, info.ox + lim)
+	e.z = math.clamp(nz, -lim, lim)
+	return collided
+end
+
+local function areaDamage(run, x, z, r, dmg)
+	for _, p in ipairs(run.players) do
+		local _, h, hrp = getChar(p)
+		if h and h.Health > 0 then
+			local dx, dz = hrp.Position.X - x, hrp.Position.Z - z
+			if dx * dx + dz * dz <= (r + 0.8) * (r + 0.8) then
+				damagePlayer(p, dmg)
+			end
+		end
+	end
+end
+
+local function throwRock(run, e, tx, tz, dur, radius, dmg)
+	runFx(run, "Tele", tx, tz, radius, dur)
+	runFx(run, "Rock", e.x, e.z, tx, tz, dur)
+	schedule(run, os.clock() + dur, function()
+		areaDamage(run, tx, tz, radius, dmg)
+		runFx(run, "Boom", tx, tz, radius)
+	end)
+end
+
+local function swingBossSword(e)
+	local w = e.weapon
+	if not w then return end
+	task.spawn(function()
+		local t0 = os.clock()
+		while w.weld.Parent do
+			local t = os.clock() - t0
+			if t > 0.9 then break end
+			local a
+			if t < 0.45 then
+				a = -0.9 * (t / 0.45)
+			else
+				a = -0.9 + ((t - 0.45) / 0.4) * (math.pi * 2 + 0.9)
+			end
+			w.weld.C0 = CFrame.Angles(0, a, 0) * w.base
+			task.wait()
+		end
+		if w.weld.Parent then w.weld.C0 = w.base end
+	end)
+end
+
+local function stepBoss(run, e, dist, nx, nz, dt, now)
+	local def = e.def
+	local pct = e.hp / e.maxHp
+	if e.busyUntil and now < e.busyUntil then return end
+	local step = e.speed * dt
+	if def.boss == "titan" then
+		if now >= e.nextRock then
+			e.nextRock = now + (pct < 0.5 and 3.0 or 4.5)
+			local n = pct < 0.5 and 3 or 2
+			for _ = 1, n do
+				local t = run.targets[math.random(#run.targets)]
+				throwRock(run, e, t.x + (math.random() - 0.5) * 10, t.z + (math.random() - 0.5) * 10, 1.4, def.rockR, e.dmg * 0.9)
+			end
+			e.busyUntil = now + 0.6
+			return
+		end
+		if dist < e.r + 6 and now >= e.nextSlam then
+			e.nextSlam = now + 3.5
+			local sx, sz, rad = e.x, e.z, e.r + 7
+			runFx(run, "Tele", sx, sz, rad, 0.9)
+			schedule(run, now + 0.9, function()
+				areaDamage(run, sx, sz, rad, e.dmg * 1.4)
+				runFx(run, "Boom", sx, sz, rad)
+			end)
+			e.busyUntil = now + 1.1
+			return
+		end
+	else
+		if dist < e.r + 9 and now >= e.nextSweep then
+			e.nextSweep = now + (pct < 0.5 and 2.4 or 3.2)
+			local sx, sz, rad = e.x, e.z, e.r + 9
+			runFx(run, "Tele", sx, sz, rad, 0.8)
+			swingBossSword(e)
+			schedule(run, now + 0.8, function()
+				areaDamage(run, sx, sz, rad, e.dmg)
+				runFx(run, "Boom", sx, sz, rad * 0.8)
+			end)
+			e.busyUntil = now + 1.0
+			return
+		end
+	end
+	if dist > e.r + 1.5 then
+		moveEnemy(run, e, nx * step, nz * step)
+	end
+end
+
+local function stepEnemy(run, e, dt, now)
+	local targets = run.targets
+	if #targets == 0 then return end
+	local best, bd = nil, math.huge
+	for _, t in ipairs(targets) do
+		local dx, dz = t.x - e.x, t.z - e.z
+		local d2 = dx * dx + dz * dz
+		if d2 < bd then bd = d2 best = t end
+	end
+	local dist = math.sqrt(bd)
+	local nx, nz = 0, -1
+	if dist > 0.001 then nx, nz = (best.x - e.x) / dist, (best.z - e.z) / dist end
+	e.fx, e.fz = nx, nz
+	if e.boss then
+		stepBoss(run, e, dist, nx, nz, dt, now)
+		return
+	end
+	local def = e.def
+	local step = e.speed * dt
+	if def.ranged then
+		if dist > def.keep + 4 then
+			moveEnemy(run, e, nx * step, nz * step)
+		elseif dist < def.keep - 6 then
+			moveEnemy(run, e, -nx * step * 0.8, -nz * step * 0.8)
+		end
+		if dist <= def.shootRange and now >= e.nextAtk then
+			e.nextAtk = now + def.atkCd
+			spawnProj(run, { kind = def.projKind, x = e.x, z = e.z, dx = nx, dz = nz, speed = def.projSpeed, range = def.shootRange + 8, dmg = e.dmg, enemy = true, hitR = 0.9 })
+		end
+	else
+		if dist > e.r + 2.2 then
+			moveEnemy(run, e, nx * step, nz * step)
+		elseif now >= e.nextAtk then
+			e.nextAtk = now + def.atkCd
+			damagePlayer(best.p, e.dmg)
+		end
+	end
+end
+
+local projSeq = 0
+spawnProj = function(run, t)
+	projSeq = projSeq + 1
+	t.id = projSeq
+	t.left = t.range
+	table.insert(run.projs, t)
+	runFx(run, "Proj", t.id, t.kind, t.x, t.z, t.dx, t.dz, t.speed, t.range)
+end
+
+local function enemiesInCircle(run, x, z, r)
+	local out = {}
+	for _, e in ipairs(run.enemies) do
+		local dx, dz = e.x - x, e.z - z
+		local m = r + e.r
+		if dx * dx + dz * dz <= m * m then table.insert(out, e) end
+	end
+	return out
+end
+
+local function stepProjectiles(run, dt)
+	for i = #run.projs, 1, -1 do
+		local pr = run.projs[i]
+		local step = pr.speed * dt
+		pr.x = pr.x + pr.dx * step
+		pr.z = pr.z + pr.dz * step
+		pr.left = pr.left - step
+		local ended, explode, hit = false, false, nil
+		if pr.enemy then
+			for _, t in ipairs(run.targets) do
+				local dx, dz = t.x - pr.x, t.z - pr.z
+				if dx * dx + dz * dz < (pr.hitR + 1.2) * (pr.hitR + 1.2) then
+					damagePlayer(t.p, pr.dmg)
+					ended = true
+					break
+				end
+			end
+		else
+			for _, e in ipairs(run.enemies) do
+				local dx, dz = e.x - pr.x, e.z - pr.z
+				local m = e.r + pr.hitR
+				if dx * dx + dz * dz < m * m then hit = e break end
+			end
+			if hit then
+				ended = true
+				if pr.radius then
+					explode = true
+				else
+					damageEnemy(run, hit, pr.dmg, pr.owner, pr.crit)
+					if not hit.dead and not hit.boss then moveEnemy(run, hit, pr.dx * 0.8, pr.dz * 0.8) end
+				end
+			end
+		end
+		if not ended and pr.left <= 0 then
+			ended = true
+			if pr.radius then explode = true end
+		end
+		if ended then
+			table.remove(run.projs, i)
+			if explode then
+				local victims = enemiesInCircle(run, pr.x, pr.z, pr.radius)
+				for _, e in ipairs(victims) do
+					damageEnemy(run, e, pr.dmg, pr.owner, pr.crit)
+				end
+			end
+			runFx(run, "ProjEnd", pr.id, pr.x, pr.z, pr.kind, pr.radius or 0)
+		end
+	end
+end
+
+-- combat -----------------------------------------------------
+damagePlayer = function(p, amount)
+	local st = S[p]
+	if not st or st.dead then return end
+	if st.invUntil and st.invUntil > os.clock() then return end
+	local _, h, hrp = getChar(p)
+	if not h or h.Health <= 0 then return end
+	amount = math.max(1, math.floor(amount))
+	h.Health = h.Health - amount
+	ToClient:FireClient(p, "Hurt")
+	if st.run then
+		runFx(st.run, "Dmg", hrp.Position.X, hrp.Position.Z, amount, false, true)
+	end
+end
+
+damageEnemy = function(run, e, amount, killer, crit)
+	if e.dead then return end
+	amount = math.max(1, math.floor(amount))
+	e.hp = e.hp - amount
+	runFx(run, "Dmg", e.x, e.z, amount, crit and true or false, false)
+	e.fill.Size = UDim2.fromScale(math.clamp(e.hp / e.maxHp, 0, 1), 1)
+	if e.hp <= 0 then killEnemy(run, e, killer) end
+end
+
+killEnemy = function(run, e, killer)
+	if e.dead then return end
+	e.dead = true
+	local idx = table.find(run.enemies, e)
+	if idx then table.remove(run.enemies, idx) end
+	runFx(run, "Death", e.x, e.z, e.r, e.def.kind)
+	e.model:Destroy()
+	if killer and D[killer] and run.gain[killer] then
+		local mult = e.boss and 12 or 1
+		local xp = math.floor(e.lvl * 2 * run.dcfg.reward * mult)
+		local coins = math.max(1, math.floor(e.lvl * run.dcfg.reward * 0.5 * mult))
+		D[killer].coins = D[killer].coins + coins
+		local g = run.gain[killer]
+		g.xp = g.xp + xp
+		g.coins = g.coins + coins
+		g.kills = g.kills + 1
+		grantXP(killer, xp)
+	end
+end
+
+local function playerAttack(p, aim)
+	local st = S[p]
+	local run = st and st.run
+	if not run or run.over or st.dead then return end
+	local d = D[p]
+	local cls = d.class
+	if not cls then return end
+	local c, h, hrp = getChar(p)
+	if not c or h.Health <= 0 then return end
+	local now = os.clock()
+	if now < (st.nextAtk or 0) - 0.03 then return end
+	local ws = Config.weaponStats(cls, d.upg[cls])
+	local cdef = Config.Classes[cls]
+	st.nextAtk = now + ws.cooldown
+	local crit = math.random() < ws.crit
+	local dmg = ws.damage * (0.92 + math.random() * 0.16) * (crit and 2 or 1)
+	local px, pz = hrp.Position.X, hrp.Position.Z
+	local dx, dz = aim.X - px, aim.Z - pz
+	local m = math.sqrt(dx * dx + dz * dz)
+	if m < 0.01 then
+		local lv = hrp.CFrame.LookVector
+		dx, dz = lv.X, lv.Z
+		m = math.sqrt(dx * dx + dz * dz)
+		if m < 0.01 then dx, dz, m = 0, -1, 1 end
+	end
+	dx, dz = dx / m, dz / m
+	swingWeapon(st, cls)
+	if cdef.kind == "melee" then
+		runFx(run, "Slash", px, pz, dx, dz, ws.range, cdef.arc, crit)
+		local cosA = math.cos(math.rad(cdef.arc) / 2)
+		local hits = {}
+		for _, e in ipairs(run.enemies) do
+			local ex, ez = e.x - px, e.z - pz
+			local dist = math.sqrt(ex * ex + ez * ez)
+			if dist <= ws.range + e.r then
+				local dot = dist < 0.5 and 1 or (ex * dx + ez * dz) / dist
+				if dot >= cosA or dist < e.r + 1.2 then table.insert(hits, e) end
+			end
+		end
+		for _, e in ipairs(hits) do
+			damageEnemy(run, e, dmg, p, crit)
+			if not e.dead and not e.boss then moveEnemy(run, e, dx * 1.6, dz * 1.6) end
+		end
+	elseif cdef.kind == "arrow" then
+		spawnProj(run, { kind = "arrow", x = px + dx * 2, z = pz + dz * 2, dx = dx, dz = dz, speed = cdef.projSpeed, range = ws.range, dmg = dmg, owner = p, crit = crit, hitR = 0.8 })
+	else
+		spawnProj(run, { kind = "fireball", x = px + dx * 2.5, z = pz + dz * 2.5, dx = dx, dz = dz, speed = cdef.projSpeed, range = ws.range, dmg = dmg, owner = p, crit = crit, hitR = 1.3, radius = cdef.radius })
+	end
+end
+
+-- run update -------------------------------------------------
+local function updateRun(run, dt, now)
+	local targets = {}
+	for _, p in ipairs(run.players) do
+		local st = S[p]
+		if st and not st.dead then
+			local _, h, hrp = getChar(p)
+			if h and h.Health > 0 then
+				table.insert(targets, { p = p, x = hrp.Position.X, z = hrp.Position.Z })
+			end
+		end
+	end
+	run.targets = targets
+
+	for i = #run.events, 1, -1 do
+		local ev = run.events[i]
+		if ev and now >= ev.t then
+			table.remove(run.events, i)
+			local ok, err = pcall(ev.fn)
+			if not ok then warn(err) end
+		end
+	end
+
+	if #run.queue > 0 and now >= run.nextSpawn and #run.enemies < run.cap then
+		local item = table.remove(run.queue, 1)
+		local x, z
+		if item.boss then
+			x, z = run.info.ox, -run.info.half + 22
+		else
+			x, z = pickSpawn(run)
+		end
+		spawnEnemy(run, item.def, item.lvl, x, z)
+		run.nextSpawn = now + 0.45
+	end
+
+	local list = run.enemies
+	for _, e in ipairs(list) do
+		stepEnemy(run, e, dt, now)
+	end
+	for i = 1, #list do
+		for j = i + 1, #list do
+			local a, b = list[i], list[j]
+			local dx, dz = b.x - a.x, b.z - a.z
+			local m = (a.r + b.r) * 0.85
+			local d2 = dx * dx + dz * dz
+			if d2 < m * m and d2 > 0.0001 then
+				local d = math.sqrt(d2)
+				local push = (m - d) * 0.5
+				local ux, uz = dx / d, dz / d
+				if not a.boss then a.x = a.x - ux * push a.z = a.z - uz * push end
+				if not b.boss then b.x = b.x + ux * push b.z = b.z + uz * push end
+			end
+		end
+	end
+	for _, e in ipairs(list) do
+		if e.root and e.root.Parent then
+			local pos = Vector3.new(e.x, 0.2, e.z)
+			e.root.CFrame = CFrame.lookAt(pos, pos + Vector3.new(e.fx, 0, e.fz))
+		end
+	end
+
+	stepProjectiles(run, dt)
+
+	if now >= run.nextHud then
+		run.nextHud = now + 0.4
+		local boss = nil
+		if run.boss and not run.boss.dead then
+			boss = { name = run.boss.def.name, hp = run.boss.hp, max = run.boss.maxHp }
+		end
+		runFx(run, "Run", { wave = run.wave, waves = 3, left = #run.enemies + #run.queue, boss = boss, loc = run.cfg.name, diff = run.dcfg.name })
+	end
+end
+
+local function reviveDead(run)
+	for _, p in ipairs(run.players) do
+		local st = S[p]
+		if st and st.dead then
+			st.dead = false
+			task.spawn(function()
+				p:LoadCharacter()
+			end)
+		end
+	end
+end
+
+local function healAll(run, frac)
+	for _, p in ipairs(run.players) do
+		local _, h = getChar(p)
+		if h and h.Health > 0 then
+			h.Health = math.min(h.MaxHealth, h.Health + h.MaxHealth * frac)
+		end
+	end
+end
+
+local function runMain(run)
+	task.wait(3)
+	for w = 1, 3 do
+		if run.over then return end
+		run.wave = w
+		run.queue = buildQueue(run, w)
+		run.nextSpawn = os.clock() + 1
+		if w == 3 then
+			runToast(run, "FINAL WAVE 3 / 3  -  BOSS!", "ff4d4d", 4)
+		else
+			runToast(run, "WAVE " .. w .. " / 3", "ffd84a", 3)
+		end
+		while not run.over do
+			task.wait(0.3)
+			if #run.queue == 0 and #run.enemies == 0 then break end
+		end
+		if run.over then return end
+		if w < 3 then
+			runToast(run, "WAVE " .. w .. " CLEARED!", "6bd66b", 3)
+			reviveDead(run)
+			healAll(run, 0.5)
+			task.wait(7)
+		end
+	end
+	if not run.over then finishRun(run, true) end
+end
+
+local function createRun(locId, diff, members)
+	local cfg = Config.Locations[locId]
+	local dcfg = Config.Difficulties[diff]
+	local slot = 1
+	while slots[slot] do slot = slot + 1 end
+	local ox = 3000 + slot * 400
+	local folder = Instance.new("Folder")
+	folder.Name = "Run" .. slot
+	folder.Parent = Workspace
+	local info = MapBuilder.arena(locId, ox, folder, os.time() + slot * 17)
+	local ef = Instance.new("Folder")
+	ef.Name = "Enemies"
+	ef.Parent = folder
+	local total = math.clamp(50 + (#members - 1) * 8 + dcfg.extra, 50, 100)
+	local w1 = math.floor(total * 0.3)
+	local w2 = math.floor(total * 0.35)
+	local run = {
+		cfg = cfg, dcfg = dcfg, diff = diff, slot = slot, folder = folder, enemyFolder = ef, info = info,
+		players = {}, enemies = {}, projs = {}, queue = {}, events = {}, targets = {}, gain = {},
+		wave = 0, total = total, waveCounts = { w1, w2, total - w1 - w2 },
+		cap = math.min(36, 18 + 6 * #members), nextSpawn = 0, nextHud = 0, over = false,
+	}
+	slots[slot] = run
+	table.insert(runs, run)
+	for _, p in ipairs(members) do
+		local st = S[p]
+		st.run = run
+		st.zone = nil
+		st.party = nil
+		st.dead = false
+		table.insert(run.players, p)
+		run.gain[p] = { xp = 0, coins = 0, kills = 0 }
+		p:SetAttribute("InRun", true)
+		ToClient:FireClient(p, "Zone", nil)
+		ToClient:FireClient(p, "Env", locId)
+		local c = p.Character
+		if c then
+			c:PivotTo(CFrame.new(info.spawn + Vector3.new(math.random(-8, 8), 0, math.random(-4, 4))))
+			applyStats(p, true)
+		end
+		toast(p, cfg.name .. "  -  " .. dcfg.name, dcfg.color, 3.5)
+	end
+	task.spawn(runMain, run)
+end
+
+startRun = function(pt)
+	if not parties[pt.id] then return end
+	parties[pt.id] = nil
+	local members = {}
+	for _, p in ipairs(pt.members) do
+		local st = S[p]
+		if st then
+			st.party = nil
+			local c, h = getChar(p)
+			if c and h.Health > 0 and p.Parent then table.insert(members, p) end
+		end
+	end
+	if #members > 0 then
+		createRun(pt.loc, pt.diff, members)
+	end
+	broadcastParties(pt.loc)
+end
+
+returnToLobby = function(p)
+	local st = S[p]
+	if not st then return end
+	local run = st.run
+	st.run = nil
+	st.zone = nil
+	st.dead = false
+	p:SetAttribute("InRun", false)
+	if run then
+		local i = table.find(run.players, p)
+		if i then table.remove(run.players, i) end
+	end
+	ToClient:FireClient(p, "Env", "lobby")
+	ToClient:FireClient(p, "RunEnd")
+	local c, h, hrp = getChar(p)
+	if c and h.Health > 0 and not hrp.Anchored then
+		applyStats(p, true)
+		c:PivotTo(CFrame.new(lobbySpawnPos()))
+	else
+		task.spawn(function()
+			p:LoadCharacter()
+		end)
+	end
+	pushData(p)
+end
+
+endRun = function(run)
+	if run.destroyed then return end
+	run.destroyed = true
+	run.over = true
+	for i = #run.players, 1, -1 do
+		returnToLobby(run.players[i])
+	end
+	if run.folder then run.folder:Destroy() end
+	if slots[run.slot] == run then slots[run.slot] = nil end
+end
+
+finishRun = function(run, won)
+	if run.over then return end
+	run.over = true
+	local cfg, dc = run.cfg, run.dcfg
+	for _, p in ipairs(run.players) do
+		local d = D[p]
+		if d then
+			local xp, coins, unlockedName = 0, 0, nil
+			if won then
+				xp = math.floor(cfg.xp * dc.reward)
+				coins = math.floor(cfg.coins * dc.reward)
+				d.coins = d.coins + coins
+				d.wins = (d.wins or 0) + 1
+				if run.diff == (d.unlocked[cfg.id] or 1) and run.diff < #Config.Difficulties then
+					d.unlocked[cfg.id] = run.diff + 1
+					unlockedName = Config.Difficulties[run.diff + 1].name
+				end
+				grantXP(p, xp)
+			end
+			local g = run.gain[p]
+			ToClient:FireClient(p, "Result", {
+				won = won, xp = xp + g.xp, coins = coins + g.coins, kills = g.kills, unlocked = unlockedName,
+				level = d.level, loc = cfg.name, diff = dc.name,
+			})
+			pushData(p)
+			task.spawn(saveData, p)
+		end
+	end
+	task.delay(won and 20 or 10, function()
+		endRun(run)
+	end)
+end
+
+checkDefeat = function(run)
+	if run.over then return end
+	for _, p in ipairs(run.players) do
+		local st = S[p]
+		if st and not st.dead then return end
+	end
+	finishRun(run, false)
+end
+
+onDied = function(p, char)
+	local st = S[p]
+	if not st then return end
+	st.dead = true
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if hrp then hrp.Anchored = true end
+	local sp = char:FindFirstChild("Sprite")
+	if sp then
+		for _, d in ipairs(sp:GetDescendants()) do
+			if d:IsA("BasePart") then d.Transparency = math.max(d.Transparency, 0.7) end
+		end
+	end
+	ToClient:FireClient(p, "Down")
+	if st.run then
+		checkDefeat(st.run)
+	else
+		task.delay(2, function()
+			if S[p] and S[p].dead then
+				S[p].dead = false
+				p:LoadCharacter()
+			end
+		end)
+	end
+end
+
+-- ============================================================ REMOTES
+ToServer.OnServerEvent:Connect(function(p, action, a, b, c)
+	local st = S[p]
+	if not st or type(action) ~= "string" then return end
+	if action == "Attack" then
+		if typeof(a) == "Vector3" then playerAttack(p, a) end
+	elseif action == "Dash" then
+		local now = os.clock()
+		if now < (st.dashAt or 0) or st.dead then return end
+		st.dashAt = now + Config.DashCooldown - 0.2
+		st.invUntil = now + 0.3
+		local _, _, hrp = getChar(p)
+		if hrp then
+			ToClient:FireAllClients("DashFx", hrp.Position.X, hrp.Position.Z)
+		end
+	elseif action == "CreateParty" then
+		createParty(p, a, b, c)
+	elseif action == "JoinParty" then
+		joinParty(p, a)
+	elseif action == "LeaveParty" then
+		leaveParty(p)
+	elseif action == "StartParty" then
+		local pt = st.party
+		if pt and pt.host == p then startRun(pt) end
+	elseif action == "Upgrade" then
+		if st.zone ~= "upgrade" or type(a) ~= "string" or type(b) ~= "string" then return end
+		local d = D[p]
+		if not Config.Classes[a] then return end
+		local def
+		for _, s in ipairs(Config.Stats) do
+			if s.id == b then def = s end
+		end
+		if not def then return end
+		d.upg[a] = d.upg[a] or {}
+		local lv = d.upg[a][b] or 0
+		if lv >= def.max or d.points < 1 then return end
+		d.points = d.points - 1
+		d.upg[a][b] = lv + 1
+		pushData(p)
+	elseif action == "BuyVit" then
+		local d = D[p]
+		if st.zone ~= "upgrade" or d.vit >= Config.VitMax then return end
+		local cost = Config.vitCost(d.vit)
+		if d.coins < cost then return end
+		d.coins = d.coins - cost
+		d.vit = d.vit + 1
+		local _, h = getChar(p)
+		applyStats(p, false)
+		if h then h.Health = math.min(h.MaxHealth, h.Health + 12) end
+		pushData(p)
+	elseif action == "BuySwift" then
+		local d = D[p]
+		if st.zone ~= "upgrade" or d.swift >= Config.SwiftMax then return end
+		local cost = Config.swiftCost(d.swift)
+		if d.coins < cost then return end
+		d.coins = d.coins - cost
+		d.swift = d.swift + 1
+		applyStats(p, false)
+		pushData(p)
+	elseif action == "ReturnLobby" then
+		if st.run and st.run.over then returnToLobby(p) end
+	end
+end)
+
+-- ============================================================ PLAYERS
+local function onPlayer(p)
+	S[p] = { zone = nil, run = nil, party = nil, nextAtk = 0, dashAt = 0, invUntil = 0, dead = false }
+	D[p] = loadData(p)
+	p:SetAttribute("InRun", false)
+	pushData(p)
+	p.CharacterAdded:Connect(function(c)
+		task.spawn(setupCharacter, p, c)
+	end)
+	p:LoadCharacter()
+end
+
+Players.PlayerAdded:Connect(onPlayer)
+for _, p in ipairs(Players:GetPlayers()) do
+	task.spawn(onPlayer, p)
+end
+
+Players.PlayerRemoving:Connect(function(p)
+	local st = S[p]
+	if st then
+		leaveParty(p)
+		local run = st.run
+		if run then
+			local i = table.find(run.players, p)
+			if i then table.remove(run.players, i) end
+			if #run.players == 0 then
+				endRun(run)
+			else
+				checkDefeat(run)
+			end
+		end
+	end
+	saveData(p)
+	S[p] = nil
+	D[p] = nil
+end)
+
+game:BindToClose(function()
+	for p in pairs(D) do
+		saveData(p)
+	end
+end)
+
+-- zone detection (lobby)
+task.spawn(function()
+	while true do
+		task.wait(0.15)
+		for p, st in pairs(S) do
+			if not st.run then
+				local zone
+				local _, h, hrp = getChar(p)
+				if hrp and h.Health > 0 and not st.dead then
+					local pos = hrp.Position
+					for _, zn in ipairs(Config.Lobby.zones) do
+						local dx, dz = pos.X - zn.x, pos.Z - zn.z
+						if dx * dx + dz * dz <= zn.r * zn.r then
+							zone = zn
+							break
+						end
+					end
+				end
+				local zid = zone and zone.id or nil
+				if zid ~= st.zone then
+					st.zone = zid
+					if st.party and st.party.loc ~= zid then leaveParty(p) end
+					ToClient:FireClient(p, "Zone", zid)
+					if zid and Config.Locations[zid] then sendParties(p, zid) end
+					if zone and zone.kind == "class" and D[p].class ~= zone.class then
+						chooseClass(p, zone.class)
+					end
+				end
+			end
+		end
+	end
+end)
+
+-- autosave
+task.spawn(function()
+	while true do
+		task.wait(90)
+		for p in pairs(D) do
+			task.spawn(saveData, p)
+		end
+	end
+end)
+
+-- main simulation loop
+RunService.Heartbeat:Connect(function(dt)
+	local now = os.clock()
+	dt = math.min(dt, 0.1)
+	for i = #runs, 1, -1 do
+		local run = runs[i]
+		if run.destroyed then
+			table.remove(runs, i)
+		elseif not run.over then
+			local ok, err = pcall(updateRun, run, dt, now)
+			if not ok then warn("[Run error] " .. tostring(err)) end
+		end
+	end
+end)
+
+print("[TopDownHeroes] server ready")
+]]></ProtectedString>
+</Properties>
+<Item class="ModuleScript" referent="RBX6">
+<Properties>
+<string name="Name">Sprites</string>
+<ProtectedString name="Source"><![CDATA[-- Flat "2D sprite" builder: everything is made from thin discs / blocks seen from above
+local Sprites = {}
+Sprites.__index = Sprites
+
+local BLACK = Color3.fromRGB(0, 0, 0)
+local NEON = Enum.Material.Neon
+local FABRIC = Enum.Material.Fabric
+local METAL = Enum.Material.Metal
+local WOOD = Enum.Material.Wood
+local SLATE = Enum.Material.Slate
+
+local function mkPart(parent, shape, size, cf, color, mat, trans)
+	local p = Instance.new("Part")
+	p.Shape = shape
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color
+	p.Material = mat or Enum.Material.SmoothPlastic
+	p.Transparency = trans or 0
+	p.Anchored = false
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.Massless = true
+	p.CastShadow = false
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Parent = parent
+	return p
+end
+
+local function weld(a, b)
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = a
+	w.Part1 = b
+	w.Parent = b
+	return w
+end
+
+function Sprites.new(root, parent, baseY, scale)
+	return setmetatable({ root = root, parent = parent, baseY = baseY or 0, k = scale or 1 }, Sprites)
+end
+
+-- flat circle. x/z offset in local space (forward = -z), y = layer height
+function Sprites:disc(d, color, x, z, y, mat, trans, thick)
+	local k = self.k
+	local cf = self.root.CFrame * CFrame.new(x * k, self.baseY + y * k, z * k) * CFrame.Angles(0, 0, math.pi / 2)
+	local p = mkPart(self.parent, Enum.PartType.Cylinder, Vector3.new((thick or 0.3) * k, d * k, d * k), cf, color, mat, trans)
+	weld(self.root, p)
+	return p
+end
+
+function Sprites:block(sx, sz, color, x, z, y, rot, mat, trans, sy)
+	local k = self.k
+	local cf = self.root.CFrame * CFrame.new(x * k, self.baseY + y * k, z * k) * CFrame.Angles(0, rot or 0, 0)
+	local p = mkPart(self.parent, Enum.PartType.Block, Vector3.new(sx * k, (sy or 0.3) * k, sz * k), cf, color, mat, trans)
+	weld(self.root, p)
+	return p
+end
+
+function Sprites:light(part, color, range, brightness)
+	local l = Instance.new("PointLight")
+	l.Color = color
+	l.Range = range
+	l.Brightness = brightness or 1
+	l.Shadows = false
+	l.Parent = part
+end
+
+local function radialRot(vx, vz)
+	return math.atan2(vx, vz)
+end
+
+-- ===================== WEAPONS =====================
+-- builds a weapon on an invisible pivot welded to root with an animatable Weld
+function Sprites.weapon(kind, root, parent, handCF, scale, pal)
+	pal = pal or {}
+	local k = scale or 1
+	local pivot = mkPart(parent, Enum.PartType.Block, Vector3.new(0.3, 0.3, 0.3), root.CFrame * handCF, Color3.new(1, 1, 1), nil, 1)
+	local w = Instance.new("Weld")
+	w.Part0 = root
+	w.Part1 = pivot
+	w.C0 = handCF
+	w.Parent = pivot
+	local s = Sprites.new(pivot, parent, 0, k)
+
+	if kind == "Swordsman" then
+		local blade = pal.blade or Color3.fromRGB(205, 215, 230)
+		local light = pal.fuller or Color3.fromRGB(240, 248, 255)
+		local gold = pal.guard or Color3.fromRGB(235, 185, 60)
+		local grip = pal.grip or Color3.fromRGB(95, 60, 35)
+		s:block(0.42, 1.7, grip, 0, 0.25, 0.02, 0, FABRIC, 0, 0.3)
+		s:disc(0.7, gold, 0, 1.15, 0.02, METAL, 0, 0.35)
+		s:block(2.5, 0.5, gold, 0, -0.75, 0.06, 0, METAL, 0, 0.3)
+		s:disc(0.55, pal.gem or Color3.fromRGB(220, 50, 70), 0, -0.75, 0.25, NEON, 0, 0.12)
+		s:block(0.85, 5.2, blade, 0, -3.5, 0.05, 0, METAL, 0, 0.22)
+		s:block(0.3, 4.4, light, 0, -3.5, 0.18, 0, METAL, 0, 0.06)
+		s:block(0.1, 5.1, Color3.fromRGB(255, 255, 255), 0.4, -3.5, 0.17, 0, METAL, 0, 0.06)
+		s:block(0.1, 5.1, Color3.fromRGB(150, 160, 180), -0.4, -3.5, 0.17, 0, METAL, 0, 0.06)
+		s:block(0.6, 0.6, blade, 0, -6.1, 0.05, math.pi / 4, METAL, 0, 0.22)
+	elseif kind == "Archer" then
+		local wood = pal.wood or Color3.fromRGB(128, 82, 42)
+		local R = 3.0
+		local prev
+		for i = -5, 5 do
+			local th = math.rad(i * 15)
+			local pt = Vector2.new(R * math.sin(th), R * (1 - math.cos(th)))
+			if prev then
+				local v = pt - prev
+				local len = v.Magnitude
+				local mid = (pt + prev) / 2
+				s:block(0.42, len + 0.14, wood, mid.X, mid.Y, 0.1, radialRot(v.X, v.Y), WOOD, 0, 0.3)
+			end
+			prev = pt
+		end
+		local tipZ = R * (1 - math.cos(math.rad(75)))
+		local tipX = R * math.sin(math.rad(75))
+		s:disc(0.55, Color3.fromRGB(235, 185, 60), tipX, tipZ, 0.1, METAL, 0, 0.35)
+		s:disc(0.55, Color3.fromRGB(235, 185, 60), -tipX, tipZ, 0.1, METAL, 0, 0.35)
+		s:block(tipX * 2, 0.07, Color3.fromRGB(240, 235, 215), 0, tipZ, 0.1, 0, FABRIC, 0, 0.07)
+		s:block(0.6, 1.2, Color3.fromRGB(70, 45, 30), 0, 0, 0.3, 0, FABRIC, 0, 0.3)
+		-- nocked arrow
+		local aLen = tipZ + 3.3
+		s:block(0.14, aLen, Color3.fromRGB(235, 225, 190), 0, (tipZ - 3.3) / 2, 0.32, 0, WOOD, 0, 0.12)
+		s:block(0.5, 0.5, Color3.fromRGB(190, 200, 215), 0, -3.4, 0.32, math.pi / 4, METAL, 0, 0.12)
+		s:block(0.55, 0.45, Color3.fromRGB(210, 60, 60), 0, tipZ - 0.2, 0.34, 0, FABRIC, 0, 0.08)
+		s:block(0.5, 0.35, Color3.fromRGB(240, 240, 240), 0, tipZ - 0.7, 0.34, 0, FABRIC, 0, 0.08)
+	elseif kind == "Mage" then
+		local wood = pal.wood or Color3.fromRGB(86, 58, 38)
+		local gold = Color3.fromRGB(235, 185, 60)
+		local orbZ = -5.9
+		s:block(0.46, 8.0, wood, 0, -1.6, 0.05, 0, WOOD, 0, 0.3)
+		for _, z in ipairs({ 0.4, -1.4, -3.2 }) do
+			s:block(0.75, 0.32, gold, 0, z, 0.1, 0, METAL, 0, 0.36)
+		end
+		s:disc(0.8, gold, 0, 2.4, 0.05, METAL, 0, 0.35)
+		for i = 0, 3 do
+			local a = math.rad(45 + i * 90)
+			local vx, vz = math.cos(a), math.sin(a)
+			s:block(0.3, 1.5, gold, vx * 1.15, orbZ + vz * 1.15, 0.12, radialRot(vx, vz), METAL, 0, 0.3)
+		end
+		local glow = pal.orb or Color3.fromRGB(120, 190, 255)
+		s:disc(3.0, glow, 0, orbZ, 0.04, NEON, 0.78, 0.1)
+		local o = s:disc(2.1, glow, 0, orbZ, 0.15, NEON, 0.35, 0.4)
+		s:disc(1.1, Color3.fromRGB(235, 248, 255), 0, orbZ, 0.4, NEON, 0, 0.3)
+		s:light(o, glow, 14, 1.2)
+	elseif kind == "Club" then
+		local wood = pal.wood or Color3.fromRGB(100, 68, 40)
+		s:block(0.55, 4.4, wood, 0, -1.4, 0.05, 0, WOOD, 0, 0.35)
+		s:disc(1.9, Color3.fromRGB(80, 55, 35), 0, -4.0, 0.08, WOOD, 0, 0.45)
+		for i = 0, 6 do
+			local a = math.rad(i * 51)
+			local vx, vz = math.cos(a), math.sin(a)
+			s:block(0.3, 0.9, Color3.fromRGB(170, 170, 180), vx * 1.0, -4.0 + vz * 1.0, 0.2, radialRot(vx, vz), METAL, 0, 0.25)
+		end
+	end
+	return { pivot = pivot, weld = w, base = handCF }
+end
+
+-- ===================== PLAYER =====================
+local SKIN = Color3.fromRGB(242, 200, 160)
+
+local HANDS = {
+	Swordsman = CFrame.new(1.9, 0, -0.9) * CFrame.Angles(0, -0.12, 0),
+	Archer = CFrame.new(0, 0, -2.7),
+	Mage = CFrame.new(2.0, 0, -0.5) * CFrame.Angles(0, -0.05, 0),
+}
+
+function Sprites.player(cls, color, root, parent)
+	local base = -2.8
+	local s = Sprites.new(root, parent, base, 1)
+	local torso = color or Color3.fromRGB(120, 120, 130)
+	local dark = Color3.new(torso.R * 0.6, torso.G * 0.6, torso.B * 0.6)
+	local hairC = Color3.fromRGB(70, 45, 28)
+
+	s:disc(4.2, BLACK, 0.2, 0.3, 0.05, nil, 0.6, 0.05)
+	-- boots
+	s:block(0.8, 1.2, Color3.fromRGB(50, 38, 30), -0.6, -0.5, 0.1, 0, nil, 0, 0.3)
+	s:block(0.8, 1.2, Color3.fromRGB(50, 38, 30), 0.6, -0.5, 0.1, 0, nil, 0, 0.3)
+	-- torso
+	s:block(3.0, 1.7, torso, 0, 0.1, 0.5, 0, FABRIC, 0, 0.6)
+	s:block(1.2, 1.75, dark, 0, 0.1, 0.84, 0, FABRIC, 0, 0.1)
+	s:block(3.05, 0.25, Color3.fromRGB(60, 40, 25), 0, 0.55, 0.86, 0, nil, 0, 0.1)
+	-- off hand
+	s:disc(0.85, SKIN, -1.7, -0.7, 0.62)
+	-- head
+	s:disc(1.95, SKIN, 0, -0.05, 1.0, nil, 0, 0.8)
+	s:disc(0.5, SKIN, -1.0, 0, 1.0, nil, 0, 0.5)
+	s:disc(0.5, SKIN, 1.0, 0, 1.0, nil, 0, 0.5)
+	s:disc(0.34, Color3.fromRGB(225, 175, 140), 0, -1.0, 1.0, nil, 0, 0.4)
+
+	local weapon
+	if cls == "Swordsman" then
+		s:disc(1.8, Color3.fromRGB(172, 178, 192), 0, 0.0, 1.5, METAL, 0, 0.4)
+		s:block(0.4, 2.0, Color3.fromRGB(205, 50, 50), 0, 0.15, 1.78, 0, FABRIC, 0, 0.18)
+		s:block(1.3, 0.14, Color3.fromRGB(30, 30, 35), 0, -0.7, 1.72, 0, nil, 0, 0.12)
+		s:disc(1.45, Color3.fromRGB(150, 156, 170), -1.7, 0.15, 0.85, METAL, 0, 0.35)
+		s:disc(1.45, Color3.fromRGB(150, 156, 170), 1.7, 0.15, 0.85, METAL, 0, 0.35)
+		s:disc(0.5, Color3.fromRGB(235, 185, 60), -1.7, 0.15, 1.1, METAL, 0, 0.15)
+		s:disc(0.5, Color3.fromRGB(235, 185, 60), 1.7, 0.15, 1.1, METAL, 0, 0.15)
+		s:disc(0.85, SKIN, 1.9, -0.9, 0.9)
+		weapon = Sprites.weapon("Swordsman", root, parent, HANDS.Swordsman * CFrame.new(0, base + 1.1, 0), 1)
+	elseif cls == "Archer" then
+		s:disc(2.3, Color3.fromRGB(46, 112, 58), 0, 0.15, 1.5, FABRIC, 0, 0.5)
+		s:disc(1.3, Color3.fromRGB(34, 86, 44), 0, 0.7, 1.82, FABRIC, 0, 0.2)
+		s:disc(1.05, SKIN, 0, -0.75, 1.6, nil, 0, 0.3)
+		s:block(0.9, 2.1, Color3.fromRGB(110, 72, 40), 0.8, 1.0, 1.0, 0.25, FABRIC, 0, 0.35)
+		for i = 0, 2 do
+			s:disc(0.32, Color3.fromRGB(215, 60, 60), 0.55 + i * 0.28, 1.8 - i * 0.12, 1.25, FABRIC, 0, 0.1)
+		end
+		s:disc(0.85, SKIN, -0.7, -2.0, 0.9)
+		s:disc(0.85, SKIN, 0.7, -2.0, 0.9)
+		weapon = Sprites.weapon("Archer", root, parent, HANDS.Archer * CFrame.new(0, base + 1.0, 0), 1)
+	elseif cls == "Mage" then
+		local purple = Color3.fromRGB(100, 58, 170)
+		s:disc(3.6, Color3.fromRGB(70, 38, 120), 0, 0.0, 1.45, FABRIC, 0, 0.25)
+		s:disc(2.4, purple, 0, 0.0, 1.7, FABRIC, 0, 0.35)
+		s:disc(1.5, Color3.fromRGB(125, 80, 200), 0, 0.0, 2.0, FABRIC, 0, 0.3)
+		s:disc(0.6, Color3.fromRGB(255, 215, 80), 0, 0.0, 2.25, NEON, 0, 0.2)
+		s:disc(3.45, Color3.fromRGB(255, 215, 80), 0, 0.0, 1.58, NEON, 0.55, 0.05)
+		s:disc(0.85, SKIN, 2.0, -0.5, 0.9)
+		weapon = Sprites.weapon("Mage", root, parent, HANDS.Mage * CFrame.new(0, base + 1.0, 0), 1)
+	else
+		s:disc(1.85, hairC, 0, 0.25, 1.5, nil, 0, 0.3)
+	end
+	if cls == nil then
+		s:disc(1.85, hairC, 0, 0.25, 1.5, nil, 0, 0.3)
+	end
+	return weapon
+end
+
+-- ===================== ENEMIES =====================
+local function shadow(s, r)
+	s:disc(r * 2.7, BLACK, 0.1 * r, 0.18 * r, 0.04, nil, 0.6, 0.05)
+end
+
+local function zombie(s, def, r)
+	local p = def.pal
+	local RED = Color3.fromRGB(255, 40, 40)
+	shadow(s, r)
+	s:block(r * 2.0, r * 1.15, p.cloth, 0, r * 0.25, 0.3, 0, FABRIC, 0, 0.45)
+	s:block(r * 0.5, r * 0.45, p.skin, r * 0.5, r * 0.55, 0.56, 0.3, nil, 0, 0.08)
+	for _, sx in ipairs({ -1, 1 }) do
+		s:block(r * 0.5, r * 1.7, p.skin, sx * r * 1.05, -r * 0.55, 0.45, sx * 0.12, nil, 0, 0.35)
+		s:disc(r * 0.62, p.skin, sx * r * 1.15, -r * 1.45, 0.5, nil, 0, 0.4)
+		s:disc(r * 0.2, Color3.fromRGB(200, 200, 190), sx * r * 1.15, -r * 1.7, 0.7, nil, 0, 0.1)
+	end
+	s:disc(r * 1.2, p.skin, 0, -r * 0.1, 0.55, nil, 0, 0.7)
+	s:disc(r * 0.8, p.hair, 0, r * 0.25, 0.95, nil, 0, 0.12)
+	s:disc(r * 0.2, RED, -r * 0.28, -r * 0.5, 0.97, NEON, 0, 0.1)
+	s:disc(r * 0.2, RED, r * 0.28, -r * 0.5, 0.97, NEON, 0, 0.1)
+	s:disc(r * 0.3, Color3.fromRGB(120, 20, 20), r * 0.35, -r * 0.05, 0.98, nil, 0, 0.08)
+	if def.variant == "toxic" then
+		s:disc(r * 2.6, Color3.fromRGB(110, 255, 60), 0, 0, 0.06, NEON, 0.82, 0.05)
+		for i = 0, 3 do
+			local a = i * 1.6
+			s:disc(r * 0.45, Color3.fromRGB(140, 255, 70), math.cos(a) * r * 0.6, r * 0.55 + math.sin(a) * r * 0.2, 0.62, NEON, 0.1, 0.25)
+		end
+	elseif def.variant == "brute" then
+		local bone = Color3.fromRGB(215, 205, 180)
+		for _, sx in ipairs({ -1, 1 }) do
+			s:disc(r * 0.95, Color3.fromRGB(120, 120, 125), sx * r * 0.95, r * 0.2, 0.75, SLATE, 0, 0.35)
+			for i = 0, 2 do
+				s:block(r * 0.18, r * 0.5, bone, sx * (r * 1.1 + i * r * 0.1), r * 0.05 + i * r * 0.22, 0.95, sx * (0.5 + i * 0.3), nil, 0, 0.12)
+			end
+		end
+		s:disc(r * 0.5, bone, 0, r * 0.7, 0.62, nil, 0, 0.2)
+	end
+end
+
+local function goblin(s, def, r, root, parent)
+	local p = def.pal
+	local v = def.variant
+	local YEL = Color3.fromRGB(255, 230, 60)
+	shadow(s, r)
+	s:block(r * 1.8, r * 1.0, p.cloth, 0, r * 0.25, 0.3, 0, FABRIC, 0, 0.45)
+	s:block(r * 1.85, r * 0.2, Color3.fromRGB(40, 30, 25), 0, r * 0.3, 0.56, 0, nil, 0, 0.1)
+	s:disc(r * 0.25, Color3.fromRGB(230, 190, 60), 0, r * 0.3, 0.64, METAL, 0, 0.08)
+	for _, sx in ipairs({ -1, 1 }) do
+		s:block(r * 0.4, r * 1.3, p.skin, sx * r * 0.95, -r * 0.3, 0.45, sx * 0.15, nil, 0, 0.3)
+		s:disc(r * 0.5, p.skin, sx * r * 1.0, -r * 0.95, 0.5, nil, 0, 0.35)
+		local vx, vz = sx * 1.0, 0.35
+		s:block(r * 0.3, r * 1.1, p.skin, sx * r * 0.7 + vx * r * 0.5, vz * r * 0.5 - r * 0.05, 0.85, radialRot(vx, vz), nil, 0, 0.1)
+		s:disc(r * 0.18, Color3.fromRGB(235, 160, 160), sx * r * 0.7 + vx * r * 0.5, vz * r * 0.5 - r * 0.05, 0.92, nil, 0, 0.05)
+	end
+	s:disc(r * 1.3, p.skin, 0, -r * 0.1, 0.55, nil, 0, 0.7)
+	s:block(r * 0.28, r * 0.9, p.hair, 0, r * 0.15, 0.95, 0, nil, 0, 0.14)
+	s:disc(r * 0.34, Color3.new(p.skin.R * 0.8, p.skin.G * 0.8, p.skin.B * 0.8), 0, -r * 0.75, 0.95, nil, 0, 0.15)
+	s:disc(r * 0.22, YEL, -r * 0.32, -r * 0.45, 0.97, NEON, 0, 0.08)
+	s:disc(r * 0.22, YEL, r * 0.32, -r * 0.45, 0.97, NEON, 0, 0.08)
+	local hand = CFrame.new(r * 1.0, 0.75, -r * 0.95)
+	if v == "slinger" then
+		s:disc(r * 0.8, Color3.fromRGB(110, 75, 45), r * 1.0, -r * 1.0, 0.8, FABRIC, 0, 0.3)
+		s:disc(r * 0.4, Color3.fromRGB(130, 130, 135), r * 0.9, -r * 1.1, 1.0, SLATE, 0, 0.2)
+		s:disc(r * 0.4, Color3.fromRGB(110, 110, 115), r * 1.15, -r * 0.9, 1.0, SLATE, 0, 0.2)
+	elseif v == "brute" then
+		s:disc(r * 1.25, Color3.fromRGB(125, 125, 135), 0, r * 0.2, 0.75, METAL, 0, 0.25)
+		s:disc(r * 0.55, Color3.fromRGB(95, 95, 105), 0, r * 0.2, 0.92, METAL, 0, 0.12)
+		for _, sx in ipairs({ -1, 1 }) do
+			s:disc(r * 0.8, Color3.fromRGB(110, 110, 120), sx * r * 1.0, r * 0.1, 0.8, METAL, 0, 0.3)
+		end
+		return Sprites.weapon("Club", root, parent, hand, r / 2.4)
+	elseif v == "sneaker" then
+		s:disc(r * 1.9, Color3.fromRGB(30, 30, 45), 0, r * 0.5, 0.7, FABRIC, 0.1, 0.1)
+		Sprites.weapon("Swordsman", root, parent, hand * CFrame.Angles(0, -0.1, 0), r / 5, { blade = Color3.fromRGB(170, 180, 190), guard = Color3.fromRGB(80, 60, 40) })
+		Sprites.weapon("Swordsman", root, parent, CFrame.new(-r * 1.0, 0.75, -r * 0.95) * CFrame.Angles(0, 0.1, 0), r / 5, { blade = Color3.fromRGB(170, 180, 190), guard = Color3.fromRGB(80, 60, 40) })
+	else
+		Sprites.weapon("Swordsman", root, parent, hand, r / 4.2, { blade = Color3.fromRGB(150, 140, 130), guard = Color3.fromRGB(110, 80, 40), gem = Color3.fromRGB(110, 80, 40) })
+	end
+	return nil
+end
+
+local function titan(s, def, r)
+	local p = def.pal
+	local rock = Color3.fromRGB(122, 122, 128)
+	shadow(s, r)
+	s:disc(r * 2.4, Color3.fromRGB(70, 110, 55), 0, r * 0.15, 0.08, Enum.Material.Grass, 0.3, 0.1)
+	s:block(r * 2.1, r * 1.3, p.cloth, 0, r * 0.2, 0.4, 0, FABRIC, 0, 0.6)
+	s:disc(r * 1.9, p.skin, 0, r * 0.1, 0.7, SLATE, 0, 0.8)
+	for _, sx in ipairs({ -1, 1 }) do
+		s:block(r * 0.7, r * 1.9, p.skin, sx * r * 1.15, -r * 0.55, 0.6, sx * 0.1, SLATE, 0, 0.6)
+		s:disc(r * 0.9, rock, sx * r * 1.2, -r * 1.65, 0.9, SLATE, 0, 0.8)
+		s:disc(r * 0.4, Color3.fromRGB(95, 95, 100), sx * r * 1.1, -r * 1.7, 1.35, SLATE, 0, 0.3)
+		s:disc(r * 1.0, rock, sx * r * 1.0, r * 0.1, 1.15, SLATE, 0, 0.6)
+	end
+	for i = 0, 5 do
+		local a = i * 1.1 + 0.4
+		s:disc(r * (0.45 + (i % 3) * 0.12), rock, math.cos(a) * r * 0.55, r * 0.55 + math.sin(a) * r * 0.25, 1.3 + (i % 2) * 0.15, SLATE, 0, 0.5)
+	end
+	for i = 0, 4 do
+		s:disc(r * 0.4, Color3.fromRGB(60 + i * 12, 130, 50), -r * 0.7 + i * r * 0.35, r * 0.1 - (i % 2) * r * 0.3, 1.62, Enum.Material.Grass, 0, 0.2)
+	end
+	s:disc(r * 1.0, p.skin, 0, -r * 0.4, 1.5, SLATE, 0, 0.9)
+	s:block(r * 0.9, r * 0.2, Color3.fromRGB(40, 50, 35), 0, -r * 0.65, 1.97, 0, nil, 0, 0.15)
+	s:disc(r * 0.22, Color3.fromRGB(255, 140, 30), -r * 0.25, -r * 0.62, 2.05, NEON, 0, 0.1)
+	s:disc(r * 0.22, Color3.fromRGB(255, 140, 30), r * 0.25, -r * 0.62, 2.05, NEON, 0, 0.1)
+	for _, sx in ipairs({ -1, 1 }) do
+		s:block(r * 0.14, r * 0.35, Color3.fromRGB(235, 230, 205), sx * r * 0.3, -r * 0.92, 1.9, 0, nil, 0, 0.12)
+	end
+	s:disc(r * 2.9, Color3.fromRGB(120, 255, 80), 0, 0, 0.06, NEON, 0.9, 0.05)
+end
+
+local function king(s, def, r, root, parent)
+	local p = def.pal
+	local gold = Color3.fromRGB(240, 190, 50)
+	shadow(s, r)
+	s:block(r * 1.9, r * 1.9, p.cloth, 0, r * 0.95, 0.2, 0, FABRIC, 0, 0.12)
+	s:block(r * 1.9, r * 0.2, gold, 0, r * 1.85, 0.3, 0, METAL, 0, 0.1)
+	s:block(r * 2.1, r * 1.3, Color3.fromRGB(62, 62, 74), 0, r * 0.2, 0.5, 0, METAL, 0, 0.55)
+	s:disc(r * 1.0, gold, 0, r * 0.1, 0.9, METAL, 0, 0.12)
+	s:disc(r * 0.5, Color3.fromRGB(220, 40, 60), 0, r * 0.1, 1.0, NEON, 0, 0.1)
+	for _, sx in ipairs({ -1, 1 }) do
+		s:block(r * 0.5, r * 1.5, p.skin, sx * r * 1.0, -r * 0.4, 0.55, sx * 0.1, nil, 0, 0.4)
+		s:disc(r * 0.6, p.skin, sx * r * 1.0, -r * 1.1, 0.6, nil, 0, 0.4)
+		s:disc(r * 1.0, gold, sx * r * 1.2, r * 0.05, 0.9, METAL, 0, 0.4)
+		for i = 0, 2 do
+			local a = math.rad(-30 + i * 60)
+			s:block(r * 0.14, r * 0.45, gold, sx * (r * 1.2 + math.sin(a) * r * 0.7), r * 0.05 - math.cos(a) * r * 0.1 + (i - 1) * r * 0.25, 1.15, sx * 1.4, METAL, 0, 0.12)
+		end
+	end
+	s:disc(r * 1.35, p.skin, 0, -r * 0.2, 1.0, nil, 0, 0.8)
+	s:disc(r * 0.35, Color3.fromRGB(220, 255, 220), -r * 0.65, -r * 0.1, 1.0, nil, 0, 0.5)
+	s:disc(r * 0.35, Color3.fromRGB(220, 255, 220), r * 0.65, -r * 0.1, 1.0, nil, 0, 0.5)
+	s:disc(r * 0.4, Color3.new(p.skin.R * 0.8, p.skin.G * 0.8, p.skin.B * 0.8), 0, -r * 0.95, 1.0, nil, 0, 0.2)
+	s:disc(r * 1.3, gold, 0, -r * 0.2, 1.5, METAL, 0, 0.2)
+	s:disc(r * 0.95, p.skin, 0, -r * 0.2, 1.62, nil, 0, 0.2)
+	s:disc(r * 0.7, p.hair, 0, r * 0.05, 1.7, nil, 0, 0.1)
+	for i = 0, 5 do
+		local a = i * (math.pi * 2 / 6)
+		s:disc(r * 0.26, gold, math.cos(a) * r * 0.6, -r * 0.2 + math.sin(a) * r * 0.6, 1.72, METAL, 0, 0.3)
+	end
+	s:disc(r * 0.3, Color3.fromRGB(230, 40, 70), 0, -r * 0.8, 1.8, NEON, 0, 0.15)
+	s:disc(r * 0.2, Color3.fromRGB(255, 60, 60), -r * 0.28, -r * 0.65, 1.75, NEON, 0, 0.1)
+	s:disc(r * 0.2, Color3.fromRGB(255, 60, 60), r * 0.28, -r * 0.65, 1.75, NEON, 0, 0.1)
+	return Sprites.weapon("Swordsman", root, parent, CFrame.new(r * 1.3, 1.0, -r * 0.5) * CFrame.Angles(0, -0.1, 0), r * 0.55,
+		{ blade = Color3.fromRGB(170, 175, 185), fuller = Color3.fromRGB(120, 125, 135), guard = gold, grip = Color3.fromRGB(70, 40, 30), gem = Color3.fromRGB(230, 40, 70) })
+end
+
+function Sprites.enemy(def, root, parent)
+	local s = Sprites.new(root, parent, 0, 1)
+	local r = def.r
+	if def.kind == "zombie" then
+		zombie(s, def, r)
+	elseif def.kind == "goblin" then
+		return goblin(s, def, r, root, parent)
+	elseif def.kind == "titan" then
+		titan(s, def, r)
+	elseif def.kind == "king" then
+		return king(s, def, r, root, parent)
+	end
+	return nil
+end
+
+return Sprites
+]]></ProtectedString>
+</Properties>
+</Item>
+<Item class="ModuleScript" referent="RBX7">
+<Properties>
+<string name="Name">MapBuilder</string>
+<ProtectedString name="Source"><![CDATA[-- Procedural builders for the lobby and the two dungeon arenas (everything is flat / top-down)
+local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("Config"))
+local Sprites = require(script.Parent:WaitForChild("Sprites"))
+
+local M = {}
+
+local CYL = Enum.PartType.Cylinder
+local BLK = Enum.PartType.Block
+local MAT = Enum.Material
+local C3 = Color3.fromRGB
+
+local function part(parent, shape, size, cf, color, mat, trans, collide)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.Shape = shape
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color
+	p.Material = mat or MAT.SmoothPlastic
+	p.Transparency = trans or 0
+	p.CanCollide = collide or false
+	p.CanQuery = collide or false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Parent = parent
+	return p
+end
+
+local function disc(parent, d, color, x, y, z, mat, trans, thick)
+	return part(parent, CYL, Vector3.new(thick or 0.2, d, d), CFrame.new(x, y, z) * CFrame.Angles(0, 0, math.pi / 2), color, mat, trans, false)
+end
+
+local function block(parent, sx, sy, sz, color, x, y, z, rot, mat, trans, collide)
+	return part(parent, BLK, Vector3.new(sx, sy, sz), CFrame.new(x, y, z) * CFrame.Angles(0, rot or 0, 0), color, mat, trans, collide)
+end
+
+local function collider(parent, d, x, z, h)
+	h = h or 10
+	return part(parent, CYL, Vector3.new(h, d, d), CFrame.new(x, h / 2, z) * CFrame.Angles(0, 0, math.pi / 2), C3(0, 0, 0), nil, 1, true)
+end
+
+local function addLight(p, color, range, brightness)
+	local l = Instance.new("PointLight")
+	l.Color = color
+	l.Range = range
+	l.Brightness = brightness or 1
+	l.Shadows = false
+	l.Parent = p
+end
+
+local function label(parent, x, y, z, text, color, w, h, size)
+	local a = part(parent, BLK, Vector3.new(1, 1, 1), CFrame.new(x, y, z), C3(255, 255, 255), nil, 1, false)
+	local g = Instance.new("BillboardGui")
+	g.Size = UDim2.fromOffset(w or 300, h or 60)
+	g.AlwaysOnTop = true
+	g.LightInfluence = 0
+	g.MaxDistance = 600
+	g.Adornee = a
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.Text = text
+	t.TextColor3 = color or C3(255, 255, 255)
+	t.Font = Enum.Font.GothamBlack
+	t.TextSize = size or 24
+	t.TextStrokeTransparency = 0.2
+	t.TextWrapped = true
+	t.Parent = g
+	g.Parent = a
+	return a
+end
+
+local function ring(parent, d, thick, color, x, y, z, mat, trans)
+	disc(parent, d, color, x, y, z, mat or MAT.Neon, trans, 0.15)
+	disc(parent, d - thick * 2, C3(30, 30, 38), x, y + 0.02, z, MAT.Slate, 0, 0.15)
+end
+
+local function tree(parent, x, z, r, variant)
+	local g
+	if variant == 2 then
+		g = { C3(24, 66, 58), C3(32, 86, 70), C3(44, 108, 84), C3(66, 140, 104) }
+	elseif variant == 3 then
+		g = { C3(120, 78, 30), C3(158, 98, 34), C3(190, 124, 40), C3(222, 160, 60) }
+	else
+		g = { C3(28, 80, 34), C3(40, 104, 44), C3(56, 130, 56), C3(86, 164, 74) }
+	end
+	disc(parent, r * 2.2, C3(0, 0, 0), x + r * 0.25, 0.08, z + r * 0.3, nil, 0.65, 0.05)
+	disc(parent, r * 2.0, g[1], x, 1.6, z, MAT.Grass, 0, 0.6)
+	disc(parent, r * 1.62, g[2], x - r * 0.05, 2.2, z - r * 0.05, MAT.Grass, 0, 0.6)
+	disc(parent, r * 1.18, g[3], x - r * 0.1, 2.8, z - r * 0.1, MAT.Grass, 0, 0.6)
+	disc(parent, r * 0.6, g[4], x - r * 0.15, 3.4, z - r * 0.15, MAT.Grass, 0, 0.6)
+	for i = 0, 5 do
+		local a = i * 1.05 + (x * 7 % 3)
+		disc(parent, r * 0.7, g[3], x + math.cos(a) * r * 0.85, 2.0 + (i % 2) * 0.15, z + math.sin(a) * r * 0.85, MAT.Grass, 0, 0.5)
+	end
+	collider(parent, r * 1.6, x, z, 8)
+end
+
+local function bush(parent, x, z, r)
+	disc(parent, r * 2.2, C3(0, 0, 0), x + 0.3, 0.08, z + 0.4, nil, 0.7, 0.05)
+	disc(parent, r * 2, C3(40, 100, 44), x, 0.7, z, MAT.Grass, 0, 0.5)
+	disc(parent, r * 1.3, C3(60, 130, 56), x - r * 0.2, 1.1, z - r * 0.2, MAT.Grass, 0, 0.4)
+	disc(parent, r * 0.5, C3(90, 165, 70), x - r * 0.3, 1.4, z - r * 0.3, MAT.Grass, 0, 0.3)
+end
+
+local function rock(parent, x, z, r, collide, dark)
+	local base = dark and C3(70, 70, 80) or C3(125, 125, 130)
+	disc(parent, r * 2.3, C3(0, 0, 0), x + r * 0.2, 0.08, z + r * 0.3, nil, 0.65, 0.05)
+	disc(parent, r * 2, base, x, 1.0, z, MAT.Slate, 0, 1.4)
+	disc(parent, r * 1.5, C3(base.R * 255 + 22, base.G * 255 + 22, base.B * 255 + 22), x - r * 0.15, 1.9, z - r * 0.15, MAT.Slate, 0, 0.5)
+	disc(parent, r * 0.7, C3(base.R * 255 + 45, base.G * 255 + 45, base.B * 255 + 45), x - r * 0.3, 2.3, z - r * 0.3, MAT.Slate, 0, 0.3)
+	block(parent, r * 0.1, 0.1, r * 1.1, C3(40, 40, 46), x + r * 0.3, 2.2, z + r * 0.1, 0.7, nil, 0, false)
+	if collide then
+		collider(parent, r * 1.7, x, z, 8)
+	end
+end
+
+local function flower(parent, x, z, rng)
+	local cols = { C3(255, 90, 120), C3(255, 220, 70), C3(250, 250, 255), C3(160, 120, 255), C3(255, 150, 60) }
+	local c = cols[rng:NextInteger(1, #cols)]
+	disc(parent, 0.35, C3(50, 140, 50), x, 0.12, z, nil, 0, 0.05)
+	disc(parent, 0.7, c, x, 0.16, z, nil, 0, 0.05)
+	disc(parent, 0.28, C3(255, 230, 110), x, 0.2, z, nil, 0, 0.05)
+end
+
+local function mushroom(parent, x, z, glow)
+	local cap = glow and C3(80, 220, 255) or C3(210, 50, 50)
+	disc(parent, 1.3, C3(0, 0, 0), x + 0.2, 0.08, z + 0.2, nil, 0.7, 0.05)
+	disc(parent, 1.2, cap, x, 0.5, z, glow and MAT.Neon or MAT.SmoothPlastic, 0, 0.5)
+	if not glow then
+		disc(parent, 0.28, C3(255, 255, 255), x - 0.2, 0.8, z, nil, 0, 0.05)
+		disc(parent, 0.22, C3(255, 255, 255), x + 0.25, 0.8, z + 0.2, nil, 0, 0.05)
+	end
+end
+
+local function lamp(parent, x, z)
+	disc(parent, 1.6, C3(40, 40, 46), x, 0.6, z, MAT.Metal, 0, 1.2)
+	disc(parent, 1.0, C3(255, 235, 150), x, 1.4, z, MAT.Neon, 0, 0.3)
+	disc(parent, 5, C3(255, 235, 150), x, 0.1, z, MAT.Neon, 0.88, 0.05)
+	local top = disc(parent, 0.3, C3(255, 255, 255), x, 1.7, z, nil, 1, 0.1)
+	addLight(top, C3(255, 230, 160), 22, 1)
+	collider(parent, 1.6, x, z, 4)
+end
+
+-- ===================================================== LOBBY
+function M.lobby(folder)
+	local rng = Random.new(42)
+	local H = Config.Lobby.half
+	-- outer grass
+	part(folder, BLK, Vector3.new(520, 1, 520), CFrame.new(0, -0.5, 0), C3(84, 140, 70), MAT.Grass, 0, true)
+	-- stone plaza (checker)
+	local tile = 20
+	for ix = -5, 4 do
+		for iz = -5, 4 do
+			local even = (ix + iz) % 2 == 0
+			part(folder, BLK, Vector3.new(tile - 0.3, 0.2, tile - 0.3),
+				CFrame.new(ix * tile + tile / 2, 0.1, iz * tile + tile / 2),
+				even and C3(150, 150, 158) or C3(124, 124, 134), even and MAT.Cobblestone or MAT.Slate, 0, true)
+		end
+	end
+	-- walls
+	local wallC = C3(112, 80, 60)
+	local function wall(sx, sz, x, z)
+		block(folder, sx, 7, sz, wallC, x, 3.5, z, 0, MAT.Brick, 0, true)
+		block(folder, sx, 0.6, sz + 1, C3(170, 130, 95), x, 7.2, z, 0, MAT.Cobblestone, 0, false)
+	end
+	wall(H * 2 + 6, 3, 0, -H - 1.5)
+	wall(H * 2 + 6, 3, 0, H + 1.5)
+	wall(3, H * 2, -H - 1.5, 0)
+	wall(3, H * 2, H + 1.5, 0)
+	-- outside forest decoration
+	for i = 1, 90 do
+		local side = rng:NextInteger(1, 4)
+		local a, b = rng:NextNumber(-H - 30, H + 30), rng:NextNumber(H + 8, H + 55)
+		local x, z
+		if side == 1 then x, z = a, -b elseif side == 2 then x, z = a, b elseif side == 3 then x, z = -b, a else x, z = b, a end
+		tree(folder, x, z, rng:NextNumber(4, 7), rng:NextInteger(1, 3))
+	end
+	-- fountain
+	disc(folder, 24, C3(176, 176, 186), 0, 0.7, 0, MAT.Marble, 0, 1.2)
+	collider(folder, 24, 0, 0, 5)
+	disc(folder, 20.5, C3(70, 160, 230), 0, 1.0, 0, MAT.Glass, 0.15, 1.0)
+	disc(folder, 17, C3(120, 215, 255), 0, 1.35, 0, MAT.Neon, 0.75, 0.1)
+	disc(folder, 13, C3(150, 235, 255), 0, 1.4, 0, MAT.Neon, 0.8, 0.1)
+	disc(folder, 8.5, C3(200, 200, 210), 0, 1.7, 0, MAT.Marble, 0, 1.4)
+	disc(folder, 6.5, C3(70, 160, 230), 0, 2.45, 0, MAT.Glass, 0.15, 0.2)
+	disc(folder, 3, C3(235, 245, 255), 0, 2.6, 0, MAT.Marble, 0, 0.3)
+	local spout = disc(folder, 1.4, C3(190, 240, 255), 0, 3.0, 0, MAT.Neon, 0.2, 0.3)
+	local pe = Instance.new("ParticleEmitter")
+	pe.Rate = 40
+	pe.Lifetime = NumberRange.new(1, 1.6)
+	pe.Speed = NumberRange.new(10, 14)
+	pe.SpreadAngle = Vector2.new(25, 25)
+	pe.Acceleration = Vector3.new(0, -22, 0)
+	pe.Size = NumberSequence.new(0.5, 0.1)
+	pe.Transparency = NumberSequence.new(0.2, 1)
+	pe.Color = ColorSequence.new(C3(170, 230, 255))
+	pe.LightEmission = 0.6
+	pe.Parent = spout
+	-- lamps
+	for _, p in ipairs({ { -40, -40 }, { 40, -40 }, { -40, 40 }, { 40, 40 }, { -85, -85 }, { 85, -85 }, { -85, 85 }, { 85, 85 }, { -20, 12 }, { 20, 12 } }) do
+		lamp(folder, p[1], p[2])
+	end
+	-- flowers & bushes along the walls
+	for i = 1, 120 do
+		local x, z = rng:NextNumber(-H + 4, H - 4), rng:NextNumber(-H + 4, H - 4)
+		if math.abs(x) > 86 or math.abs(z) > 86 then
+			if i % 3 == 0 then bush(folder, x, z, rng:NextNumber(1.5, 2.4)) else flower(folder, x, z, rng) end
+		end
+	end
+	for i = 1, 6 do
+		bush(folder, -92 + i * 3, -93, 2.2)
+		bush(folder, 92 - i * 3, -93, 2.2)
+	end
+	-- title
+	label(folder, 0, 8, 22, "TOP-DOWN HEROES", C3(255, 235, 140), 520, 70, 46)
+	label(folder, 0, 8, 14, "Pick a weapon  ->  walk into a portal  ->  survive the waves!", C3(255, 255, 255), 640, 36, 20)
+
+	-- class pedestals
+	local classInfo = {
+		Swordsman = { c = C3(214, 70, 62), t = "SWORDSMAN" },
+		Archer = { c = C3(70, 168, 82), t = "ARCHER" },
+		Mage = { c = C3(150, 84, 220), t = "MAGE" },
+	}
+	for _, zn in ipairs(Config.Lobby.zones) do
+		if zn.kind == "class" then
+			local info = classInfo[zn.class]
+			ring(folder, zn.r * 2, 0.6, info.c, zn.x, 0.28, zn.z)
+			disc(folder, zn.r * 1.5, C3(60, 60, 70), zn.x, 0.5, zn.z, MAT.Marble, 0, 0.5)
+			disc(folder, zn.r * 1.2, C3(info.c.R * 255 * 0.6, info.c.G * 255 * 0.6, info.c.B * 255 * 0.6), zn.x, 0.8, zn.z, MAT.Marble, 0, 0.2)
+			for i = 0, 11 do
+				local a = i * math.pi / 6
+				block(folder, 0.4, 0.15, 1.2, info.c, zn.x + math.cos(a) * zn.r * 0.88, 0.5, zn.z + math.sin(a) * zn.r * 0.88, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
+			end
+			local root = part(folder, BLK, Vector3.new(1, 1, 1), CFrame.new(zn.x, 1.0, zn.z + 2.5), C3(255, 255, 255), nil, 1, false)
+			local weaponModel = Instance.new("Model")
+			weaponModel.Name = "Display_" .. zn.class
+			weaponModel.Parent = folder
+			root.Parent = weaponModel
+			Sprites.weapon(zn.class, root, weaponModel, CFrame.new(0, 0.6, 0), 1.25)
+			label(folder, zn.x, 6, zn.z - zn.r - 3.5, info.t, info.c, 260, 44, 28)
+			label(folder, zn.x, 6, zn.z - zn.r - 0.5, Config.Classes[zn.class].desc, C3(255, 255, 255), 250, 46, 14)
+		end
+	end
+	label(folder, 0, 6, 46, "CHOOSE YOUR WEAPON  (step on a pedestal)", C3(255, 255, 255), 460, 30, 18)
+
+	-- portals
+	local function portal(zn, c1, c2, title, sub)
+		ring(folder, zn.r * 2, 0.9, c1, zn.x, 0.28, zn.z)
+		disc(folder, zn.r * 1.7, c2, zn.x, 0.5, zn.z, MAT.Slate, 0, 0.4)
+		disc(folder, zn.r * 1.2, c1, zn.x, 0.62, zn.z, MAT.Neon, 0.85, 0.1)
+		disc(folder, zn.r * 0.7, c1, zn.x, 0.66, zn.z, MAT.Neon, 0.75, 0.1)
+		for i = 0, 15 do
+			local a = i * math.pi / 8
+			block(folder, 0.5, 0.15, 1.5, c1, zn.x + math.cos(a) * zn.r * 0.78, 0.75, zn.z + math.sin(a) * zn.r * 0.78, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
+		end
+		label(folder, zn.x, 7, zn.z - zn.r - 4, title, c1, 380, 48, 32)
+		label(folder, zn.x, 7, zn.z - zn.r - 0.8, sub, C3(255, 255, 255), 380, 28, 16)
+	end
+	local fz, cz
+	for _, zn in ipairs(Config.Lobby.zones) do
+		if zn.id == "forest" then fz = zn elseif zn.id == "cave" then cz = zn end
+	end
+	portal(fz, C3(90, 255, 110), C3(40, 90, 44), "FOREST", "Zombies Lv.1-5  |  Boss: Zombie Titan")
+	for i = 1, 4 do
+		tree(folder, fz.x - 20 + (i % 2) * 2, fz.z - 6 + i * 6, 3.2, 2)
+	end
+	for i = 1, 8 do
+		mushroom(folder, fz.x + rng:NextNumber(-10, 10), fz.z + rng:NextNumber(-10, 10), false)
+	end
+	portal(cz, C3(190, 110, 255), C3(52, 48, 66), "CAVE", "Goblins Lv.5-10  |  Boss: Goblin King")
+	for i = 1, 4 do
+		rock(folder, cz.x + 20 - (i % 2) * 2, cz.z - 6 + i * 6, 2.8, true, true)
+	end
+	for i = 1, 5 do
+		local x, z = cz.x + rng:NextNumber(-12, 12), cz.z + rng:NextNumber(-12, 12)
+		local c = disc(folder, 1.6, C3(180, 110, 255), x, 0.9, z, MAT.Neon, 0.1, 1.6)
+		disc(folder, 0.8, C3(230, 190, 255), x, 1.8, z, MAT.Neon, 0, 0.3)
+		if i == 1 then addLight(c, C3(190, 110, 255), 18, 1.2) end
+	end
+
+	-- upgrade zone (yellow)
+	local uz
+	for _, zn in ipairs(Config.Lobby.zones) do
+		if zn.id == "upgrade" then uz = zn end
+	end
+	ring(folder, uz.r * 2, 1.0, C3(255, 214, 40), uz.x, 0.28, uz.z)
+	disc(folder, uz.r * 1.7, C3(90, 74, 30), uz.x, 0.5, uz.z, MAT.Marble, 0, 0.4)
+	disc(folder, uz.r * 1.3, C3(255, 214, 40), uz.x, 0.62, uz.z, MAT.Neon, 0.82, 0.1)
+	for i = 0, 15 do
+		local a = i * math.pi / 8
+		block(folder, 0.5, 0.15, 1.5, C3(255, 214, 40), uz.x + math.cos(a) * uz.r * 0.8, 0.75, uz.z + math.sin(a) * uz.r * 0.8, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
+	end
+	-- anvil
+	block(folder, 5, 1.2, 3, C3(60, 60, 68), uz.x, 1.4, uz.z, 0, MAT.Metal, 0, false)
+	block(folder, 7.5, 0.8, 2.4, C3(90, 90, 100), uz.x, 2.2, uz.z, 0, MAT.Metal, 0, false)
+	block(folder, 2.5, 0.8, 2.2, C3(110, 110, 120), uz.x + 4.2, 2.2, uz.z, 0, MAT.Metal, 0, false)
+	disc(folder, 1.5, C3(255, 120, 30), uz.x - 1, 2.7, uz.z, MAT.Neon, 0.2, 0.2)
+	for i = 0, 5 do
+		local a = i * 1.0
+		local coin = disc(folder, 1.3, C3(255, 205, 40), uz.x + math.cos(a) * 8, 0.9 + (i % 3) * 0.2, uz.z + math.sin(a) * 6, MAT.Neon, 0.1, 0.2)
+		if i == 0 then addLight(coin, C3(255, 214, 40), 20, 1.2) end
+	end
+	collider(folder, 5, uz.x, uz.z, 4)
+	label(folder, uz.x, 7, uz.z - uz.r - 4, "UPGRADES", C3(255, 214, 40), 380, 48, 34)
+	label(folder, uz.x, 7, uz.z - uz.r - 0.8, "Spend skill points & coins", C3(255, 255, 255), 380, 28, 16)
+	-- crates
+	for _, p in ipairs({ { -88, 60 }, { -84, 66 }, { 88, 60 }, { 85, 67 }, { 70, -70 }, { -70, -70 } }) do
+		block(folder, 5, 4, 5, C3(150, 108, 60), p[1], 2.2, p[2], rng:NextNumber(0, 1), MAT.WoodPlanks, 0, true)
+		block(folder, 5.2, 0.4, 1, C3(100, 70, 40), p[1], 4.3, p[2], 0, MAT.Wood, 0, false)
+	end
+end
+
+-- ===================================================== ARENAS
+local function newPlacer(rng, obstacles, ox, half, spawnZ)
+	return function(r, margin)
+		for _ = 1, 40 do
+			local x = rng:NextNumber(-half + 10, half - 10)
+			local z = rng:NextNumber(-half + 10, half - 10)
+			local ok = true
+			if (x * x + (z - spawnZ) * (z - spawnZ)) < (r + 16) * (r + 16) then ok = false end
+			if x * x + (z + 60) * (z + 60) < (r + 12) * (r + 12) then ok = false end
+			if ok then
+				for _, o in ipairs(obstacles) do
+					local dx, dz = x + ox - o.x, z - o.z
+					local m = r + o.r + (margin or 3)
+					if dx * dx + dz * dz < m * m then ok = false break end
+				end
+			end
+			if ok then
+				table.insert(obstacles, { x = x + ox, z = z, r = r * 0.8 })
+				return x + ox, z
+			end
+		end
+		return nil
+	end
+end
+
+local function boundaryWalls(folder, ox, half)
+	local c = C3(0, 0, 0)
+	block(folder, half * 2 + 30, 40, 6, c, ox, 20, -half - 3, 0, nil, 1, true)
+	block(folder, half * 2 + 30, 40, 6, c, ox, 20, half + 3, 0, nil, 1, true)
+	block(folder, 6, 40, half * 2, c, ox - half - 3, 20, 0, 0, nil, 1, true)
+	block(folder, 6, 40, half * 2, c, ox + half + 3, 20, 0, 0, nil, 1, true)
+end
+
+local function buildForest(folder, ox, rng, info)
+	local half = info.half
+	part(folder, BLK, Vector3.new(half * 2 + 160, 1, half * 2 + 160), CFrame.new(ox, -0.5, 0), C3(34, 76, 40), MAT.Grass, 0, true)
+	part(folder, BLK, Vector3.new(half * 2, 1, half * 2), CFrame.new(ox, -0.45, 0), C3(62, 118, 52), MAT.Grass, 0, true)
+	-- grass patches
+	for i = 1, 55 do
+		local d = rng:NextNumber(8, 24)
+		local g = rng:NextInteger(0, 28)
+		disc(folder, d, C3(52 + g, 108 + g, 44 + math.floor(g / 2)), ox + rng:NextNumber(-half, half), 0.08, rng:NextNumber(-half, half), MAT.Grass, 0.1, 0.05)
+	end
+	-- dirt path from the spawn to the middle and beyond
+	local px, pz = 0, 62
+	for i = 1, 11 do
+		local nx = px + rng:NextNumber(-12, 12)
+		nx = math.clamp(nx, -40, 40)
+		local nz = pz - 13
+		local dx, dz = nx - px, nz - pz
+		local len = math.sqrt(dx * dx + dz * dz)
+		block(folder, 8.5, 0.1, len + 3, C3(126, 96, 60), ox + (px + nx) / 2, 0.12, (pz + nz) / 2, math.atan2(dx, dz), MAT.Ground, 0, false)
+		for j = 1, 4 do
+			disc(folder, rng:NextNumber(0.4, 0.9), C3(150, 140, 125), ox + px + rng:NextNumber(-5, 5), 0.2, pz + rng:NextNumber(-6, 6), MAT.Slate, 0, 0.1)
+		end
+		px, pz = nx, nz
+	end
+	local place = newPlacer(rng, info.obstacles, ox, half, 62)
+	for i = 1, 40 do
+		local r = rng:NextNumber(3.6, 6)
+		local x, z = place(r, 4)
+		if x then tree(folder, x, z, r, (i % 7 == 0) and 3 or ((i % 3 == 0) and 2 or 1)) end
+	end
+	for i = 1, 12 do
+		local r = rng:NextNumber(1.6, 3.2)
+		local x, z = place(r, 2)
+		if x then rock(folder, x, z, r, true, false) end
+	end
+	for i = 1, 6 do -- stumps
+		local x, z = place(1.8, 2)
+		if x then
+			disc(folder, 3.4, C3(0, 0, 0), x + 0.4, 0.08, z + 0.5, nil, 0.7, 0.05)
+			disc(folder, 3.2, C3(98, 66, 38), x, 0.8, z, MAT.Wood, 0, 1.4)
+			disc(folder, 2.5, C3(176, 134, 82), x, 1.55, z, MAT.Wood, 0, 0.1)
+			disc(folder, 1.5, C3(150, 108, 64), x, 1.6, z, MAT.Wood, 0, 0.1)
+			disc(folder, 0.6, C3(120, 84, 50), x, 1.65, z, MAT.Wood, 0, 0.1)
+			collider(folder, 3, x, z, 3)
+		end
+	end
+	for i = 1, 26 do bush(folder, ox + rng:NextNumber(-half + 6, half - 6), rng:NextNumber(-half + 6, half - 6), rng:NextNumber(1.4, 2.6)) end
+	for i = 1, 100 do flower(folder, ox + rng:NextNumber(-half, half), rng:NextNumber(-half, half), rng) end
+	for i = 1, 16 do mushroom(folder, ox + rng:NextNumber(-half, half), rng:NextNumber(-half, half), false) end
+	for i = 1, 8 do -- fallen logs
+		local x, z = ox + rng:NextNumber(-half + 8, half - 8), rng:NextNumber(-half + 8, half - 8)
+		local rot = rng:NextNumber(0, math.pi)
+		block(folder, 1.8, 1.6, 9, C3(92, 62, 36), x, 0.8, z, rot, MAT.Wood, 0, false)
+		block(folder, 1.2, 0.1, 8, C3(70, 100, 50), x, 1.65, z, rot, MAT.Grass, 0, false)
+	end
+	-- light shafts
+	for i = 1, 9 do
+		disc(folder, rng:NextNumber(10, 18), C3(255, 240, 160), ox + rng:NextNumber(-half, half), 0.18, rng:NextNumber(-half, half), MAT.Neon, 0.92, 0.05)
+	end
+	-- border treeline
+	for i = 1, 70 do
+		local side = rng:NextInteger(1, 4)
+		local a, b = rng:NextNumber(-half - 20, half + 20), rng:NextNumber(half + 5, half + 40)
+		local x, z
+		if side == 1 then x, z = a, -b elseif side == 2 then x, z = a, b elseif side == 3 then x, z = -b, a else x, z = b, a end
+		tree(folder, ox + x, z, rng:NextNumber(4.5, 8), rng:NextInteger(1, 3))
+	end
+	for i = 0, 15 do -- inside border bushes
+		bush(folder, ox - half + 2 + i * 10.5, -half + 3, 2.4)
+		bush(folder, ox - half + 2 + i * 10.5, half - 3, 2.4)
+	end
+end
+
+local function crystal(folder, x, z, r, col, withLight)
+	disc(folder, r * 2.6, C3(0, 0, 0), x + 0.3, 0.08, z + 0.4, nil, 0.65, 0.05)
+	disc(folder, r * 2.2, C3(50, 46, 66), x, 0.6, z, MAT.Slate, 0, 1.0)
+	local c = disc(folder, r * 1.6, col, x, 1.6, z, MAT.Neon, 0.1, 1.0)
+	disc(folder, r * 1.0, C3(math.min(255, col.R * 255 + 60), math.min(255, col.G * 255 + 60), math.min(255, col.B * 255 + 60)), x - 0.2, 2.3, z - 0.2, MAT.Neon, 0, 0.5)
+	for i = 0, 4 do
+		local a = i * 1.26
+		local sh = block(folder, r * 0.45, 1.0, r * 1.5, col, x + math.cos(a) * r * 0.9, 1.4, z + math.sin(a) * r * 0.9, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0.1, false)
+		if i == 0 and withLight then addLight(sh, col, 24, 1.4) end
+	end
+	collider(folder, r * 1.8, x, z, 8)
+end
+
+local function stalagmite(folder, x, z, r)
+	disc(folder, r * 2.4, C3(0, 0, 0), x + r * 0.2, 0.08, z + r * 0.3, nil, 0.65, 0.05)
+	disc(folder, r * 2.0, C3(58, 56, 66), x, 1.0, z, MAT.Slate, 0, 1.6)
+	disc(folder, r * 1.55, C3(76, 74, 88), x - 0.2, 2.0, z - 0.2, MAT.Slate, 0, 0.7)
+	disc(folder, r * 1.0, C3(98, 96, 112), x - 0.4, 2.7, z - 0.4, MAT.Slate, 0, 0.7)
+	disc(folder, r * 0.45, C3(130, 128, 146), x - 0.5, 3.2, z - 0.5, MAT.Slate, 0, 0.4)
+	collider(folder, r * 1.7, x, z, 8)
+end
+
+local function torch(folder, x, z)
+	disc(folder, 1.2, C3(60, 40, 28), x, 0.7, z, MAT.Wood, 0, 1.3)
+	local f = disc(folder, 1.5, C3(255, 140, 30), x, 1.6, z, MAT.Neon, 0.1, 0.3)
+	disc(folder, 0.8, C3(255, 230, 120), x, 1.9, z, MAT.Neon, 0, 0.2)
+	disc(folder, 9, C3(255, 150, 50), x, 0.15, z, MAT.Neon, 0.9, 0.05)
+	addLight(f, C3(255, 150, 60), 28, 1.4)
+end
+
+local function skull(folder, x, z)
+	local b = C3(225, 218, 195)
+	disc(folder, 1.3, b, x, 0.2, z, nil, 0, 0.3)
+	disc(folder, 0.28, C3(20, 20, 20), x - 0.25, 0.4, z - 0.15, nil, 0, 0.1)
+	disc(folder, 0.28, C3(20, 20, 20), x + 0.25, 0.4, z - 0.15, nil, 0, 0.1)
+	block(folder, 0.2, 0.2, 1.8, b, x + 1.2, 0.2, z + 0.4, 0.5, nil, 0, false)
+	block(folder, 0.2, 0.2, 1.8, b, x + 1.0, 0.2, z + 0.6, -0.8, nil, 0, false)
+end
+
+local function buildCave(folder, ox, rng, info)
+	local half = info.half
+	part(folder, BLK, Vector3.new(half * 2 + 160, 1, half * 2 + 160), CFrame.new(ox, -0.5, 0), C3(26, 24, 32), MAT.Basalt, 0, true)
+	part(folder, BLK, Vector3.new(half * 2, 1, half * 2), CFrame.new(ox, -0.45, 0), C3(66, 62, 78), MAT.Slate, 0, true)
+	for i = 1, 50 do
+		local g = rng:NextInteger(-14, 18)
+		local mats = { MAT.Cobblestone, MAT.Pebble, MAT.Slate, MAT.Basalt }
+		disc(folder, rng:NextNumber(8, 22), C3(66 + g, 62 + g, 78 + g), ox + rng:NextNumber(-half, half), 0.08, rng:NextNumber(-half, half), mats[rng:NextInteger(1, 4)], 0.05, 0.05)
+	end
+	for i = 1, 28 do -- cracks
+		local x, z = ox + rng:NextNumber(-half, half), rng:NextNumber(-half, half)
+		local rot = rng:NextNumber(0, math.pi)
+		block(folder, 0.35, 0.05, rng:NextNumber(6, 16), C3(20, 18, 26), x, 0.14, z, rot, nil, 0, false)
+		block(folder, 0.25, 0.05, rng:NextNumber(3, 8), C3(20, 18, 26), x + math.sin(rot) * 5, 0.14, z + math.cos(rot) * 5, rot + 0.8, nil, 0, false)
+	end
+	-- lava streams (decorative)
+	for s = 1, 3 do
+		local x = rng:NextNumber(-60, 60)
+		local z = -half + 6
+		local first = true
+		for i = 1, 9 do
+			local nx = math.clamp(x + rng:NextNumber(-14, 14), -70, 70)
+			local nz = z + 18
+			local dx, dz = nx - x, nz - z
+			local len = math.sqrt(dx * dx + dz * dz)
+			-- keep away from the arena spawn
+			if nz < 40 then
+				block(folder, 6.5, 0.1, len + 2, C3(40, 20, 16), ox + (x + nx) / 2, 0.13, (z + nz) / 2, math.atan2(dx, dz), MAT.Basalt, 0, false)
+				local lv = block(folder, 4.2, 0.1, len + 2, C3(255, 100, 20), ox + (x + nx) / 2, 0.18, (z + nz) / 2, math.atan2(dx, dz), MAT.Neon, 0.05, false)
+				block(folder, 1.8, 0.1, len, C3(255, 210, 80), ox + (x + nx) / 2, 0.2, (z + nz) / 2, math.atan2(dx, dz), MAT.Neon, 0.1, false)
+				if first then addLight(lv, C3(255, 110, 30), 26, 1.2) first = false end
+			end
+			x, z = nx, nz
+		end
+	end
+	local place = newPlacer(rng, info.obstacles, ox, half, 62)
+	for i = 1, 22 do
+		local r = rng:NextNumber(2.2, 4.4)
+		local x, z = place(r, 4)
+		if x then stalagmite(folder, x, z, r) end
+	end
+	for i = 1, 12 do
+		local r = rng:NextNumber(2.6, 5)
+		local x, z = place(r, 3)
+		if x then rock(folder, x, z, r, true, true) end
+	end
+	local ccols = { C3(90, 160, 255), C3(190, 90, 255), C3(80, 255, 200) }
+	for i = 1, 11 do
+		local r = rng:NextNumber(1.6, 2.6)
+		local x, z = place(r, 3)
+		if x then crystal(folder, x, z, r, ccols[(i % 3) + 1], i % 2 == 0) end
+	end
+	for i = 1, 16 do skull(folder, ox + rng:NextNumber(-half, half), rng:NextNumber(-half, half)) end
+	for i = 1, 20 do mushroom(folder, ox + rng:NextNumber(-half, half), rng:NextNumber(-half, half), true) end
+	for i = 1, 4 do -- mine tracks with carts
+		local z = -60 + i * 30
+		block(folder, 1.0, 0.1, 40, C3(90, 70, 50), ox + (i % 2 == 0 and -62 or 62), 0.16, z, math.pi / 2, MAT.Wood, 0, false)
+		block(folder, 0.4, 0.1, 40, C3(130, 130, 140), ox + (i % 2 == 0 and -62 or 62), 0.22, z - 1, math.pi / 2, MAT.Metal, 0, false)
+		block(folder, 0.4, 0.1, 40, C3(130, 130, 140), ox + (i % 2 == 0 and -62 or 62), 0.22, z + 1, math.pi / 2, MAT.Metal, 0, false)
+	end
+	-- torches along the borders
+	for i = 0, 7 do
+		torch(folder, ox - half + 3, -half + 12 + i * 22)
+		torch(folder, ox + half - 3, -half + 12 + i * 22)
+	end
+	-- border rocks (outside walls)
+	for i = 1, 90 do
+		local side = rng:NextInteger(1, 4)
+		local a, b = rng:NextNumber(-half - 20, half + 20), rng:NextNumber(half + 4, half + 35)
+		local x, z
+		if side == 1 then x, z = a, -b elseif side == 2 then x, z = a, b elseif side == 3 then x, z = -b, a else x, z = b, a end
+		rock(folder, ox + x, z, rng:NextNumber(4, 9), false, true)
+	end
+	for i = 0, 15 do
+		rock(folder, ox - half + 2 + i * 10.5, -half + 1, 4.5, false, true)
+		rock(folder, ox - half + 2 + i * 10.5, half - 1, 4.5, false, true)
+	end
+end
+
+function M.arena(locId, ox, folder, seed)
+	local rng = Random.new(seed)
+	local info = { half = 80, ox = ox, obstacles = {}, spawn = Vector3.new(ox, 4, 62) }
+	boundaryWalls(folder, ox, info.half)
+	if locId == "forest" then
+		buildForest(folder, ox, rng, info)
+	else
+		buildCave(folder, ox, rng, info)
+	end
+	-- spawn marker
+	disc(folder, 14, C3(255, 255, 255), ox, 0.2, 62, MAT.Neon, 0.9, 0.05)
+	return info
+end
+
+return M
+]]></ProtectedString>
+</Properties>
+</Item>
+</Item>
+</Item>
+<Item class="StarterPlayer" referent="RBX8">
+<Properties>
+<string name="Name">StarterPlayer</string>
+</Properties>
+<Item class="StarterPlayerScripts" referent="RBX9">
+<Properties>
+<string name="Name">StarterPlayerScripts</string>
+</Properties>
+<Item class="LocalScript" referent="RBX10">
+<Properties>
+<string name="Name">GameClient</string>
+<ProtectedString name="Source"><![CDATA[-- GameClient: top-down camera, controls, HUD, menus and visual effects
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
+local StarterGui = game:GetService("StarterGui")
+local Debris = game:GetService("Debris")
+
+local lp = Players.LocalPlayer
+local Net = RS:WaitForChild("Net")
+local ToServer = Net:WaitForChild("ToServer")
+local ToClient = Net:WaitForChild("ToClient")
+local Config = require(RS:WaitForChild("Config"))
+local cam = workspace.CurrentCamera
+local C3 = Color3.fromRGB
+
+pcall(function()
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
+end)
+
+-- disable the default movement controls (we move with WASD in world space)
+task.spawn(function()
+	pcall(function()
+		local pm = require(lp:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
+		pm:GetControls():Disable()
+	end)
+end)
+
+-- ============================================================ DATA
+local data = { level = 1, xp = 0, need = 100, points = 0, coins = 0, upg = {}, vit = 0, swift = 0, unlocked = {} }
+local onData -- forward
+
+local function readData()
+	local s = lp:GetAttribute("Data")
+	if s then
+		local ok, t = pcall(function() return HttpService:JSONDecode(s) end)
+		if ok and type(t) == "table" then
+			data = t
+			data.upg = data.upg or {}
+			data.unlocked = data.unlocked or {}
+			if onData then onData() end
+		end
+	end
+end
+
+-- ============================================================ UI HELPERS
+local function new(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
+local function corner(o, r) return new("UICorner", { CornerRadius = UDim.new(0, r or 8) }, o) end
+local function stroke(o, color, th, tr) return new("UIStroke", { Color = color or C3(255, 255, 255), Thickness = th or 2, Transparency = tr or 0 }, o) end
+local function mkLabel(parent, text, pos, size, ts, color, align, font)
+	return new("TextLabel", {
+		Text = text, Position = pos, Size = size, TextSize = ts or 16, TextColor3 = color or C3(255, 255, 255),
+		BackgroundTransparency = 1, Font = font or Enum.Font.GothamBold, TextXAlignment = align or Enum.TextXAlignment.Left,
+		TextWrapped = true, TextStrokeTransparency = 0.5,
+	}, parent)
+end
+local function mkBar(parent, pos, size, color)
+	local bg = new("Frame", { Position = pos, Size = size, BackgroundColor3 = C3(14, 16, 22), BorderSizePixel = 0 }, parent)
+	corner(bg, 6)
+	local fill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = color, BorderSizePixel = 0 }, bg)
+	corner(fill, 6)
+	local txt = mkLabel(bg, "", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 13, nil, Enum.TextXAlignment.Center)
+	txt.ZIndex = 3
+	return { bg = bg, fill = fill, txt = txt }
+end
+local function mkButton(parent, text, pos, size, color, cb)
+	local b = new("TextButton", {
+		Text = text, Position = pos, Size = size, BackgroundColor3 = color, TextColor3 = C3(255, 255, 255),
+		Font = Enum.Font.GothamBold, TextSize = 16, AutoButtonColor = true, BorderSizePixel = 0,
+	}, parent)
+	corner(b, 8)
+	if cb then b.MouseButton1Click:Connect(cb) end
+	return b
+end
+local function hex(s) return Color3.fromHex(s) end
+
+local gui = new("ScreenGui", { Name = "HUD", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 5 }, lp:WaitForChild("PlayerGui"))
+
+-- ------------------------------------------------------------ HUD
+local info = new("Frame", { Position = UDim2.fromOffset(14, 14), Size = UDim2.fromOffset(290, 100), BackgroundColor3 = C3(16, 18, 26), BackgroundTransparency = 0.2, BorderSizePixel = 0 }, gui)
+corner(info, 12)
+stroke(info, C3(255, 255, 255), 1, 0.7)
+local lvlLabel = mkLabel(info, "Lv.1", UDim2.fromOffset(12, 6), UDim2.fromOffset(130, 28), 24, C3(255, 214, 74))
+local xpBar = mkBar(info, UDim2.fromOffset(12, 38), UDim2.fromOffset(266, 16), C3(80, 150, 255))
+local coinLabel = mkLabel(info, "Coins: 0", UDim2.fromOffset(12, 60), UDim2.fromOffset(140, 22), 16, C3(255, 214, 74))
+local ptsLabel = mkLabel(info, "Skill points: 0", UDim2.fromOffset(150, 60), UDim2.fromOffset(136, 22), 16, C3(120, 255, 150))
+local classLabel = mkLabel(info, "", UDim2.fromOffset(140, 6), UDim2.fromOffset(140, 28), 16, C3(220, 220, 230), Enum.TextXAlignment.Right)
+local winsLabel = mkLabel(info, "", UDim2.fromOffset(12, 80), UDim2.fromOffset(266, 16), 12, C3(190, 190, 205))
+
+local hpBar = mkBar(gui, UDim2.new(0.5, -200, 1, -50), UDim2.fromOffset(400, 28), C3(80, 210, 90))
+local dashBar = mkBar(gui, UDim2.new(0.5, -200, 1, -76), UDim2.fromOffset(400, 14), C3(90, 200, 255))
+dashBar.txt.TextSize = 11
+
+local waveFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.fromOffset(460, 46), BackgroundColor3 = C3(16, 18, 26), BackgroundTransparency = 0.2, BorderSizePixel = 0, Visible = false }, gui)
+corner(waveFrame, 10)
+local waveTitle = mkLabel(waveFrame, "", UDim2.fromOffset(0, 2), UDim2.new(1, 0, 0, 24), 20, C3(255, 214, 74), Enum.TextXAlignment.Center)
+local waveSub = mkLabel(waveFrame, "", UDim2.fromOffset(0, 24), UDim2.new(1, 0, 0, 20), 14, nil, Enum.TextXAlignment.Center)
+local bossFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 66), Size = UDim2.fromOffset(620, 40), BackgroundTransparency = 1, Visible = false }, gui)
+local bossName = mkLabel(bossFrame, "", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 18), 18, C3(255, 120, 90), Enum.TextXAlignment.Center)
+local bossBar = mkBar(bossFrame, UDim2.fromOffset(0, 20), UDim2.new(1, 0, 0, 20), C3(220, 50, 50))
+
+local toastLabel = new("TextLabel", {
+	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.22, 0), Size = UDim2.fromOffset(900, 60), BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBlack, TextSize = 40, TextColor3 = C3(255, 255, 255), TextStrokeTransparency = 0, Text = "", TextTransparency = 1, ZIndex = 20,
+}, gui)
+local toastToken = 0
+local function showToast(text, color, dur)
+	toastToken = toastToken + 1
+	local my = toastToken
+	toastLabel.Text = text
+	toastLabel.TextColor3 = hex(color or "ffffff")
+	toastLabel.TextTransparency = 0
+	toastLabel.TextStrokeTransparency = 0
+	task.delay(dur or 3, function()
+		if my == toastToken then
+			TweenService:Create(toastLabel, TweenInfo.new(0.6), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+		end
+	end)
+end
+
+local hint = mkLabel(gui, "WASD - move   |   Mouse - aim   |   Hold LMB - attack   |   SPACE / SHIFT - dash   |   Wheel - zoom",
+	UDim2.new(0, 14, 1, -30), UDim2.fromOffset(700, 22), 14, C3(220, 220, 230))
+local classPrompt = new("TextLabel", {
+	AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 70), Size = UDim2.fromOffset(700, 40), BackgroundColor3 = C3(214, 70, 62),
+	BackgroundTransparency = 0.1, Text = "Choose your weapon: step onto a pedestal at the south of the lobby!", TextColor3 = C3(255, 255, 255),
+	Font = Enum.Font.GothamBold, TextSize = 20, BorderSizePixel = 0, Visible = false,
+}, gui)
+corner(classPrompt, 10)
+local downLabel = new("TextLabel", {
+	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.7, 0), Size = UDim2.fromOffset(700, 50), BackgroundTransparency = 1,
+	Text = "YOU ARE DOWN - you will revive when the next wave starts", TextColor3 = C3(255, 90, 90), Font = Enum.Font.GothamBlack, TextSize = 26,
+	TextStrokeTransparency = 0, Visible = false,
+}, gui)
+local hurt = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(255, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 0 }, gui)
+
+-- ------------------------------------------------------------ PANEL FRAME
+local function makePanel(title, w, h)
+	local f = new("Frame", {
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -24, 0.5, 0), Size = UDim2.fromOffset(w, h),
+		BackgroundColor3 = C3(20, 22, 32), BackgroundTransparency = 0.05, BorderSizePixel = 0, Visible = false,
+	}, gui)
+	corner(f, 14)
+	local st = stroke(f, C3(255, 214, 74), 2, 0.2)
+	local t = mkLabel(f, title, UDim2.fromOffset(16, 10), UDim2.new(1, -32, 0, 34), 26, C3(255, 214, 74))
+	local sub = mkLabel(f, "", UDim2.fromOffset(16, 44), UDim2.new(1, -32, 0, 36), 14, C3(200, 205, 220), nil, Enum.Font.Gotham)
+	local content = new("Frame", { Position = UDim2.fromOffset(12, 86), Size = UDim2.new(1, -24, 1, -96), BackgroundTransparency = 1 }, f)
+	local lay = new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, content)
+	return { frame = f, title = t, sub = sub, content = content, stroke = st }
+end
+
+local function clearContent(p)
+	for _, c in ipairs(p.content:GetChildren()) do
+		if not c:IsA("UIListLayout") then c:Destroy() end
+	end
+end
+
+local order = 0
+local function row(parent, h)
+	order = order + 1
+	return new("Frame", { Size = UDim2.new(1, 0, 0, h), BackgroundTransparency = 1, LayoutOrder = order }, parent)
+end
+
+-- ------------------------------------------------------------ PORTAL PANEL
+local portal = makePanel("", 430, 560)
+local curZone = nil
+local partyLists = {}
+local myPartyId = nil
+local sel = { diff = 1, max = 1 }
+local countdownLabel, countdownAt
+
+local function renderPortal()
+	local loc = Config.Locations[curZone]
+	if not loc then return end
+	clearContent(portal)
+	portal.title.Text = loc.name
+	portal.sub.Text = loc.desc
+	order = 0
+	local unlocked = data.unlocked[loc.id] or 1
+	if sel.diff > unlocked then sel.diff = unlocked end
+	local list = partyLists[curZone] or {}
+	local mine
+	for _, pt in ipairs(list) do
+		if pt.id == myPartyId then mine = pt end
+	end
+	countdownLabel = nil
+	if mine then
+		local d = Config.Difficulties[mine.diff]
+		local r = row(portal.content, 30)
+		mkLabel(r, "YOUR PARTY  -  " .. d.name, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 20, hex(d.color))
+		local names = row(portal.content, 24 * #mine.names + 8)
+		for i, n in ipairs(mine.names) do
+			mkLabel(names, (n == mine.host and "[HOST] " or "") .. n, UDim2.fromOffset(8, (i - 1) * 24), UDim2.new(1, -8, 0, 24), 17)
+		end
+		local st = row(portal.content, 26)
+		countdownLabel = mkLabel(st, "Players " .. mine.n .. " / " .. mine.max .. "  -  waiting...", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 16, C3(200, 220, 255))
+		countdownAt = mine.startAt
+		local br = row(portal.content, 44)
+		if mine.hostId == lp.UserId then
+			mkButton(br, "START NOW", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0), C3(60, 170, 80), function() ToServer:FireServer("StartParty") end)
+			mkButton(br, "LEAVE", UDim2.fromScale(0.5, 0), UDim2.new(0.5, 0, 1, 0), C3(180, 60, 60), function() ToServer:FireServer("LeaveParty") end).Position = UDim2.new(0.5, 4, 0, 0)
+		else
+			mkButton(br, "LEAVE PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(180, 60, 60), function() ToServer:FireServer("LeaveParty") end)
+		end
+		return
+	end
+	-- difficulty
+	local r1 = row(portal.content, 22)
+	mkLabel(r1, "DIFFICULTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	local r2 = row(portal.content, 44)
+	for i, d in ipairs(Config.Difficulties) do
+		local locked = i > unlocked
+		local b = mkButton(r2, locked and "LOCKED" or d.name, UDim2.new((i - 1) / 5, 2, 0, 0), UDim2.new(0.2, -4, 1, 0),
+			locked and C3(60, 62, 72) or (sel.diff == i and hex(d.color) or C3(50, 54, 70)), function()
+				if not locked then sel.diff = i renderPortal() end
+			end)
+		b.TextSize = locked and 11 or 13
+		b.TextColor3 = (sel.diff == i and not locked) and C3(20, 20, 20) or C3(255, 255, 255)
+	end
+	local r3 = row(portal.content, 22)
+	mkLabel(r3, "MAX PLAYERS  (1 = solo)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	local r4 = row(portal.content, 40)
+	for i = 1, 4 do
+		mkButton(r4, tostring(i), UDim2.new((i - 1) / 4, 2, 0, 0), UDim2.new(0.25, -4, 1, 0), sel.max == i and C3(80, 150, 255) or C3(50, 54, 70), function()
+			sel.max = i
+			renderPortal()
+		end)
+	end
+	local dd = Config.Difficulties[sel.diff]
+	local r5 = row(portal.content, 44)
+	mkButton(r5, "CREATE PARTY  (" .. dd.name .. ", " .. sel.max .. "P)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(60, 170, 80), function()
+		ToServer:FireServer("CreateParty", curZone, sel.diff, sel.max)
+	end)
+	local r6 = row(portal.content, 22)
+	mkLabel(r6, "OPEN PARTIES", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	if #list == 0 then
+		local e = row(portal.content, 30)
+		mkLabel(e, "No open parties - create one!", UDim2.fromOffset(6, 0), UDim2.fromScale(1, 1), 14, C3(170, 175, 190), nil, Enum.Font.Gotham)
+	end
+	for i, pt in ipairs(list) do
+		if i <= 5 then
+			local d = Config.Difficulties[pt.diff]
+			local r = row(portal.content, 40)
+			local bg = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(36, 40, 56), BorderSizePixel = 0 }, r)
+			corner(bg, 8)
+			mkLabel(bg, pt.host .. "'s party", UDim2.fromOffset(10, 2), UDim2.new(0.55, 0, 0, 20), 15)
+			mkLabel(bg, d.name .. "  " .. pt.n .. "/" .. pt.max, UDim2.fromOffset(10, 20), UDim2.new(0.55, 0, 0, 18), 13, hex(d.color))
+			local can = pt.diff <= unlocked and pt.n < pt.max
+			mkButton(bg, pt.n >= pt.max and "FULL" or (pt.diff > unlocked and "LOCKED" or "JOIN"), UDim2.new(1, -92, 0, 6), UDim2.fromOffset(84, 28),
+				can and C3(70, 130, 220) or C3(70, 72, 82), function()
+					if can then ToServer:FireServer("JoinParty", pt.id) end
+				end)
+		end
+	end
+end
+
+-- ------------------------------------------------------------ UPGRADE PANEL
+local upPanel = makePanel("UPGRADES", 470, 600)
+upPanel.sub.Text = "Spend skill points on your weapons (1 point per level) and coins on hero upgrades."
+local upTab = "Swordsman"
+
+local function statText(cls, id, upg)
+	local ws = Config.weaponStats(cls, upg)
+	if id == "Damage" then return string.format("%.0f", ws.damage) .. " dmg"
+	elseif id == "Speed" then return string.format("%.2f", 1 / ws.cooldown) .. " hits/s"
+	elseif id == "Range" then return string.format("%.0f", ws.range) .. " studs"
+	else return string.format("%.0f", ws.crit * 100) .. "% crit" end
+end
+
+local function renderUpgrade()
+	clearContent(upPanel)
+	order = 0
+	local r0 = row(upPanel.content, 26)
+	mkLabel(r0, "Skill points: " .. data.points .. "      Coins: " .. data.coins, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 18, C3(120, 255, 150))
+	local tabs = row(upPanel.content, 40)
+	for i, cls in ipairs(Config.ClassOrder) do
+		local b = mkButton(tabs, string.upper(cls), UDim2.new((i - 1) / 3, 2, 0, 0), UDim2.new(1 / 3, -4, 1, 0), upTab == cls and Config.Classes[cls].color or C3(50, 54, 70), function()
+			upTab = cls
+			renderUpgrade()
+		end)
+		b.TextSize = 14
+	end
+	local upg = data.upg[upTab] or {}
+	for _, s in ipairs(Config.Stats) do
+		local lv = upg[s.id] or 0
+		local r = row(upPanel.content, 62)
+		local bg = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(34, 38, 54), BorderSizePixel = 0 }, r)
+		corner(bg, 8)
+		mkLabel(bg, s.name .. "   Lv." .. lv .. "/" .. s.max, UDim2.fromOffset(10, 4), UDim2.new(1, -90, 0, 22), 17)
+		local nextUpg = {}
+		for k, v in pairs(upg) do nextUpg[k] = v end
+		nextUpg[s.id] = lv + 1
+		local now = statText(upTab, s.id, upg)
+		local nxt = lv >= s.max and "MAX" or statText(upTab, s.id, nextUpg)
+		mkLabel(bg, now .. "  ->  " .. nxt, UDim2.fromOffset(10, 26), UDim2.new(1, -90, 0, 16), 14, C3(130, 220, 255), nil, Enum.Font.Gotham)
+		mkLabel(bg, s.fmt, UDim2.fromOffset(10, 42), UDim2.new(1, -90, 0, 16), 11, C3(160, 165, 185), nil, Enum.Font.Gotham)
+		local can = data.points >= 1 and lv < s.max
+		mkButton(bg, lv >= s.max and "MAX" or "+1", UDim2.new(1, -74, 0, 12), UDim2.fromOffset(64, 38), can and C3(60, 170, 80) or C3(70, 72, 82), function()
+			if can then ToServer:FireServer("Upgrade", upTab, s.id) end
+		end)
+	end
+	local rh = row(upPanel.content, 22)
+	mkLabel(rh, "HERO UPGRADES (coins)", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, C3(255, 214, 74))
+	local function coinRow(name, lvl, max, cost, desc, action)
+		local r = row(upPanel.content, 52)
+		local bg = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(34, 38, 54), BorderSizePixel = 0 }, r)
+		corner(bg, 8)
+		mkLabel(bg, name .. "   Lv." .. lvl .. "/" .. max, UDim2.fromOffset(10, 4), UDim2.new(1, -120, 0, 22), 17)
+		mkLabel(bg, desc, UDim2.fromOffset(10, 28), UDim2.new(1, -120, 0, 18), 12, C3(160, 165, 185), nil, Enum.Font.Gotham)
+		local can = lvl < max and data.coins >= cost
+		mkButton(bg, lvl >= max and "MAX" or (cost .. " coins"), UDim2.new(1, -108, 0, 8), UDim2.fromOffset(98, 36), can and C3(200, 150, 40) or C3(70, 72, 82), function()
+			if can then ToServer:FireServer(action) end
+		end)
+	end
+	coinRow("Vitality", data.vit, Config.VitMax, Config.vitCost(data.vit), "+12 max HP per level", "BuyVit")
+	coinRow("Swiftness", data.swift, Config.SwiftMax, Config.swiftCost(data.swift), "+0.25 move speed per level", "BuySwift")
+end
+
+-- ------------------------------------------------------------ RESULT PANEL
+local result = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(480, 340),
+	BackgroundColor3 = C3(20, 22, 32), BorderSizePixel = 0, Visible = false, ZIndex = 30,
+}, gui)
+corner(result, 16)
+local resStroke = stroke(result, C3(255, 214, 74), 3)
+local resTitle = mkLabel(result, "", UDim2.fromOffset(0, 14), UDim2.new(1, 0, 0, 50), 42, C3(255, 214, 74), Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
+local resBody = mkLabel(result, "", UDim2.fromOffset(20, 76), UDim2.new(1, -40, 0, 190), 20, nil, Enum.TextXAlignment.Center)
+mkButton(result, "RETURN TO LOBBY", UDim2.new(0.5, -110, 1, -60), UDim2.fromOffset(220, 44), C3(70, 130, 220), function()
+	ToServer:FireServer("ReturnLobby")
+end)
+
+-- ============================================================ DATA CALLBACK
+onData = function()
+	lvlLabel.Text = "Lv." .. data.level
+	xpBar.fill.Size = UDim2.fromScale(math.clamp(data.xp / math.max(1, data.need), 0, 1), 1)
+	xpBar.txt.Text = "XP " .. data.xp .. " / " .. data.need
+	coinLabel.Text = "Coins: " .. data.coins
+	ptsLabel.Text = "Skill points: " .. data.points
+	classLabel.Text = data.class and string.upper(data.class) or "NO WEAPON"
+	classPrompt.Visible = (data.class == nil) and not lp:GetAttribute("InRun")
+	if curZone == "upgrade" then renderUpgrade() end
+	if Config.Locations[curZone or ""] then renderPortal() end
+end
+lp:GetAttributeChangedSignal("Data"):Connect(readData)
+lp:GetAttributeChangedSignal("InRun"):Connect(function()
+	classPrompt.Visible = (data.class == nil) and not lp:GetAttribute("InRun")
+end)
+readData()
+onData()
+
+-- ============================================================ CAMERA / INPUT
+local function char()
+	local c = lp.Character
+	if not c then return nil end
+	local h = c:FindFirstChildOfClass("Humanoid")
+	local r = c:FindFirstChild("HumanoidRootPart")
+	if h and r then return c, h, r end
+	return nil
+end
+
+local camPos = Vector3.new(0, 0, 32)
+local zoomH = 78
+UIS.InputChanged:Connect(function(input, gp)
+	if input.UserInputType == Enum.UserInputType.MouseWheel and not gp then
+		zoomH = math.clamp(zoomH - input.Position.Z * 6, 45, 125)
+	end
+end)
+
+local function aimPoint()
+	local m = UIS:GetMouseLocation()
+	local ray = cam:ViewportPointToRay(m.X, m.Y)
+	if math.abs(ray.Direction.Y) < 1e-4 then return nil end
+	local t = -ray.Origin.Y / ray.Direction.Y
+	return ray.Origin + ray.Direction * t
+end
+
+RunService:BindToRenderStep("TopDownCam", Enum.RenderPriority.Camera.Value + 1, function(dt)
+	cam = workspace.CurrentCamera
+	cam.CameraType = Enum.CameraType.Scriptable
+	cam.FieldOfView = 45
+	local _, _, r = char()
+	if r then
+		local target = Vector3.new(r.Position.X, 0, r.Position.Z)
+		if (target - camPos).Magnitude > 120 then
+			camPos = target
+		else
+			camPos = camPos:Lerp(target, 1 - math.exp(-14 * dt))
+		end
+	end
+	cam.CFrame = CFrame.new(camPos.X, zoomH, camPos.Z) * CFrame.Angles(-math.pi / 2, 0, 0)
+end)
+
+local attacking = false
+local dashReady = 0
+local dashUntil = 0
+local dashDir = Vector3.new(0, 0, -1)
+
+local function moveVector()
+	local x, z = 0, 0
+	if UIS:IsKeyDown(Enum.KeyCode.W) or UIS:IsKeyDown(Enum.KeyCode.Up) then z = z - 1 end
+	if UIS:IsKeyDown(Enum.KeyCode.S) or UIS:IsKeyDown(Enum.KeyCode.Down) then z = z + 1 end
+	if UIS:IsKeyDown(Enum.KeyCode.A) or UIS:IsKeyDown(Enum.KeyCode.Left) then x = x - 1 end
+	if UIS:IsKeyDown(Enum.KeyCode.D) or UIS:IsKeyDown(Enum.KeyCode.Right) then x = x + 1 end
+	local v = Vector3.new(x, 0, z)
+	if v.Magnitude > 0 then v = v.Unit end
+	return v
+end
+
+local function tryDash()
+	local _, h, r = char()
+	if not h or h.Health <= 0 then return end
+	local now = os.clock()
+	if now < dashReady then return end
+	dashReady = now + Config.DashCooldown
+	local dir = moveVector()
+	if dir.Magnitude < 0.1 then
+		local lv = r.CFrame.LookVector
+		dir = Vector3.new(lv.X, 0, lv.Z)
+		if dir.Magnitude < 0.01 then dir = Vector3.new(0, 0, -1) end
+		dir = dir.Unit
+	end
+	dashDir = dir
+	dashUntil = now + 0.2
+	ToServer:FireServer("Dash")
+	h.WalkSpeed = 85
+	r.AssemblyLinearVelocity = Vector3.new(dir.X * 85, r.AssemblyLinearVelocity.Y, dir.Z * 85)
+	task.delay(0.2, function()
+		if h.Parent then h.WalkSpeed = lp:GetAttribute("WalkSpeed") or 20 end
+	end)
+end
+
+UIS.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		attacking = true
+	elseif input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.LeftShift then
+		tryDash()
+	end
+end)
+UIS.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then attacking = false end
+end)
+
+local lastSend = 0
+RunService.RenderStepped:Connect(function()
+	local _, h, r = char()
+	-- HUD bars
+	if h then
+		local frac = math.clamp(h.Health / math.max(1, h.MaxHealth), 0, 1)
+		hpBar.fill.Size = UDim2.fromScale(frac, 1)
+		hpBar.fill.BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.75, 0.9)
+		hpBar.txt.Text = "HP  " .. math.ceil(h.Health) .. " / " .. math.ceil(h.MaxHealth)
+	end
+	local dleft = math.max(0, dashReady - os.clock())
+	dashBar.fill.Size = UDim2.fromScale(1 - dleft / Config.DashCooldown, 1)
+	dashBar.txt.Text = dleft > 0 and ("DASH  " .. string.format("%.1f", dleft) .. "s") or "DASH READY  [SPACE]"
+	if countdownLabel and countdownAt then
+		local left = math.max(0, math.ceil(countdownAt - workspace:GetServerTimeNow()))
+		countdownLabel.Text = "Party full! Starting in " .. left .. "..."
+	end
+	if not h or not r or h.Health <= 0 then return end
+	h.AutoRotate = false
+	local aim = aimPoint()
+	if aim then
+		local p = r.Position
+		local d = Vector3.new(aim.X - p.X, 0, aim.Z - p.Z)
+		if d.Magnitude > 0.5 then
+			r.CFrame = CFrame.lookAt(p, p + d)
+		end
+	end
+	if os.clock() < dashUntil then
+		h:Move(dashDir, false)
+	else
+		h:Move(moveVector(), false)
+	end
+	if attacking and lp:GetAttribute("InRun") and aim and os.clock() - lastSend > 0.06 then
+		lastSend = os.clock()
+		ToServer:FireServer("Attack", aim)
+	end
+end)
+
+lp.CharacterAdded:Connect(function()
+	downLabel.Visible = false
+end)
+
+-- ============================================================ FX
+local fxFolder = Instance.new("Folder")
+fxFolder.Name = "FX"
+fxFolder.Parent = workspace
+local NEON = Enum.Material.Neon
+
+local function fxPart(shape, size, cf, color, mat, trans)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Shape = shape
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color
+	p.Material = mat or NEON
+	p.Transparency = trans or 0
+	p.Parent = fxFolder
+	return p
+end
+local function fxDisc(d, x, y, z, color, trans, mat, thick)
+	return fxPart(Enum.PartType.Cylinder, Vector3.new(thick or 0.2, d, d), CFrame.new(x, y, z) * CFrame.Angles(0, 0, math.pi / 2), color, mat, trans)
+end
+local function tw(o, t, props, style)
+	TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+end
+
+local H = {}
+
+H.Slash = function(x, z, dx, dz, range, arcDeg, crit)
+	local col = crit and C3(255, 215, 80) or C3(190, 235, 255)
+	local N = 10
+	local half = math.rad(arcDeg) / 2
+	for i = 0, N - 1 do
+		local phi = -half + (i / (N - 1)) * half * 2
+		local c, s = math.cos(phi), math.sin(phi)
+		local rx, rz = dx * c - dz * s, dx * s + dz * c
+		local pos = Vector3.new(x + rx * range * 0.85, 2.2, z + rz * range * 0.85)
+		local tx, tz = -rz, rx
+		local seg = fxPart(Enum.PartType.Block, Vector3.new(0.7, 0.12, (half * 2 / N) * range * 1.5), CFrame.lookAt(pos, pos + Vector3.new(tx, 0, tz)), col, NEON, 1)
+		task.delay(i * 0.01, function()
+			seg.Transparency = 0.05
+			tw(seg, 0.28, { Transparency = 1 })
+			Debris:AddItem(seg, 0.4)
+		end)
+	end
+end
+
+local projs = {}
+local function addProjPart(pr, shape, size, off, color, mat, trans)
+	local p = fxPart(shape, size, CFrame.new(), color, mat, trans)
+	table.insert(pr.parts, { p, off })
+	return p
+end
+
+H.Proj = function(id, kind, x, z, dx, dz, speed, range)
+	local pr = { kind = kind, x = x, z = z, dx = dx, dz = dz, speed = speed, left = range, parts = {}, acc = 0 }
+	local B, CY = Enum.PartType.Block, Enum.PartType.Cylinder
+	local flat = CFrame.Angles(0, 0, math.pi / 2)
+	if kind == "arrow" then
+		addProjPart(pr, B, Vector3.new(0.22, 0.16, 2.6), CFrame.new(), C3(235, 225, 190), Enum.Material.Wood)
+		addProjPart(pr, B, Vector3.new(0.55, 0.16, 0.55), CFrame.new(0, 0, -1.4) * CFrame.Angles(0, math.pi / 4, 0), C3(210, 220, 235), Enum.Material.Metal)
+		addProjPart(pr, B, Vector3.new(0.75, 0.12, 0.5), CFrame.new(0, 0, 1.1), C3(215, 60, 60), Enum.Material.Fabric)
+	elseif kind == "fireball" then
+		local o = addProjPart(pr, CY, Vector3.new(0.5, 3.0, 3.0), flat, C3(255, 120, 30), NEON, 0.25)
+		addProjPart(pr, CY, Vector3.new(0.6, 1.7, 1.7), CFrame.new(0, 0.1, 0) * flat, C3(255, 230, 120), NEON, 0)
+		local l = Instance.new("PointLight")
+		l.Color = C3(255, 140, 50)
+		l.Range = 22
+		l.Brightness = 2
+		l.Parent = o
+	elseif kind == "spit" then
+		addProjPart(pr, CY, Vector3.new(0.5, 1.7, 1.7), flat, C3(120, 255, 60), NEON, 0.1)
+		addProjPart(pr, CY, Vector3.new(0.6, 0.8, 0.8), CFrame.new(0, 0.1, 0) * flat, C3(220, 255, 170), NEON, 0)
+	else
+		addProjPart(pr, B, Vector3.new(0.3, 0.15, 1.7), CFrame.new(), C3(185, 190, 200), Enum.Material.Metal)
+		addProjPart(pr, B, Vector3.new(0.9, 0.15, 0.25), CFrame.new(0, 0, 0.5), C3(110, 70, 40), Enum.Material.Wood)
+	end
+	projs[id] = pr
+end
+
+local function killProj(id)
+	local pr = projs[id]
+	if not pr then return nil end
+	projs[id] = nil
+	for _, e in ipairs(pr.parts) do e[1]:Destroy() end
+	return pr
+end
+
+H.ProjEnd = function(id, x, z, kind, radius)
+	killProj(id)
+	if kind == "fireball" then
+		local a = fxDisc(radius * 0.6, x, 2, z, C3(255, 130, 30), 0.15, NEON, 0.3)
+		tw(a, 0.35, { Size = Vector3.new(0.3, radius * 2.1, radius * 2.1), Transparency = 1 })
+		local b = fxDisc(radius * 0.3, x, 2.2, z, C3(255, 235, 140), 0, NEON, 0.3)
+		tw(b, 0.25, { Size = Vector3.new(0.3, radius * 1.2, radius * 1.2), Transparency = 1 })
+		local c = fxDisc(radius * 1.0, x, 0.3, z, C3(40, 20, 10), 0.4, Enum.Material.SmoothPlastic, 0.1)
+		tw(c, 0.8, { Transparency = 1 })
+		Debris:AddItem(a, 0.5)
+		Debris:AddItem(b, 0.5)
+		Debris:AddItem(c, 0.9)
+	else
+		local col = kind == "spit" and C3(130, 255, 70) or (kind == "arrow" and C3(255, 240, 190) or C3(200, 200, 210))
+		local a = fxDisc(1.0, x, 2, z, col, 0.1, NEON, 0.2)
+		tw(a, 0.25, { Size = Vector3.new(0.2, 3.2, 3.2), Transparency = 1 })
+		Debris:AddItem(a, 0.4)
+	end
+end
+
+H.Dmg = function(x, z, amount, crit, onPlayer)
+	local a = fxPart(Enum.PartType.Block, Vector3.new(0.5, 0.5, 0.5), CFrame.new(x + (math.random() - 0.5) * 3, 5, z), C3(255, 255, 255), Enum.Material.SmoothPlastic, 1)
+	local g = Instance.new("BillboardGui")
+	g.Size = UDim2.fromOffset(120, 44)
+	g.AlwaysOnTop = true
+	g.LightInfluence = 0
+	g.Adornee = a
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.Font = Enum.Font.GothamBlack
+	t.TextSize = crit and 32 or 22
+	t.Text = tostring(amount) .. (crit and "!" or "")
+	t.TextColor3 = onPlayer and C3(255, 80, 80) or (crit and C3(255, 220, 70) or C3(255, 255, 255))
+	t.TextStrokeTransparency = 0
+	t.Parent = g
+	g.Parent = a
+	tw(a, 0.8, { Position = a.Position + Vector3.new(0, 0, -5) })
+	task.delay(0.45, function()
+		tw(t, 0.35, { TextTransparency = 1, TextStrokeTransparency = 1 }, Enum.EasingStyle.Linear)
+	end)
+	Debris:AddItem(a, 0.9)
+end
+
+H.Tele = function(x, z, r, dur)
+	local base = fxDisc(r * 2, x, 0.3, z, C3(255, 40, 40), 0.78, NEON, 0.05)
+	local ringp = fxDisc(r * 2 + 0.8, x, 0.25, z, C3(255, 90, 60), 0.4, NEON, 0.05)
+	local fill = fxDisc(0.5, x, 0.35, z, C3(255, 60, 40), 0.5, NEON, 0.05)
+	tw(fill, dur, { Size = Vector3.new(0.05, r * 2, r * 2) }, Enum.EasingStyle.Linear)
+	task.delay(dur, function()
+		base:Destroy()
+		ringp:Destroy()
+		fill:Destroy()
+	end)
+end
+
+local rocks = {}
+H.Rock = function(sx, sz, tx, tz, dur)
+	local a = fxPart(Enum.PartType.Cylinder, Vector3.new(2, 4.4, 4.4), CFrame.new(sx, 3, sz) * CFrame.Angles(0, 0, math.pi / 2), C3(120, 120, 126), Enum.Material.Slate)
+	local b = fxPart(Enum.PartType.Cylinder, Vector3.new(2.4, 2.8, 2.8), CFrame.new(sx, 3, sz) * CFrame.Angles(0, 0, math.pi / 2), C3(150, 150, 156), Enum.Material.Slate)
+	table.insert(rocks, { a = a, b = b, t = 0, dur = dur, sx = sx, sz = sz, tx = tx, tz = tz })
+end
+
+H.Boom = function(x, z, r)
+	local a = fxDisc(r * 1.2, x, 0.5, z, C3(190, 170, 140), 0.35, Enum.Material.SmoothPlastic, 0.2)
+	tw(a, 0.6, { Size = Vector3.new(0.2, r * 2.6, r * 2.6), Transparency = 1 })
+	local b = fxDisc(r * 0.8, x, 0.6, z, C3(255, 200, 120), 0.2, NEON, 0.2)
+	tw(b, 0.35, { Size = Vector3.new(0.2, r * 1.8, r * 1.8), Transparency = 1 })
+	for i = 1, 8 do
+		local ang = i * math.pi / 4
+		local d = fxDisc(0.9, x, 1.5, z, C3(110, 110, 116), 0, Enum.Material.Slate, 0.5)
+		tw(d, 0.5, { Position = Vector3.new(x + math.cos(ang) * r * 0.9, 1.5, z + math.sin(ang) * r * 0.9), Transparency = 1 })
+		Debris:AddItem(d, 0.6)
+	end
+	Debris:AddItem(a, 0.7)
+	Debris:AddItem(b, 0.5)
+end
+
+H.Death = function(x, z, r, kind)
+	local col = C3(120, 190, 80)
+	if kind == "titan" then col = C3(140, 140, 146) elseif kind == "king" then col = C3(255, 205, 70) elseif kind == "goblin" then col = C3(150, 210, 70) end
+	for i = 1, 8 do
+		local ang = i * math.pi / 4 + math.random() * 0.4
+		local d = fxDisc(r * 0.5, x, 1.5, z, col, 0.1, Enum.Material.SmoothPlastic, 0.3)
+		tw(d, 0.5, { Position = Vector3.new(x + math.cos(ang) * r * 1.8, 1.5, z + math.sin(ang) * r * 1.8), Transparency = 1, Size = Vector3.new(0.1, 0.2, 0.2) })
+		Debris:AddItem(d, 0.6)
+	end
+	local puff = fxDisc(r * 1.6, x, 1.0, z, C3(255, 255, 255), 0.3, NEON, 0.2)
+	tw(puff, 0.4, { Size = Vector3.new(0.1, r * 3, r * 3), Transparency = 1 })
+	Debris:AddItem(puff, 0.5)
+end
+
+H.DashFx = function(x, z)
+	for i = 1, 3 do
+		local d = fxDisc(2.2 - i * 0.4, x, 0.6 + i * 0.05, z, C3(200, 235, 255), 0.4, NEON, 0.1)
+		tw(d, 0.4, { Size = Vector3.new(0.1, 6, 6), Transparency = 1 })
+		Debris:AddItem(d, 0.5)
+	end
+end
+
+H.Hurt = function()
+	hurt.BackgroundTransparency = 0.7
+	tw(hurt, 0.35, { BackgroundTransparency = 1 })
+end
+
+-- projectile + rock simulation
+RunService.Heartbeat:Connect(function(dt)
+	for id, pr in pairs(projs) do
+		local step = pr.speed * dt
+		pr.x = pr.x + pr.dx * step
+		pr.z = pr.z + pr.dz * step
+		pr.left = pr.left - step
+		local pos = Vector3.new(pr.x, 2.2, pr.z)
+		local base = CFrame.lookAt(pos, pos + Vector3.new(pr.dx, 0, pr.dz))
+		for _, e in ipairs(pr.parts) do e[1].CFrame = base * e[2] end
+		pr.acc = pr.acc + dt
+		if (pr.kind == "fireball" or pr.kind == "spit") and pr.acc > 0.035 then
+			pr.acc = 0
+			local col = pr.kind == "fireball" and C3(255, 150, 40) or C3(120, 255, 70)
+			local t = fxDisc(pr.kind == "fireball" and 1.8 or 1.0, pr.x, 2.0, pr.z, col, 0.3, NEON, 0.2)
+			tw(t, 0.3, { Size = Vector3.new(0.1, 0.2, 0.2), Transparency = 1 })
+			Debris:AddItem(t, 0.4)
+		end
+		if pr.left < -4 then killProj(id) end
+	end
+	for i = #rocks, 1, -1 do
+		local rk = rocks[i]
+		rk.t = rk.t + dt
+		local a = math.min(1, rk.t / rk.dur)
+		local x = rk.sx + (rk.tx - rk.sx) * a
+		local z = rk.sz + (rk.tz - rk.sz) * a
+		local y = 1.5 + math.sin(math.pi * a) * 16
+		local cf = CFrame.new(x, y, z) * CFrame.Angles(a * 8, 0, math.pi / 2)
+		rk.a.CFrame = cf
+		rk.b.CFrame = cf * CFrame.new(0.2, 0, 0)
+		if a >= 1 then
+			rk.a:Destroy()
+			rk.b:Destroy()
+			table.remove(rocks, i)
+		end
+	end
+end)
+
+-- ============================================================ ENVIRONMENT
+local cc = Instance.new("ColorCorrectionEffect")
+cc.Parent = Lighting
+local bloom = Instance.new("BloomEffect")
+bloom.Parent = Lighting
+local ENV = {
+	lobby = { amb = C3(150, 150, 160), out = C3(160, 160, 170), br = 2.2, clock = 14, tint = C3(255, 250, 240), sat = 0.12, con = 0.05, bloom = 0.3 },
+	forest = { amb = C3(100, 120, 98), out = C3(125, 145, 112), br = 1.9, clock = 16.5, tint = C3(255, 244, 214), sat = 0.18, con = 0.1, bloom = 0.35 },
+	cave = { amb = C3(88, 82, 120), out = C3(80, 74, 112), br = 1.2, clock = 0, tint = C3(205, 205, 255), sat = 0.05, con = 0.12, bloom = 0.7 },
+}
+local function applyEnv(name)
+	local e = ENV[name] or ENV.lobby
+	Lighting.GlobalShadows = false
+	TweenService:Create(Lighting, TweenInfo.new(1), { Ambient = e.amb, OutdoorAmbient = e.out, Brightness = e.br, ClockTime = e.clock }):Play()
+	cc.TintColor = e.tint
+	cc.Saturation = e.sat
+	cc.Contrast = e.con
+	bloom.Intensity = e.bloom
+	bloom.Size = 28
+	bloom.Threshold = 0.9
+end
+applyEnv("lobby")
+
+-- ============================================================ SERVER MESSAGES
+H.Toast = function(text, color, dur) showToast(text, color, dur) end
+H.Env = function(name) applyEnv(name) end
+H.Down = function() downLabel.Visible = true end
+
+H.Zone = function(zid)
+	curZone = zid
+	portal.frame.Visible = false
+	upPanel.frame.Visible = false
+	if zid == "upgrade" then
+		upPanel.frame.Visible = true
+		renderUpgrade()
+	elseif zid and Config.Locations[zid] then
+		portal.frame.Visible = true
+		renderPortal()
+	end
+end
+
+H.Parties = function(loc, list, mineId)
+	partyLists[loc] = list
+	myPartyId = mineId
+	if curZone == loc then renderPortal() end
+end
+
+H.Run = function(d)
+	waveFrame.Visible = true
+	waveTitle.Text = (d.wave and d.wave > 0) and ("WAVE " .. d.wave .. " / " .. d.waves) or "GET READY"
+	waveSub.Text = d.loc .. "  [" .. d.diff .. "]   -   Enemies left: " .. d.left
+	if d.boss then
+		bossFrame.Visible = true
+		bossName.Text = string.upper(d.boss.name)
+		bossBar.fill.Size = UDim2.fromScale(math.clamp(d.boss.hp / d.boss.max, 0, 1), 1)
+		bossBar.txt.Text = math.ceil(d.boss.hp) .. " / " .. math.ceil(d.boss.max)
+	else
+		bossFrame.Visible = false
+	end
+end
+
+H.RunEnd = function()
+	waveFrame.Visible = false
+	bossFrame.Visible = false
+	result.Visible = false
+	downLabel.Visible = false
+end
+
+H.Result = function(r)
+	waveFrame.Visible = false
+	bossFrame.Visible = false
+	result.Visible = true
+	resTitle.Text = r.won and "VICTORY!" or "DEFEAT"
+	resTitle.TextColor3 = r.won and C3(255, 214, 74) or C3(255, 90, 90)
+	resStroke.Color = resTitle.TextColor3
+	local txt = r.loc .. "  [" .. r.diff .. "]\n\nKills: " .. r.kills .. "\nXP earned: +" .. r.xp .. "\nCoins earned: +" .. r.coins .. "\nYour level: " .. r.level
+	if r.unlocked then txt = txt .. "\n\nNEW DIFFICULTY UNLOCKED: " .. string.upper(r.unlocked) .. "!" end
+	if not r.won then txt = txt .. "\n\nAll heroes fell. Try again!" end
+	resBody.Text = txt
+end
+
+ToClient.OnClientEvent:Connect(function(name, ...)
+	local f = H[name]
+	if f then
+		local ok, err = pcall(f, ...)
+		if not ok then warn("[client] " .. name .. ": " .. tostring(err)) end
+	end
+end)
+]]></ProtectedString>
+</Properties>
+</Item>
+</Item>
+<Item class="StarterCharacterScripts" referent="RBX11">
+<Properties>
+<string name="Name">StarterCharacterScripts</string>
+</Properties>
+</Item>
+</Item>
+</roblox>
