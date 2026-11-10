@@ -437,6 +437,14 @@ return Theme
 <ProtectedString name="Source"><![CDATA[-- WeaponModels (ReplicatedStorage.WeaponModels): procedural, top-down "sprite" models of every weapon.
 -- Used by the server (hero sprite) and by the client (inventory / chest previews in ViewportFrames).
 -- The richer the rarity (w.tier 1..7) the more detail, glow, particles and floating pieces a weapon gets.
+--
+-- v2 geometry rules (artifact free):
+--   * every shape is built from exact geometry: boxes, cylinders and flat TRIANGLES made of two WedgeParts.
+--     Curved blades / limbs are "ribbons" (strips of quads that share their corner points) - no overlapping segments.
+--   * pieces that overlap each other in the top view are stacked in separate height slabs (tops >= 0.04 studs apart)
+--     or have exactly the same colour / material, so nothing flickers (no z-fighting).
+--   * translucent glow pieces never overlap another translucent piece of the same height.
+--   * everything is expressed in "weapon units" (forward = -z, y = height) and scaled by k.
 local TweenService = game:GetService("TweenService")
 local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
@@ -450,6 +458,8 @@ local FABRIC = Enum.Material.Fabric
 local SMOOTH = Enum.Material.SmoothPlastic
 local BLK, CYL = Enum.PartType.Block, Enum.PartType.Cylinder
 local RB = "RB" -- rainbow colour marker
+local PI = math.pi
+local sin, cos, sqrt, abs, max, min = math.sin, math.cos, math.sqrt, math.abs, math.max, math.min
 
 local function C(r, g, b) return Color3.fromRGB(r, g, b) end
 local function darker(c, m)
@@ -460,6 +470,11 @@ local function lighter(c, m)
 	if c == RB then return c end
 	return c:Lerp(Color3.new(1, 1, 1), m)
 end
+local function mix(a, b, f)
+	if a == RB or b == RB then return RB end
+	return a:Lerp(b, f)
+end
+-- direction (x, z) -> yaw so that a block's local z axis points along it
 local function rot(vx, vz) return math.atan2(vx, vz) end
 
 local RAINBOW_KEYS = {}
@@ -471,17 +486,21 @@ local function cseq(a, b)
 	return ColorSequence.new(a, b or a)
 end
 
+-- ============================================================================ part factory
 local rbCounter = 0
-local function mk(parent, shape, size, cf, color, mat, trans, anchored)
-	local p = Instance.new("Part")
-	p.Shape = shape
+local function vec(x, y, z) return Vector3.new(max(x, 0.05), max(y, 0.05), max(z, 0.05)) end
+
+-- shape == nil -> WedgePart
+local function mkPart(parent, shape, size, cf, color, mat, trans, anchored, hue)
+	local p = Instance.new(shape and "Part" or "WedgePart")
+	if shape then p.Shape = shape end
 	p.Size = size
 	p.CFrame = cf
 	if color == RB then
 		rbCounter = rbCounter + 1
-		local off = (rbCounter * 0.083) % 1
-		p.Color = Color3.fromHSV(off, 0.75, 1)
-		p:SetAttribute("rb", off)
+		local off = hue or ((rbCounter * 0.083) % 1)
+		p.Color = Color3.fromHSV(off % 1, 0.75, 1)
+		p:SetAttribute("rb", off % 1)
 		CollectionService:AddTag(p, "RainbowPart")
 	else
 		p.Color = color
@@ -500,10 +519,79 @@ local function mk(parent, shape, size, cf, color, mat, trans, anchored)
 	return p
 end
 
--- builder bound to a pivot part (forward = -z, local units scaled by k)
+-- ============================================================================ geometry helpers (2D, units = (x, z))
+local function polyAt(pts, s)
+	-- point + unit tangent at fraction s (0..1) of the arc length of a polyline {{x,z},...}
+	local total = 0
+	local seg = {}
+	for i = 2, #pts do
+		local l = sqrt((pts[i][1] - pts[i - 1][1]) ^ 2 + (pts[i][2] - pts[i - 1][2]) ^ 2)
+		seg[i] = l
+		total = total + l
+	end
+	local want = max(0, min(1, s)) * total
+	local acc = 0
+	for i = 2, #pts do
+		if acc + seg[i] >= want or i == #pts then
+			local u = seg[i] > 0 and (want - acc) / seg[i] or 0
+			local ax, az, bx, bz = pts[i - 1][1], pts[i - 1][2], pts[i][1], pts[i][2]
+			local tx, tz = (bx - ax) / max(seg[i], 1e-6), (bz - az) / max(seg[i], 1e-6)
+			return ax + (bx - ax) * u, az + (bz - az) * u, tx, tz
+		end
+		acc = acc + seg[i]
+	end
+end
+
+-- ear clipping triangulation of a simple polygon {{x,z},...} -> list of {i,j,k}
+local function triangulate(pts)
+	local n = #pts
+	local idx = {}
+	local area = 0
+	for i = 1, n do
+		local a, b = pts[i], pts[i % n + 1]
+		area = area + (a[1] * b[2] - b[1] * a[2])
+		idx[i] = i
+	end
+	local sgn = area >= 0 and 1 or -1
+	local function cross(a, b, c) return ((b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1])) * sgn end
+	local function inside(p, a, b, c)
+		return cross(a, b, p) >= -1e-9 and cross(b, c, p) >= -1e-9 and cross(c, a, p) >= -1e-9
+	end
+	local out = {}
+	local guard = 0
+	while #idx > 3 and guard < 400 do
+		guard = guard + 1
+		local clipped = false
+		for i = 1, #idx do
+			local ia, ib, ic = idx[(i - 2) % #idx + 1], idx[i], idx[i % #idx + 1]
+			local a, b, c = pts[ia], pts[ib], pts[ic]
+			if cross(a, b, c) > 1e-7 then
+				local ok = true
+				for j = 1, #idx do
+					local ij = idx[j]
+					if ij ~= ia and ij ~= ib and ij ~= ic and inside(pts[ij], a, b, c) then ok = false break end
+				end
+				if ok then
+					out[#out + 1] = { ia, ib, ic }
+					table.remove(idx, i)
+					clipped = true
+					break
+				end
+			end
+		end
+		if not clipped then break end
+	end
+	if #idx == 3 then out[#out + 1] = { idx[1], idx[2], idx[3] } end
+	return out
+end
+
+-- ============================================================================ builder bound to a pivot part
+-- forward = -z, local units scaled by k. y0 = bottom of the slab, h = slab height.
 local function newS(pivot, parent, k, anchored)
 	local S = {}
+	local pcf = pivot.CFrame
 	local function place(p)
+		if S.rec then S.rec[#S.rec + 1] = p end -- S.rec = {} records every part built until it is set to nil again
 		if not anchored then
 			local w = Instance.new("WeldConstraint")
 			w.Part0 = pivot
@@ -512,48 +600,179 @@ local function newS(pivot, parent, k, anchored)
 		end
 		return p
 	end
-	function S.disc(d, color, x, z, y, mat, trans, thick)
-		local cf = pivot.CFrame * CFrame.new(x * k, y * k, z * k) * CFrame.Angles(0, 0, math.pi / 2)
-		return place(mk(parent, CYL, Vector3.new((thick or 0.3) * k, d * k, d * k), cf, color, mat, trans, anchored))
+	-- rainbow phase that flows along the weapon (so every piece of a gradient has a smooth, matching hue)
+	local function hue(x, z) return (0.55 - z * 0.065 + x * 0.04) % 1 end
+	local function P3(x, y, z) return pcf * Vector3.new(x * k, y * k, z * k) end
+	S.hue = hue
+
+	function S.box(cx, cz, sx, sz, y0, h, ry, col, mat, tr)
+		local cf = pcf * CFrame.new(cx * k, (y0 + h / 2) * k, cz * k) * CFrame.Angles(0, ry or 0, 0)
+		return place(mkPart(parent, BLK, vec(sx * k, h * k, sz * k), cf, col, mat, tr, anchored, hue(cx, cz)))
 	end
-	function S.block(sx, sz, color, x, z, y, r, mat, trans, sy)
-		local cf = pivot.CFrame * CFrame.new(x * k, y * k, z * k) * CFrame.Angles(0, r or 0, 0)
-		return place(mk(parent, BLK, Vector3.new(sx * k, (sy or 0.3) * k, sz * k), cf, color, mat, trans, anchored))
+	function S.disc(cx, cz, d, y0, h, col, mat, tr)
+		local cf = pcf * CFrame.new(cx * k, (y0 + h / 2) * k, cz * k) * CFrame.Angles(0, 0, PI / 2)
+		return place(mkPart(parent, CYL, vec(h * k, d * k, d * k), cf, col, mat, tr, anchored, hue(cx, cz)))
 	end
-	-- ring made of dashes
-	function S.ring(radius, n, wid, color, cx, cz, y, mat, trans, thick, lenMul)
-		local len = (2 * math.pi * radius / n) * (lenMul or 1.15)
+	-- invisible part (used for emitters / lights / trails)
+	function S.ghost(cx, cz, sx, sz, y0, h)
+		local p = S.box(cx, cz, sx, sz, y0 or 0.1, h or 0.1, 0, Color3.new(1, 1, 1), SMOOTH, 1)
+		return p
+	end
+	-- beam between two points (square ends)
+	function S.beam(x1, z1, x2, z2, wid, y0, h, col, mat, tr)
+		local dx, dz = x2 - x1, z2 - z1
+		local len = sqrt(dx * dx + dz * dz)
+		if len < 0.02 then return end
+		return S.box((x1 + x2) / 2, (z1 + z2) / 2, wid, len, y0, h, rot(dx, dz), col, mat, tr)
+	end
+
+	-- flat triangle prism = two wedges (classic triangle-drawing trick). a,b,c = {x, z}
+	function S.tri(a, b, c, y0, h, col, mat, tr, hu)
+		local ar = abs((b[1] - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (b[2] - a[2])) / 2
+		if ar < 0.006 then return end
+		local ym = y0 + h / 2
+		local pa, pb, pc = P3(a[1], ym, a[2]), P3(b[1], ym, b[2]), P3(c[1], ym, c[2])
+		local ab, ac, bc = pb - pa, pc - pa, pc - pb
+		local abd, acd, bcd = ab:Dot(ab), ac:Dot(ac), bc:Dot(bc)
+		if abd > acd and abd > bcd then
+			pc, pa = pa, pc
+		elseif acd > bcd and acd > abd then
+			pa, pb = pb, pa
+		end
+		ab, ac, bc = pb - pa, pc - pa, pc - pb
+		local right = ac:Cross(ab).Unit
+		local up = bc:Cross(right).Unit
+		local back = bc.Unit
+		local height = abs(ab:Dot(up))
+		local hv = hu or hue((a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3)
+		local thick = h * k
+		local l1, l2 = abs(ab:Dot(back)), abs(ac:Dot(back))
+		local made
+		if height > 0.03 and l1 > 0.03 then
+			made = place(mkPart(parent, nil, vec(thick, height, l1), CFrame.fromMatrix((pa + pb) / 2, right, up, back), col, mat, tr, anchored, hv))
+		end
+		if height > 0.03 and l2 > 0.03 then
+			made = place(mkPart(parent, nil, vec(thick, height, l2), CFrame.fromMatrix((pa + pc) / 2, -right, up, -back), col, mat, tr, anchored, hv))
+		end
+		return made
+	end
+
+	-- convex quad {{x,z} x4} (rectangles become a single block)
+	function S.quad(q, y0, h, col, mat, tr)
+		local a, b, c, d = q[1], q[2], q[3], q[4]
+		local e1x, e1z, e2x, e2z = b[1] - a[1], b[2] - a[2], d[1] - a[1], d[2] - a[2]
+		local l1, l2 = sqrt(e1x * e1x + e1z * e1z), sqrt(e2x * e2x + e2z * e2z)
+		local hv = hue((a[1] + b[1] + c[1] + d[1]) / 4, (a[2] + b[2] + c[2] + d[2]) / 4)
+		if l1 > 0.02 and l2 > 0.02 and abs(e1x * e2x + e1z * e2z) < 0.002 * l1 * l2
+			and abs((c[1] - b[1]) - e2x) < 0.01 and abs((c[2] - b[2]) - e2z) < 0.01 then
+			return place(mkPart(parent, BLK, vec(l2 * k, h * k, l1 * k),
+				pcf * CFrame.new((a[1] + c[1]) / 2 * k, (y0 + h / 2) * k, (a[2] + c[2]) / 2 * k) * CFrame.Angles(0, rot(e1x, e1z), 0),
+				col, mat, tr, anchored, hv))
+		end
+		S.tri(a, b, c, y0, h, col, mat, tr, hv)
+		S.tri(a, c, d, y0, h, col, mat, tr, hv)
+	end
+
+	-- any simple polygon (ear clipping)
+	function S.poly(pts, y0, h, col, mat, tr)
+		local hv
+		for _, t in ipairs(triangulate(pts)) do
+			S.tri(pts[t[1]], pts[t[2]], pts[t[3]], y0, h, col, mat, tr)
+		end
+	end
+
+	-- ribbon: stations {x, z, a, b}: a / b = half widths on the +n / -n side of the centre line
+	-- (n = left normal; for a blade pointing forward +n is +x). Neighbouring quads share their corner points.
+	function S.ribbon(st, y0, h, col, mat, tr)
+		local n = #st
+		local A, B, N = {}, {}, {}
+		local seg = {}
+		for i = 1, n - 1 do
+			local dx, dz = st[i + 1].x - st[i].x, st[i + 1].z - st[i].z
+			local l = max(sqrt(dx * dx + dz * dz), 1e-6)
+			seg[i] = { dx / l, dz / l }
+		end
+		for i = 1, n do
+			local t1, t2 = seg[i - 1] or seg[i], seg[i] or seg[i - 1]
+			local tx, tz = t1[1] + t2[1], t1[2] + t2[2]
+			local tl = max(sqrt(tx * tx + tz * tz), 1e-6)
+			tx, tz = tx / tl, tz / tl
+			local nx, nz = -tz, tx
+			local sx, sz = seg[min(i, n - 1)][1], seg[min(i, n - 1)][2]
+			local m = 1 / max(0.6, nx * (-sz) + nz * sx)
+			N[i] = { nx, nz }
+			A[i] = { st[i].x + nx * st[i].a * m, st[i].z + nz * st[i].a * m }
+			B[i] = { st[i].x - nx * st[i].b * m, st[i].z - nz * st[i].b * m }
+		end
+		for i = 1, n - 1 do
+			S.quad({ A[i], A[i + 1], B[i + 1], B[i] }, y0, h, col, mat, tr)
+		end
+		return { A = A, B = B, N = N, st = st }
+	end
+
+	-- ribbon along a circular arc (angles in the (x,z) plane: x = cos a, z = sin a); w0 -> w1 = full width
+	function S.arc(cx, cz, r, a0, a1, n, w0, w1, y0, h, col, mat, tr, rScale)
+		local st = {}
+		for i = 0, n do
+			local f = i / n
+			local a = a0 + (a1 - a0) * f
+			local rr = r * (1 + ((rScale or 1) - 1) * f)
+			local w = (w0 + (w1 - w0) * f) / 2
+			st[#st + 1] = { x = cx + cos(a) * rr, z = cz + sin(a) * rr, a = w, b = w }
+		end
+		return S.ribbon(st, y0, h, col, mat, tr)
+	end
+
+	-- closed ring made of exact trapezoids (a true polygon ring, no gaps / overlaps)
+	function S.band(cx, cz, r0, r1, n, y0, h, col, mat, tr, a0)
 		for i = 0, n - 1 do
-			local a = i / n * math.pi * 2
-			local tx, tz = -math.sin(a), math.cos(a)
-			S.block(wid, len, color, cx + math.cos(a) * radius, cz + math.sin(a) * radius, y, rot(tx, tz), mat, trans, thick or 0.1)
+			local aa, bb = (a0 or 0) + i / n * PI * 2, (a0 or 0) + (i + 1) / n * PI * 2
+			S.quad({
+				{ cx + cos(aa) * r0, cz + sin(aa) * r0 }, { cx + cos(aa) * r1, cz + sin(aa) * r1 },
+				{ cx + cos(bb) * r1, cz + sin(bb) * r1 }, { cx + cos(bb) * r0, cz + sin(bb) * r0 },
+			}, y0, h, col, mat, tr)
 		end
 	end
-	-- spokes radiating from a centre
-	function S.rays(n, r0, r1, wid, color, cx, cz, y, mat, trans, thick, off)
+
+	-- dashed ring (rune circle): separate dashes with a clean gap between them
+	function S.ring(cx, cz, r, n, wid, y0, h, col, mat, tr, fill)
+		local len = (2 * PI * r / n) * (fill or 0.72)
 		for i = 0, n - 1 do
-			local a = (i / n) * math.pi * 2 + (off or 0)
-			local vx, vz = math.cos(a), math.sin(a)
-			local mid = (r0 + r1) / 2
-			S.block(wid, r1 - r0, color, cx + vx * mid, cz + vz * mid, y, rot(vx, vz), mat, trans, thick or 0.1)
+			local a = i / n * PI * 2
+			S.box(cx + cos(a) * r, cz + sin(a) * r, wid, len, y0, h, rot(-sin(a), cos(a)), col, mat, tr)
 		end
 	end
-	-- polyline of blocks (3 layers) between points
-	function S.path(pts, widths, colors, ys, mats, thick)
-		for i = 2, #pts do
-			local a, b = pts[i - 1], pts[i]
-			local v = b - a
-			local len = v.Magnitude
-			local mid = (a + b) / 2
-			local r = rot(v.X, v.Y)
-			for li = 1, #widths do
-				S.block(widths[li], len + 0.12, colors[li], mid.X, mid.Y, ys[li], r, mats[li], 0, thick and thick[li] or 0.3)
-			end
+
+	-- kite / crystal / leaf: base at (cx,cz), pointing along angle a, widest at `belly` (0..1) of the length
+	function S.shard(cx, cz, len, wid, a, belly, y0, h, col, mat, tr)
+		local dx, dz = cos(a), sin(a)
+		local nx, nz = -dz, dx
+		local mx, mz = cx + dx * len * belly, cz + dz * len * belly
+		S.quad({
+			{ cx, cz }, { mx + nx * wid / 2, mz + nz * wid / 2 },
+			{ cx + dx * len, cz + dz * len }, { mx - nx * wid / 2, mz - nz * wid / 2 },
+		}, y0, h, col, mat, tr)
+	end
+	-- spike: flat base of width `wid` centred at (cx,cz), tip `len` away along angle a (optionally slanted sideways)
+	function S.spike(cx, cz, len, wid, a, y0, h, col, mat, tr, slant)
+		local dx, dz = cos(a), sin(a)
+		local nx, nz = -dz, dx
+		local sl = (slant or 0) * len
+		S.tri({ cx + nx * wid / 2, cz + nz * wid / 2 }, { cx + dx * len + nx * sl, cz + dz * len + nz * sl }, { cx - nx * wid / 2, cz - nz * wid / 2 }, y0, h, col, mat, tr)
+	end
+	-- regular polygon / diamond made of triangles around the centre
+	function S.ngon(cx, cz, r, n, a0, y0, h, col, mat, tr, sx, sz)
+		local pts = {}
+		for i = 0, n - 1 do
+			local a = (a0 or 0) + i / n * PI * 2
+			pts[#pts + 1] = { cx + cos(a) * r * (sx or 1), cz + sin(a) * r * (sz or 1) }
 		end
+		S.poly(pts, y0, h, col, mat, tr)
 	end
 	return S
 end
 
+-- ============================================================================ effects
 local function light(part, color, range, brightness)
 	local l = Instance.new("PointLight")
 	l.Color = color == RB and Color3.new(1, 1, 1) or color
@@ -614,170 +833,367 @@ local function palette(w)
 end
 
 -- ============================================================================ SWORD
-local function sword(S, w, P, out, k)
-	local t, v = w.tier, w.v
-	local leather = t <= 2 and C(84, 54, 34) or darker(P.acc, 0.55)
-	local metalCol = (t <= 2) and C(212, 168, 72) or P.acc
-	if t == 1 then metalCol = (v == 1) and C(190, 150, 70) or C(150, 150, 156) end
-	local L = 4.6 + 0.3 * t
-	local w0 = 0.95 + 0.07 * t
-	local bladeCol = (t <= 2) and lighter(P.main, 0.12) or P.main
-	if t == 6 and not w.rainbow then bladeCol = darker(P.main, 0.28) end
-	if w.rainbow then bladeCol = RB end
-	local faceCol = (t == 6 and not w.rainbow) and darker(P.main, 0.18) or lighter(P.main, 0.5)
-	if t == 1 then bladeCol, faceCol = (v == 1) and C(168, 180, 198) or C(150, 146, 140), (v == 1) and C(222, 230, 241) or C(205, 200, 195) end
-	local glowMat = t >= 3 and NEON or METAL
+-- Height slabs (weapon units): aura 0..0.09 | blade / guard / grip 0.10..0.20 | face 0.20..0.26 | fuller 0.26..0.31
+-- | gems 0.26..0.45.  Parts that share a slab never overlap in the top view.
+local SW = {
+	sw_iron = { blade = "short", guard = "bar", L = 4.5, W = 1.0 },
+	sw_falchion = { blade = "falchion", guard = "disc", L = 4.7, W = 1.35 },
+	sw_emerald = { blade = "arming", guard = "leaf", L = 5.2, W = 1.15 },
+	sw_jade = { blade = "scimitar", guard = "disc", L = 5.3, W = 1.25, tassel = true },
+	sw_frost = { blade = "broad", guard = "horn", L = 5.6, W = 1.3, deco = "ice" },
+	sw_tide = { blade = "saber", guard = "knuckle", L = 5.7, W = 1.15, deco = "wave" },
+	sw_void = { blade = "fang", guard = "fang", L = 5.9, W = 1.3, deco = "teeth", spike = true },
+	sw_thunder = { blade = "saber", guard = "bolt", L = 6.0, W = 1.2, deco = "zigzag" },
+	sw_solar = { blade = "great", guard = "sun", L = 6.3, W = 1.5, deco = "rays" },
+	sw_phoenix = { blade = "flame", guard = "wing", L = 6.4, W = 1.4, deco = "flames" },
+	sw_eclipse = { blade = "broad", guard = "crescent", L = 6.6, W = 1.5, deco = "eclipse" },
+	sw_reaper = { blade = "reaper", guard = "claw", L = 6.8, W = 1.5, deco = "hook", spike = true },
+	sw_prism = { blade = "crystal", guard = "wing", L = 7.2, W = 1.6, deco = "shards" },
+}
 
-	-- grip + pommel
-	S.block(0.42, 1.7, leather, 0, 0.25, 0.02, 0, FABRIC, 0, 0.3)
-	for i = 0, 3 do S.block(0.5, 0.12, darker(leather, 0.6), 0, -0.4 + i * 0.4, 0.04, 0, FABRIC, 0, 0.3) end
-	S.disc(0.82 + 0.05 * t, darker(metalCol, 0.68), 0, 1.25, 0.02, METAL, 0, 0.36)
-	S.disc(0.46 + 0.04 * t, metalCol, 0, 1.25, 0.05, METAL, 0, 0.4)
-	if t >= 4 then S.disc(0.3, P.glow, 0, 1.25, 0.12, NEON, 0.05, 0.12) end
+local function bladeStations(shape, L, W, z0)
+	local hw = W / 2
+	local st = {}
+	local function add(f, x, a, b, zo)
+		st[#st + 1] = { x = x, z = z0 - L * f + (zo or 0), a = a, b = b, f = f }
+	end
+	if shape == "short" then
+		add(0, 0, hw, hw) add(0.8, 0, hw * 0.9, hw * 0.9) add(1, 0, 0, 0)
+	elseif shape == "arming" then
+		add(0, 0, hw * 0.85, hw * 0.85) add(0.3, 0, hw * 1.02, hw * 1.02) add(0.78, 0, hw * 0.72, hw * 0.72) add(1, 0, 0, 0)
+	elseif shape == "broad" then
+		add(0, 0, hw, hw) add(0.14, 0, hw * 1.1, hw * 1.1) add(0.6, 0, hw * 0.92, hw * 0.92) add(0.87, 0, hw * 0.6, hw * 0.6) add(1, 0, 0, 0)
+	elseif shape == "great" then
+		add(0, 0, hw * 0.9, hw * 0.9) add(0.45, 0, hw * 1.1, hw * 1.1) add(0.85, 0, hw * 0.78, hw * 0.78) add(1, 0, 0, 0)
+	elseif shape == "fang" then
+		add(0, 0, hw, hw) add(0.25, 0, hw * 1.05, hw * 1.05) add(0.7, 0, hw * 0.72, hw * 0.72) add(1, 0, 0, 0)
+	elseif shape == "crystal" then
+		add(0, 0, hw * 0.62, hw * 0.62) add(0.3, 0, hw * 1.15, hw * 1.15) add(0.62, 0, hw * 0.95, hw * 0.95) add(0.82, 0, hw * 0.55, hw * 0.55) add(1, 0, 0, 0)
+	elseif shape == "falchion" then
+		for _, f in ipairs({ 0, 0.3, 0.55, 0.7, 0.82, 0.92 }) do
+			local tp = f < 0.7 and 1 or max(0.08, 1 - ((f - 0.7) / 0.3) ^ 1.3)
+			add(f, 0.9 * f * f, hw * 0.42 * tp, hw * (0.5 + 0.95 * f ^ 1.3) * tp)
+		end
+		add(1, 0.9, 0, 0)
+	elseif shape == "scimitar" then
+		for _, f in ipairs({ 0, 0.2, 0.4, 0.6, 0.8, 0.93 }) do
+			add(f, 1.7 * f * f, hw * 0.5, hw * (0.5 + 0.55 * sin(PI * min(f, 0.93) / 0.93 * 0.95)))
+		end
+		add(1, 1.7, 0, 0)
+	elseif shape == "saber" then
+		for _, f in ipairs({ 0, 0.2, 0.4, 0.6, 0.8, 0.93 }) do
+			add(f, 1.25 * f * f, hw * 0.55, hw * (0.62 + 0.18 * sin(PI * f)) * (1 - 0.3 * f))
+		end
+		add(1, 1.25, 0, 0)
+	elseif shape == "flame" then
+		for i = 0, 8 do
+			local f = i / 8
+			add(f, 1.0 * f * f, hw * 0.6, hw * (0.62 + 0.3 * sin(f * PI * 3.2)) * (1 - 0.55 * f ^ 2))
+		end
+		add(1, 1.0, 0, 0)
+	elseif shape == "reaper" then
+		for _, f in ipairs({ 0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.88 }) do
+			add(f, 2.4 * f ^ 2.2, hw * 0.34, hw * (0.45 + 0.85 * sin(f * PI * 0.85)), (f > 0.7) and (f - 0.7) ^ 2 * L * 1.7 or 0)
+		end
+		add(1, 2.4, 0, 0, 0.3 ^ 2 * L * 1.7)
+	end
+	return st
+end
 
-	-- guard
-	local gz = -0.75
-	if v == 1 then
-		local gw = 2.6 + 0.14 * t
-		S.block(gw, 0.54, darker(metalCol, 0.68), 0, gz, 0.06, 0, METAL, 0, 0.3)
-		S.block(gw - 0.4, 0.3, metalCol, 0, gz, 0.1, 0, METAL, 0, 0.32)
-		for _, sx in ipairs({ -1, 1 }) do
-			S.disc(0.66, darker(metalCol, 0.68), sx * gw / 2, gz, 0.06, METAL, 0, 0.34)
-			S.disc(0.38, metalCol, sx * gw / 2, gz, 0.1, METAL, 0, 0.38)
-			if t >= 3 then -- horns curving toward the tip
-				S.block(0.34, 1.3 + 0.1 * t, metalCol, sx * (gw / 2 + 0.25), gz - 0.6, 0.08, sx * -0.35, METAL, 0, 0.3)
-			end
+-- point on the centre line at fraction f of the blade
+local function centreAt(st, f)
+	for i = 2, #st do
+		if f <= st[i].f or i == #st then
+			local a, b = st[i - 1], st[i]
+			local u = (f - a.f) / max(b.f - a.f, 1e-6)
+			return a.x + (b.x - a.x) * u, a.z + (b.z - a.z) * u
 		end
-	else
-		local d = 1.9 + 0.1 * t
-		S.disc(d, darker(metalCol, 0.62), 0, gz, 0.05, METAL, 0, 0.34)
-		S.disc(d - 0.4, metalCol, 0, gz, 0.09, METAL, 0, 0.36)
-		S.disc(d - 1.0, darker(metalCol, 0.5), 0, gz, 0.12, METAL, 0, 0.36)
-		if t >= 3 then
-			for i = 0, 3 do
-				local a = i * math.pi / 2 + math.pi / 4
-				S.block(0.34, 1.0, metalCol, math.cos(a) * d * 0.55, gz + math.sin(a) * d * 0.55, 0.1, rot(math.cos(a), math.sin(a)), METAL, 0, 0.3)
-			end
-		end
-	end
-	if t >= 5 then -- wings of the guard
-		for _, sx in ipairs({ -1, 1 }) do
-			for i = 1, 3 do
-				local len = 1.2 + 0.45 * i + (t - 5) * 0.3
-				S.block(0.3, len, (i == 2) and P.glow or P.main, sx * (1.5 + i * 0.5), gz + 0.1 - i * 0.12, 0.14 + i * 0.01, sx * (-0.25 - i * 0.28), NEON, 0.12, 0.1)
-			end
-		end
-	end
-	local gem = S.disc(0.5 + 0.06 * t, (t >= 2) and P.glow or C(186, 52, 66), 0, gz, 0.26, (t >= 2) and NEON or SMOOTH, 0, 0.16)
-	S.disc(0.16 + 0.02 * t, C(255, 255, 255), 0, gz - 0.06, 0.36, NEON, 0.15, 0.06)
-	if t >= 4 then light(gem, P.glow, 8 + t * 2, 0.9 + t * 0.12) end
-
-	-- blade
-	local z0 = gz - 0.2
-	local edge
-	if v == 1 then
-		local Lb = L * 0.88
-		local cz = z0 - Lb / 2
-		edge = S.block(w0, Lb, bladeCol, 0, cz, 0.05, 0, METAL, 0, 0.2)
-		S.block(w0 * 0.64, Lb - 0.3, faceCol, 0, cz, 0.1, 0, METAL, 0, 0.2)
-		S.block(w0 * 0.15, Lb * 0.78, (t >= 3) and P.glow or C(118, 132, 156), 0, cz - 0.1, 0.18, 0, glowMat, 0, 0.08)
-		S.block(0.06, Lb - 0.4, C(255, 255, 255), w0 * 0.28, cz, 0.2, 0, METAL, 0, 0.06)
-		S.block(0.06, Lb - 0.4, darker(faceCol, 0.7), -w0 * 0.28, cz, 0.2, 0, METAL, 0, 0.06)
-		local tz = z0 - Lb - w0 * 0.12
-		S.block(w0 * 0.72, w0 * 0.72, bladeCol, 0, tz, 0.05, math.pi / 4, METAL, 0, 0.2)
-		S.block(w0 * 0.44, w0 * 0.44, faceCol, 0, tz, 0.1, math.pi / 4, METAL, 0, 0.2)
-		out.tipZ = tz - w0 * 0.4
-		out.bladeLen = Lb
-		out.bladeCz = cz
-		out.bladeW = w0
-		out.bladeX = function() return 0 end
-	else
-		local N, bend = 9, 1.5 + 0.1 * t
-		local pts = {}
-		for i = 0, N do
-			local f = i / N
-			pts[#pts + 1] = Vector2.new(bend * f * f, z0 - L * f)
-		end
-		local function wAt(i) return w0 * (1 - 0.62 * (i / N)) end
-		for i = 2, #pts do
-			local a, b = pts[i - 1], pts[i]
-			local vv = b - a
-			local mid = (a + b) / 2
-			local r = rot(vv.X, vv.Y)
-			local wi = wAt(i - 1)
-			local seg = S.block(wi, vv.Magnitude + 0.16, bladeCol, mid.X, mid.Y, 0.05, r, METAL, 0, 0.2)
-			if i == 5 then edge = seg end
-			S.block(wi * 0.6, vv.Magnitude + 0.1, faceCol, mid.X, mid.Y, 0.1, r, METAL, 0, 0.2)
-			S.block(wi * 0.14, vv.Magnitude + 0.1, (t >= 3) and P.glow or C(118, 132, 156), mid.X - wi * 0.12, mid.Y, 0.18, r, glowMat, 0, 0.08)
-		end
-		local last = pts[#pts]
-		S.block(0.5, 0.5, bladeCol, last.X, last.Y - 0.1, 0.05, math.pi / 4, METAL, 0, 0.2)
-		out.tipZ = last.Y - 0.4
-		out.bladeLen = L
-		out.bladeCz = z0 - L / 2
-		out.bladeW = w0
-		out.bladeX = function(f) return bend * f * f end
-	end
-
-	-- rarity decorations along the blade ---------------------------------------------
-	local cz, Lb, bx = out.bladeCz, out.bladeLen, out.bladeX
-	if t >= 3 then -- rune glints
-		for i = 1, 3 do
-			local f = i / 4.2
-			S.block(w0 * 0.34, 0.34, P.glow, bx(f) + 0.0, z0 - Lb * f, 0.24, v == 2 and 0.2 or 0, NEON, 0.2, 0.05)
-		end
-	end
-	if t >= 4 then -- jagged teeth
-		for i = 1, 4 + (t - 4) do
-			local f = i / (6 + (t - 4))
-			for _, sx in ipairs({ -1, 1 }) do
-				if v == 1 or sx == 1 then
-					S.block(0.34, 0.5, (t == 6) and P.main or P.glow, bx(f) + sx * (w0 / 2 + 0.12), z0 - Lb * f, 0.12, sx * 0.7, NEON, 0.15, 0.1)
-				end
-			end
-		end
-	end
-	if t >= 5 then -- glowing aura sheet under the blade + floating shards
-		S.block(w0 * 2.1, Lb * 1.08, P.glow, bx(0.5), cz, 0.02, 0, NEON, 0.84, 0.05)
-		S.block(w0 * 3.0, Lb * 0.9, P.main, bx(0.5), cz, 0.01, 0, NEON, 0.92, 0.05)
-		for i = 1, 3 do
-			local f = i / 3.6
-			for _, sx in ipairs({ -1, 1 }) do
-				S.block(0.36, 0.95 + 0.1 * i, (i % 2 == 0) and P.glow or P.main, bx(f) + sx * (w0 + 0.75 + 0.15 * i), z0 - Lb * f - 0.2, 0.2, sx * 0.4, NEON, 0.1, 0.1)
-			end
-		end
-	end
-	if t >= 6 then -- cracks of light
-		for i = 1, 6 do
-			local f = i / 7
-			S.block(w0 * 0.74, 0.14, P.glow, bx(f), z0 - Lb * f, 0.26, (i % 2 == 0 and 0.55 or -0.55), NEON, 0.1, 0.05)
-		end
-		S.disc(w0 * 2.6, P.main, bx(0.12), z0 - Lb * 0.12, 0.03, NEON, 0.86, 0.05)
-	end
-	if t >= 7 then -- orbiting shards
-		for i = 0, 7 do
-			local a = i / 8 * math.pi * 2
-			S.block(0.3, 0.8, RB, bx(0.5) + math.cos(a) * (w0 + 2.0), cz + math.sin(a) * (Lb * 0.55), 0.3, a, NEON, 0.05, 0.1)
-		end
-		S.disc(2.6, RB, bx(1), out.tipZ + 0.2, 0.05, NEON, 0.8, 0.06)
-	end
-
-	-- particles / light on the blade
-	if t >= 2 and edge then
-		local em = emitter(edge, P.glow, P.main, 2 + t * 3, 0.32 + 0.05 * t, 0.9 + 0.08 * t, 1.2 + 0.2 * t)
-		em.Rate = 2 + t * 3
-		out.emitter = em
-	end
-	if t >= 5 and edge then light(edge, P.glow, 12 + t * 2, 1.2) end
-	local tip = edge
-	if tip then
-		local a0 = attach(tip, 0, 0, -Lb * 0.5, k)
-		local a1 = attach(tip, 0, 0, Lb * 0.1, k)
-		out.trail = mkTrail(tip, a0, a1, (t >= 2) and P.glow or C(225, 240, 255), (t >= 2) and P.main or C(120, 170, 235), 0.2 + 0.02 * t)
 	end
 end
 
+-- sawtooth / crystal spikes standing on one edge of a ribbon. Every tooth base lies inside ONE straight edge segment,
+-- so the teeth never cut across (and overlap) the blade.
+local function edgeSpikes(S, R, side, s0, s1, count, len, slant, y0, h, col, mat, tr, colB)
+	local pts = side == "A" and R.A or R.B
+	local out = side == "A" and 1 or -1
+	local total, segs = 0, {}
+	for i = 2, #pts do
+		local l = sqrt((pts[i][1] - pts[i - 1][1]) ^ 2 + (pts[i][2] - pts[i - 1][2]) ^ 2)
+		segs[i] = l
+		total = total + l
+	end
+	local want = total * (s1 - s0) / count -- wanted tooth pitch
+	local acc, n = 0, 0
+	for i = 2, #pts do
+		local ls = segs[i]
+		local lo, hi = max(acc, s0 * total), min(acc + ls, s1 * total)
+		if hi - lo > want * 0.5 and ls > 0.05 then
+			local m = max(1, math.floor((hi - lo) / want + 0.5))
+			local ax, az, bx, bz = pts[i - 1][1], pts[i - 1][2], pts[i][1], pts[i][2]
+			local tx, tz = (bx - ax) / ls, (bz - az) / ls
+			local nx, nz = -tz * out, tx * out
+			for j = 0, m - 1 do
+				local u0 = (lo - acc + (hi - lo) * j / m) / ls
+				local u1 = (lo - acc + (hi - lo) * (j + 0.8) / m) / ls
+				local um = (u0 + u1) / 2
+				n = n + 1
+				local l = len * (0.8 + 0.4 * ((n * 37) % 5) / 4)
+				S.tri({ ax + (bx - ax) * u0, az + (bz - az) * u0 },
+					{ ax + (bx - ax) * um + nx * l - tx * l * slant, az + (bz - az) * um + nz * l - tz * l * slant },
+					{ ax + (bx - ax) * u1, az + (bz - az) * u1 }, y0, h, (colB and n % 2 == 0) and colB or col, mat, tr)
+			end
+		end
+		acc = acc + ls
+	end
+end
+
+local function sword(S, w, P, out, k)
+	local t, v = w.tier, w.v
+	local sp = SW[w.id] or {}
+	local shape = sp.blade or (v == 1 and "short" or "saber")
+	local L = sp.L or (4.6 + 0.3 * t)
+	local W = sp.W or (1.0 + 0.07 * t)
+	local hw = W / 2
+
+	local leather = t <= 2 and C(84, 54, 34) or darker(P.acc, 0.55)
+	if t >= 5 and not w.rainbow then leather = mix(darker(P.acc, 0.45), C(60, 40, 30), 0.5) end
+	local metalCol = (t <= 2) and C(212, 168, 72) or P.acc
+	if t == 1 then metalCol = (v == 1) and C(190, 150, 70) or C(150, 150, 156) end
+	local metalDark = darker(metalCol, 0.62)
+	if t >= 6 and not w.rainbow then metalDark = darker(P.acc, 1.0) end
+	local metalHi = (t >= 6 and not w.rainbow) and mix(metalCol, P.main, 0.5) or lighter(metalCol, 0.14)
+	local bladeCol = (t <= 2) and lighter(P.main, 0.12) or P.main
+	if t == 6 and not w.rainbow then bladeCol = darker(P.main, 0.3) end
+	local faceCol = (t == 6 and not w.rainbow) and darker(P.main, 0.2) or lighter(P.main, 0.5)
+	if t == 1 then
+		bladeCol, faceCol = (v == 1) and C(168, 180, 198) or C(150, 146, 140), (v == 1) and C(222, 230, 241) or C(205, 200, 195)
+	end
+	if w.rainbow then bladeCol, faceCol = RB, lighter(RB, 0.5) end
+	local fullerCol = t >= 3 and P.glow or C(118, 132, 156)
+	local fullerMat = t >= 3 and NEON or METAL
+
+	-- ------------------------------------------------------------------ grip + pommel
+	local gz = -0.75
+	S.box(0, 0.37, 0.44, 1.66, 0.10, 0.10, 0, leather, FABRIC)
+	for i = 0, 2 do S.box(0, -0.15 + i * 0.45, 0.56, 0.13, 0.20, 0.05, 0, darker(leather, 0.6), FABRIC) end
+	local pd = 0.82 + 0.05 * t
+	S.disc(0, 1.5, pd, 0.10, 0.14, metalDark, METAL)
+	S.disc(0, 1.5, pd - 0.36, 0.24, 0.06, metalCol, METAL)
+	if t >= 3 then S.disc(0, 1.5, 0.3 + 0.03 * t, 0.30, 0.08, P.glow, NEON) end
+	if sp.spike then S.tri({ -0.3, 1.5 + pd / 2 - 0.05 }, { 0, 1.5 + pd / 2 + 1.0 }, { 0.3, 1.5 + pd / 2 - 0.05 }, 0.10, 0.14, metalDark, METAL) end
+
+	-- ------------------------------------------------------------------ guard
+	local gt = sp.guard or (v == 1 and "bar" or "disc")
+	local gemY, bladeStart = 0.30, nil
+	local gw = 2.6 + 0.14 * t
+	local function bar(width)
+		S.box(0, gz, width, 0.56, 0.10, 0.10, 0, metalDark, METAL)
+		S.box(0, gz, width - 0.5, 0.3, 0.20, 0.06, 0, metalHi, METAL)
+		for _, sx in ipairs({ -1, 1 }) do
+			S.disc(sx * width / 2, gz, 0.64, 0.10, 0.21, metalCol, METAL)
+		end
+	end
+	if gt == "bar" then
+		bar(gw)
+	elseif gt == "disc" then
+		local d = 1.9 + 0.1 * t
+		S.disc(0, gz, d, 0.10, 0.20, metalDark, METAL)
+		S.disc(0, gz, d - 0.4, 0.30, 0.05, metalCol, METAL)
+		S.disc(0, gz, d - 1.0, 0.35, 0.05, metalDark, METAL)
+		gemY = 0.40
+		bladeStart = gz - d / 2 + 0.1
+		if sp.tassel then
+			for i = 0, 2 do S.box(-0.2 + i * 0.2, 2.05 + (0.9 - 0.1 * i) / 2, 0.14, 0.9 - 0.1 * i, 0.10, 0.04, 0, P.glow, FABRIC) end
+		end
+	elseif gt == "horn" then
+		bar(gw)
+		for _, sx in ipairs({ -1, 1 }) do
+			S.ribbon({
+				{ x = sx * (gw / 2 + 0.12), z = gz + 0.1, a = 0.28, b = 0.28 },
+				{ x = sx * (gw / 2 + 0.55), z = gz - 0.55, a = 0.24, b = 0.24 },
+				{ x = sx * (gw / 2 + 0.5), z = gz - 1.35 - 0.1 * t, a = 0.14, b = 0.14 },
+				{ x = sx * (gw / 2 + 0.25), z = gz - 2.0 - 0.1 * t, a = 0, b = 0 },
+			}, 0.10, 0.10, metalCol, METAL)
+		end
+	elseif gt == "leaf" then
+		for _, sx in ipairs({ -1, 1 }) do
+			S.shard(sx * 0.3, gz + 0.1, 1.9, 0.9, sx > 0 and -0.2 or PI + 0.2, 0.45, 0.10, 0.10, darker(metalCol, 0.7), METAL)
+			S.shard(sx * 0.5, gz + 0.08, 1.4, 0.5, sx > 0 and -0.2 or PI + 0.2, 0.45, 0.20, 0.06, metalCol, METAL)
+		end
+		S.disc(0, gz, 0.9, 0.26, 0.05, darker(metalCol, 0.6), METAL)
+	elseif gt == "knuckle" then
+		bar(gw)
+		S.ribbon({
+			{ x = gw / 2 - 0.1, z = gz + 0.2, a = 0.2, b = 0.2 },
+			{ x = gw / 2 + 0.25, z = gz + 0.85, a = 0.2, b = 0.2 },
+			{ x = gw / 2 - 0.1, z = gz + 1.5, a = 0.2, b = 0.2 },
+			{ x = 0.35, z = 1.3, a = 0.18, b = 0.18 },
+		}, 0.30, 0.06, metalCol, METAL)
+	elseif gt == "fang" then
+		bar(gw - 0.2)
+		for _, sx in ipairs({ -1, 1 }) do
+			S.spike(sx * ((gw - 0.2) / 2 + 0.35), gz, 2.1, 0.7, -PI / 2 + sx * 0.12, 0.10, 0.10, metalCol, METAL)
+			S.spike(sx * ((gw - 0.2) / 2 + 0.75), gz + 0.25, 1.0, 0.4, -PI / 2 + sx * 0.9, 0.10, 0.10, metalDark, METAL, 0.1)
+		end
+	elseif gt == "bolt" then
+		bar(gw)
+		for _, sx in ipairs({ -1, 1 }) do
+			S.spike(sx * (gw / 2 + 0.1), gz - 0.1, 1.5, 0.4, -PI / 2 + sx * 0.55, 0.10, 0.10, metalCol, METAL)
+			S.spike(sx * (gw / 2 + 0.1), gz + 0.15, 1.3, 0.36, PI / 2 + sx * 0.5, 0.10, 0.10, metalDark, METAL)
+		end
+	elseif gt == "sun" then
+		bar(gw + 0.3)
+		for i = 0, 11 do
+			if i ~= 0 and i ~= 3 and i ~= 6 and (i < 8 or i > 10) then
+				local a = i / 12 * PI * 2
+				S.spike(cos(a) * 0.95, gz + sin(a) * 0.95, (i % 2 == 0) and 0.9 or 0.55, 0.42, a, 0.10, 0.10, (i % 2 == 0) and P.main or P.acc, METAL)
+			end
+		end
+		S.disc(0, gz, 1.9, 0.10, 0.20, darker(metalCol, 0.75), METAL)
+		S.disc(0, gz, 1.45, 0.30, 0.05, P.main, METAL)
+		gemY = 0.35
+		bladeStart = gz - 1.0 + 0.1
+	elseif gt == "wing" then
+		for _, sx in ipairs({ -1, 1 }) do
+			for i = 1, 4 do
+				local a = sx > 0 and (-0.5 + i * 0.3) or (PI + 0.5 - i * 0.3)
+				local col = (i % 2 == 0) and P.glow or P.main
+				S.shard(sx * 0.35, gz + 0.1, 1.5 + 0.45 * i + (t - 5) * 0.2, 0.5 + 0.06 * i, a, 0.4, 0.10 + 0.05 * (i - 1), 0.05, col, NEON, 0.1)
+			end
+		end
+		S.disc(0, gz, 0.95, 0.30, 0.06, metalDark, METAL)
+	elseif gt == "crescent" then
+		bar(gw - 0.5)
+		local cz = gz - 0.3
+		for _, sx in ipairs({ -1, 1 }) do
+			local a0, a1 = sx > 0 and PI * 0.4 or PI * 0.6, sx > 0 and -PI * 0.2 or PI * 1.2
+			S.arc(0, cz, 2.0, a0, a1, 7, 0.6, 0.12, 0.10, 0.10, metalDark, METAL)
+			S.arc(0, cz, 2.0, a0 + (a1 - a0) * 0.12, a1 - (a1 - a0) * 0.08, 6, 0.2, 0.04, 0.20, 0.06, P.main, NEON, 0.1)
+		end
+	elseif gt == "claw" then
+		bar(gw - 0.2)
+		for _, sx in ipairs({ -1, 1 }) do
+			S.arc(sx * (gw / 2 + 0.3), gz - 0.9, 0.9, sx > 0 and PI * 1.0 or 0, sx > 0 and PI * 1.65 or -PI * 0.65, 5, 0.42, 0.04, 0.10, 0.10, metalHi, METAL)
+		end
+	end
+	-- guard gem
+	local gem = S.disc(0, gz, 0.5 + 0.06 * t, gemY, 0.12, (t >= 2) and P.glow or C(186, 52, 66), (t >= 2) and NEON or SMOOTH)
+	S.disc(0, gz, 0.16 + 0.02 * t, gemY + 0.12, 0.05, C(255, 255, 255), NEON, 0.15)
+	if t >= 4 then light(gem, P.glow, 8 + t * 2, 0.9 + t * 0.12) end
+
+	-- ------------------------------------------------------------------ blade
+	local z0 = bladeStart or (gz - 0.28)
+	local st = bladeStations(shape, L, W, z0)
+	if t >= 5 then -- soft aura under the blade (translucent, in its own low slabs)
+		local au1, au2 = {}, {}
+		local step = (#st > 6) and 2 or 1 -- the aura is soft, it does not need every station
+		for i = 1, #st do
+			local s = st[i]
+			if i % step == 1 or step == 1 or i == #st then
+				au1[#au1 + 1] = { x = s.x, z = s.z, a = s.a * 1.6 + 0.1, b = s.b * 1.6 + 0.1 }
+				au2[#au2 + 1] = { x = s.x, z = s.z, a = s.a * 2.2 + 0.2, b = s.b * 2.2 + 0.2 }
+			end
+		end
+		au1[#au1].a, au1[#au1].b, au2[#au2].a, au2[#au2].b = 0, 0, 0, 0
+		S.ribbon(au2, 0.0, 0.03, P.main, NEON, 0.93)
+		S.ribbon(au1, 0.06, 0.03, P.glow, NEON, 0.84)
+	end
+	local R = S.ribbon(st, 0.10, 0.10, bladeCol, METAL)
+	local fc = {}
+	for i, s in ipairs(st) do fc[i] = { x = s.x, z = s.z, a = s.a * 0.56, b = s.b * 0.56 } end
+	S.ribbon(fc, 0.20, 0.06, faceCol, METAL)
+	local deco = sp.deco
+	if deco == "zigzag" then
+		local pts = {}
+		for i = 0, 7 do
+			local cx, cz = centreAt(st, 0.07 + i * 0.1)
+			pts[#pts + 1] = { cx + ((i % 2 == 0) and -1 or 1) * hw * 0.2, cz }
+		end
+		for i = 2, #pts do S.beam(pts[i - 1][1], pts[i - 1][2], pts[i][1], pts[i][2], 0.13, 0.26, 0.05, P.glow, NEON) end
+	else
+		local fl = {}
+		for i, f in ipairs({ 0.05, 0.22, 0.4, 0.58, 0.74 }) do
+			local cx, cz = centreAt(st, f)
+			fl[i] = { x = cx, z = cz, a = hw * 0.1, b = hw * 0.1 }
+		end
+		S.ribbon(fl, 0.26, 0.05, fullerCol, fullerMat)
+	end
+
+	-- ------------------------------------------------------------------ rarity / theme decorations
+	if deco == "ice" then
+		edgeSpikes(S, R, "A", 0.1, 0.78, 4, 0.6, 0.55, 0.10, 0.10, P.glow, NEON, 0.12)
+		edgeSpikes(S, R, "B", 0.1, 0.78, 4, 0.6, 0.55, 0.10, 0.10, P.glow, NEON, 0.12)
+	elseif deco == "wave" then
+		edgeSpikes(S, R, "A", 0.14, 0.9, 4, 0.55, -0.7, 0.10, 0.10, P.glow, NEON, 0.1)
+	elseif deco == "teeth" then
+		edgeSpikes(S, R, "A", 0.08, 0.86, 5, 0.58, 0.75, 0.10, 0.10, P.glow, NEON, 0.1, P.main)
+		edgeSpikes(S, R, "B", 0.08, 0.86, 5, 0.58, 0.75, 0.10, 0.10, P.glow, NEON, 0.1, P.main)
+	elseif deco == "flames" then
+		edgeSpikes(S, R, "A", 0.1, 0.9, 4, 0.8, 0.55, 0.10, 0.10, P.glow, NEON, 0.08, P.main)
+		edgeSpikes(S, R, "B", 0.3, 0.9, 2, 0.5, 0.55, 0.10, 0.10, P.main, NEON, 0.1, P.glow)
+	elseif deco == "hook" then
+		edgeSpikes(S, R, "A", 0.1, 0.75, 4, 0.8, 0.6, 0.10, 0.10, darker(P.main, 0.55), METAL, 0, P.glow)
+	elseif deco == "eclipse" then
+		local cx, cz = centreAt(st, 0.3)
+		S.disc(cx, cz, 1.25, 0.31, 0.05, P.acc, METAL)
+		S.ring(cx, cz, 0.92, 14, 0.2, 0.36, 0.05, P.main, NEON, 0, 0.7)
+		S.disc(cx, cz, 0.45, 0.36, 0.05, P.glow, NEON)
+	elseif deco == "shards" then
+		for i = 1, 3 do
+			local f = 0.18 + i * 0.24
+			local cx, cz = centreAt(st, f)
+			for _, sx in ipairs({ -1, 1 }) do
+				S.shard(cx + sx * (hw + 0.5 + 0.12 * i), cz + 0.5, 1.1 + 0.2 * i, 0.5, -PI / 2 + sx * 0.12, 0.45, 0.20, 0.08, (i % 2 == 0) and P.glow or P.main, NEON, 0.1)
+			end
+		end
+	end
+	if t >= 3 and deco ~= "ice" and deco ~= "zigzag" and deco ~= "eclipse" then -- rune glints on the face
+		for i = 1, 3 do
+			local cx, cz = centreAt(st, i / 4.2 + 0.04)
+			S.box(cx, cz, hw * 0.3, 0.3, 0.31, 0.05, 0, P.glow, NEON, 0.15)
+		end
+	end
+	if t >= 5 and deco ~= "shards" then -- floating shards hovering next to the blade
+		for i = 1, 3 do
+			local f = i / 3.6
+			local cx, cz = centreAt(st, f)
+			for _, sx in ipairs({ -1, 1 }) do
+				S.shard(cx + sx * (hw + 0.8 + 0.15 * i), cz - 0.1, 0.9 + 0.12 * i, 0.4, -PI / 2 + sx * 0.15, 0.5, 0.20, 0.08, (i % 2 == 0) and P.glow or P.main, NEON, 0.1)
+			end
+		end
+	end
+	if t >= 6 and deco ~= "eclipse" then -- cracks of light across the blade
+		for i = 1, 5 do
+			local cx, cz = centreAt(st, i / 6.4 + 0.1)
+			S.box(cx, cz, hw * 0.7, 0.13, 0.36, 0.05, (i % 2 == 0 and 0.55 or -0.55), P.glow, NEON, 0.1)
+		end
+	end
+	if t >= 7 then -- orbiting shards
+		local cx, cz = centreAt(st, 0.5)
+		for i = 0, 7 do
+			local a = i / 8 * PI * 2
+			local ex, ez = cx + cos(a) * (hw + 2.3), cz + sin(a) * (L * 0.55)
+			S.shard(ex, ez, 0.9, 0.34, a + PI / 2, 0.5, 0.46, 0.08, RB, NEON, 0.05)
+		end
+	end
+
+	-- ------------------------------------------------------------------ particles / light / trail (on an invisible part)
+	local mx, mz = centreAt(st, 0.5)
+	local fx = S.ghost(mx, mz, W * 0.8, L * 0.8, 0.12, 0.05)
+	if t >= 2 then
+		out.emitter = emitter(fx, P.glow, P.main, 2 + t * 3, 0.32 + 0.05 * t, 0.9 + 0.08 * t, 1.2 + 0.2 * t)
+	end
+	if t >= 5 then light(fx, P.glow, 12 + t * 2, 1.2) end
+	local a0 = attach(fx, 0, 0, -L * 0.5, k)
+	local a1 = attach(fx, 0, 0, L * 0.1, k)
+	out.trail = mkTrail(fx, a0, a1, (t >= 2) and P.glow or C(225, 240, 255), (t >= 2) and P.main or C(120, 170, 235), 0.2 + 0.02 * t)
+	out.tipZ = st[#st].z
+	out.bladeLen = L
+end
+
 -- ============================================================================ BOW
+-- Height slabs: halo 0..0.09 | limb 0.10..0.18 | limb face 0.18..0.24 | inlay 0.24..0.28 | string / tip caps 0.24..0.36
+-- | riser 0.24..0.36 | gems 0.36..0.43 | arrow 0.44..0.58
 local function bow(S, w, P, out, k)
 	local t, v = w.tier, w.v
 	local R = 3.0 + 0.11 * t
@@ -788,255 +1204,300 @@ local function bow(S, w, P, out, k)
 	if w.rainbow then woodHi = RB end
 	local metalCol = (t <= 1) and C(212, 168, 72) or P.acc
 	if t == 1 and v == 2 then metalCol = C(160, 160, 150) end
+	if t >= 6 and not w.rainbow then metalCol = mix(P.acc, P.main, 0.5) end
 	local limbMat = (t <= 2) and WOOD or ((t >= 5) and NEON or METAL)
+	if t >= 5 then limbMat = METAL end
 
-	-- limb path (left tip -> right tip)
-	local pts = {}
-	local tipZ = R * (1 - math.cos(math.rad(75)))
-	local tipX = R * math.sin(math.rad(75))
+	-- ------------------------------------------------------------------ limb centre line (left tip -> right tip)
+	local half = (0.55 + 0.03 * t) / 2
+	local st, face, inlay = {}, {}, {}
+	local tipX, tipZ
 	if v == 1 then
-		for i = -5, 5 do
-			local th = math.rad(i * 15)
-			pts[#pts + 1] = Vector2.new(R * math.sin(th), R * (1 - math.cos(th)))
+		tipX, tipZ = R * sin(math.rad(75)), R * (1 - cos(math.rad(75)))
+		for i = -4, 4 do
+			local th = math.rad(i * 18.75)
+			local ww = half * (1 - 0.55 * abs(i) / 4)
+			st[#st + 1] = { x = R * sin(th), z = R * (1 - cos(th)), a = ww, b = ww }
 		end
 	else
-		tipX, tipZ = R * 0.98, R * 0.74
-		pts = {
-			Vector2.new(-R * 1.12, tipZ - 1.1), Vector2.new(-tipX, tipZ), Vector2.new(-R * 0.62, 0.36 * tipZ), Vector2.new(-R * 0.2, 0),
-			Vector2.new(R * 0.2, 0), Vector2.new(R * 0.62, 0.36 * tipZ), Vector2.new(tipX, tipZ), Vector2.new(R * 1.12, tipZ - 1.1),
-		}
+		tipX = R * 1.0
+		tipZ = R * 0.74
+		for _, s in ipairs({ -1, -0.85, -0.68, -0.5, -0.3, -0.12, 0.12, 0.3, 0.5, 0.68, 0.85, 1 }) do
+			local ww = half * (1 - 0.5 * abs(s) ^ 1.5)
+			st[#st + 1] = { x = tipX * s * (1 - 0.1 * s * s), z = tipZ * (3.3 * s * s - 2.3 * s ^ 4), a = ww, b = ww }
+		end
+		tipZ = st[1].z
 	end
-	S.path(pts, { 0.5 + 0.03 * t, 0.3 + 0.02 * t, 0.1 }, { darker(wood, 0.75), wood, woodHi }, { 0.08, 0.14, 0.3 }, { limbMat, limbMat, limbMat }, { 0.3, 0.3, 0.1 })
-	if t >= 3 then -- glowing inlay along the limbs
-		S.path(pts, { 0.1 }, { P.glow }, { 0.36 }, { NEON }, { 0.06 })
+	local last = #st
+	tipX = st[last].x
+	for i, s in ipairs(st) do face[i] = { x = s.x, z = s.z, a = s.a * 0.55, b = s.b * 0.55 } end
+
+	-- magic halo behind the bow (own low slabs, nothing else lives there)
+	if t >= 5 then
+		S.disc(0, tipZ * 0.5, R * 2.5, 0.0, 0.03, P.glow, NEON, 0.92)
+		S.disc(0, tipZ * 0.5, R * 1.7, 0.06, 0.03, P.main, NEON, 0.88)
 	end
-	-- limb tips
-	local tipL, tipR = Vector2.new(-tipX, tipZ), Vector2.new(tipX, tipZ)
-	for _, sx in ipairs({ -1, 1 }) do
-		S.disc(0.6 + 0.04 * t, metalCol, sx * tipX, tipZ, 0.1, METAL, 0, 0.36)
-		S.disc(0.26, darker(metalCol, 0.6), sx * tipX, tipZ, 0.3, METAL, 0, 0.1)
-		if t >= 2 then S.disc(0.3 + 0.03 * t, P.glow, sx * tipX, tipZ, 0.4, NEON, 0.1, 0.1) end
-	end
-	-- wings / feathers at the tips
+	-- feathers / wings at the tips (below the limbs, outward + backward)
 	if t >= 4 then
-		local n = t - 2
 		for _, sx in ipairs({ -1, 1 }) do
-			for i = 1, n do
-				local len = 1.0 + 0.42 * i
-				S.block(0.3, len, (i % 2 == 0) and P.glow or P.main, sx * (tipX + 0.2 + i * 0.32), tipZ + 0.5 + i * 0.28, 0.2 + i * 0.01, sx * (0.5 + i * 0.12), NEON, 0.14, 0.08)
+			for i = 1, t - 2 do
+				local a = 0.2 + 0.2 * i
+				if sx < 0 then a = PI - a end
+				S.shard(st[sx < 0 and 1 or last].x + cos(a) * 0.15, st[sx < 0 and 1 or last].z + sin(a) * 0.15, 1.2 + 0.42 * i, 0.42, a, 0.4, 0.12 + 0.045 * (i - 1), 0.04, (i % 2 == 0) and P.glow or P.main, NEON, 0.14 + 0.02 * i)
 			end
 		end
 	end
-	-- riser grip
-	local grip = (t <= 2) and C(66, 42, 28) or darker(P.acc, 0.5)
-	S.block(0.66, 1.3, grip, 0, 0, 0.3, 0, FABRIC, 0, 0.3)
-	S.block(0.78, 0.14, metalCol, 0, -0.6, 0.34, 0, METAL, 0, 0.3)
-	S.block(0.78, 0.14, metalCol, 0, 0.6, 0.34, 0, METAL, 0, 0.3)
-	if t >= 3 then S.disc(0.4 + 0.04 * t, P.glow, 0, 0, 0.5, NEON, 0.05, 0.14) end
-	-- magic halo behind the bow
-	if t >= 5 then
-		S.disc(R * 2.5, P.glow, 0, tipZ * 0.5, 0.01, NEON, 0.9, 0.05)
-		S.disc(R * 1.7, P.main, 0, tipZ * 0.5, 0.02, NEON, 0.86, 0.05)
-	end
-	if t >= 6 then S.ring(R * 1.35, 22, 0.22, P.glow, 0, tipZ * 0.45, 0.05, NEON, 0.2, 0.06) end
-	if t >= 7 then
-		for i = 0, 5 do
-			local a = i / 6 * math.pi * 2
-			S.block(0.3, 0.9, RB, math.cos(a) * R * 1.6, math.sin(a) * R * 1.0 + 1.2, 0.3, a, NEON, 0.05, 0.1)
+
+	S.ribbon(st, 0.10, 0.08, darker(wood, 0.75), limbMat)
+	S.ribbon(face, 0.18, 0.06, wood, limbMat)
+	if t >= 3 then -- glowing inlay along the limbs (every other station)
+		for i = 1, #st do
+			inlay[#inlay + 1] = { x = st[i].x, z = st[i].z, a = 0.05, b = 0.05 }
+		end
+		if #inlay >= 2 then
+			S.ribbon(inlay, 0.24, 0.04, P.glow, NEON)
 		end
 	end
-	-- string
-	local nockZ = tipZ + 0.55
+	-- limb tips: metal cap + glow bead
+	for _, sx in ipairs({ -1, 1 }) do
+		local s = st[sx < 0 and 1 or last]
+		S.disc(s.x, s.z, 0.6 + 0.04 * t, 0.24, 0.12, metalCol, METAL)
+		if t >= 2 then S.disc(s.x, s.z, 0.28 + 0.03 * t, 0.36, 0.06, P.glow, NEON) end
+	end
+
+	-- ------------------------------------------------------------------ riser
+	local grip = (t <= 2) and C(66, 42, 28) or darker(P.acc, 0.5)
+	if t >= 6 and not w.rainbow then grip = darker(P.main, 0.35) end
+	S.box(0, 0, 0.7, 1.3, 0.24, 0.12, 0, grip, FABRIC)
+	for _, sz in ipairs({ -0.6, 0.6 }) do S.box(0, sz, 0.82, 0.14, 0.36, 0.05, 0, metalCol, METAL) end
+	if t >= 3 then S.disc(0, 0, 0.4 + 0.04 * t, 0.36, 0.07, P.glow, NEON) end
+	if t >= 6 then S.ring(0, tipZ * 0.45, R * 1.35, 22, 0.22, 0.62, 0.04, P.glow, NEON, 0.2, 0.7) end
+	if t >= 7 then
+		for i = 0, 5 do
+			local a = i / 6 * PI * 2
+			S.shard(cos(a) * R * 1.5, sin(a) * R * 0.95 + tipZ * 0.5, 1.0, 0.36, a + PI / 2, 0.5, 0.2, 0.08, RB, NEON, 0.05)
+		end
+	end
+
+	-- ------------------------------------------------------------------ string (two beams meeting at the nock)
+	local nockZ = tipZ + 0.6
 	local strC = (t >= 3) and P.glow or C(238, 233, 214)
 	local strMat = (t >= 3) and NEON or FABRIC
-	local strW = (t >= 3) and 0.1 or 0.07
-	local sv = Vector2.new(tipX, nockZ - tipZ)
-	local slen = sv.Magnitude
-	S.block(strW, slen, strC, tipX / 2, (tipZ + nockZ) / 2, 0.1, rot(-sv.X, sv.Y), strMat, 0, 0.07)
-	S.block(strW, slen, strC, -tipX / 2, (tipZ + nockZ) / 2, 0.1, rot(sv.X, sv.Y), strMat, 0, 0.07)
-	-- nocked arrow
+	local strW = (t >= 3) and 0.1 or 0.08
+	S.beam(tipX, tipZ, 0, nockZ, strW, 0.26, 0.05, strC, strMat)
+	S.beam(-tipX, tipZ, 0, nockZ, strW, 0.26, 0.05, strC, strMat)
+
+	-- ------------------------------------------------------------------ nocked arrow (hidden / shown by the server after each shot)
 	local arrow = {}
+	S.rec = arrow
 	local headZ = -3.4 - 0.12 * t
-	local aLen = nockZ - headZ
-	local shaftZ = (nockZ + headZ) / 2
+	local hl = 0.95 + 0.04 * t
+	local zb = headZ + hl -- base of the head
+	local ws = 0.14 + 0.01 * t
 	local shaftCol = (t >= 3) and lighter(P.glow, 0.2) or C(232, 222, 188)
 	local headCol = (t >= 3) and P.glow or C(176, 188, 206)
-	table.insert(arrow, S.block(0.14 + 0.01 * t, aLen, shaftCol, 0, shaftZ, 0.32, 0, (t >= 3) and NEON or WOOD, 0, 0.12))
-	table.insert(arrow, S.block(0.56 + 0.04 * t, 0.56 + 0.04 * t, headCol, 0, headZ, 0.32, math.pi / 4, (t >= 3) and NEON or METAL, 0, 0.12))
-	table.insert(arrow, S.block(0.32, 0.32, lighter(headCol, 0.6), 0, headZ, 0.36, math.pi / 4, NEON, 0.05, 0.08))
-	local fl = (t <= 2) and C(196, 62, 62) or P.main
-	table.insert(arrow, S.block(0.14, 0.7, fl, -0.2, nockZ - 0.3, 0.34, 0.3, FABRIC, 0, 0.08))
-	table.insert(arrow, S.block(0.14, 0.7, fl, 0.2, nockZ - 0.3, 0.34, -0.3, FABRIC, 0, 0.08))
-	table.insert(arrow, S.block(0.14, 0.6, (t <= 2) and C(236, 236, 236) or P.glow, 0, nockZ - 0.9, 0.34, 0, FABRIC, 0, 0.08))
-	if t >= 5 then
-		table.insert(arrow, S.block(0.7, aLen * 0.9, P.glow, 0, shaftZ, 0.28, 0, NEON, 0.82, 0.08))
-		table.insert(arrow, S.disc(1.6, P.main, 0, headZ, 0.3, NEON, 0.7, 0.08))
+	local ay = 0.50
+	if t >= 5 then -- glow comet around the arrow
+		S.ribbon({
+			{ x = 0, z = nockZ, a = 0.08, b = 0.08 }, { x = 0, z = zb + 0.6, a = 0.3, b = 0.3 },
+			{ x = 0, z = zb - 0.1, a = 0.62, b = 0.62 }, { x = 0, z = headZ - 0.5, a = 0, b = 0 },
+		}, 0.45, 0.03, P.glow, NEON, 0.82)
 	end
+	S.box(0, (nockZ + zb) / 2, ws, nockZ - zb, ay, 0.06, 0, shaftCol, (t >= 3) and NEON or WOOD)
+	S.shard(0, zb, hl, 0.62 + 0.04 * t, -PI / 2, 0.3, ay, 0.08, headCol, (t >= 3) and NEON or METAL)
+	S.shard(0, zb - 0.05, hl * 0.6, 0.26, -PI / 2, 0.35, ay + 0.08, 0.04, lighter(headCol, 0.6), NEON, 0.05)
+	local fl = (t <= 2) and C(196, 62, 62) or P.main
+	for _, sx in ipairs({ -1, 1 }) do
+		local x0 = sx * ws / 2
+		S.quad({
+			{ x0, nockZ - 0.95 }, { x0 + sx * 0.3, nockZ - 0.55 }, { x0 + sx * 0.3, nockZ + 0.02 }, { x0, nockZ - 0.38 },
+		}, ay, 0.06, fl, FABRIC)
+	end
+	S.rec = nil
+	for _, p in ipairs(arrow) do p:SetAttribute("T0", p.Transparency) end
 	out.arrow = arrow
-	-- sparks + light
-	local base = S.disc(0.4, P.glow, 0, 0, 0.6, NEON, 1, 0.1)
+
+	-- ------------------------------------------------------------------ sparks + light
+	local base = S.ghost(0, tipZ * 0.5, R * 1.2, R * 0.6, 0.12, 0.05)
 	if t >= 2 then out.emitter = emitter(base, P.glow, P.main, 2 + t * 3, 0.3 + 0.05 * t, 1 + 0.1 * t, 1.5 + 0.2 * t) end
 	if t >= 4 then light(base, P.glow, 10 + t * 2, 1 + 0.12 * t) end
 	if t >= 3 then
 		for _, sx in ipairs({ -1, 1 }) do
-			local tp = S.disc(0.3, P.glow, sx * tipX, tipZ, 0.5, NEON, 1, 0.1)
+			local tp = S.ghost(sx * tipX, tipZ, 0.4, 0.4, 0.12, 0.05)
 			emitter(tp, P.glow, P.main, 1 + t * 2, 0.3 + 0.04 * t, 0.7, 2)
 		end
 	end
 end
 
 -- ============================================================================ STAFF
+-- Height slabs: halo 0..0.02 | under-pieces 0.04..0.09 | shaft / head 0.10..0.20 | head details 0.20..0.30
+-- | orb glow 0.30..0.36 | orb core 0.36..0.44.  (head details never go above 0.30 so the orb glow floats cleanly on top)
 local function staff(S, w, P, out, k)
 	local t, v = w.tier, w.v
-	local orbZ = -5.9
+	local o = -5.9 -- orb centre (z)
 	local shaftCol = (t == 1) and P.main or ((t <= 3) and darker(P.main, 0.7) or ((t >= 6 or w.rainbow) and P.dark or darker(P.acc, 0.55)))
 	if t == 7 then shaftCol = C(30, 26, 46) end
 	local woodHi = (t == 1) and lighter(P.main, 0.3) or lighter(shaftCol, 0.3)
 	local metalCol = (t <= 1) and C(212, 168, 72) or P.acc
 	if t == 1 and v == 2 then metalCol = P.acc end
+	if t >= 6 and not w.rainbow then metalCol = mix(P.acc, P.main, 0.45) end
 	local shaftMat = (t <= 2) and WOOD or METAL
 
-	-- shaft
-	S.block(0.5 + 0.02 * t, 8.0, shaftCol, 0, -1.6, 0.05, 0, shaftMat, 0, 0.3)
-	S.block(0.14, 7.8, woodHi, 0.12, -1.6, 0.2, 0, shaftMat, 0, 0.08)
+	-- ------------------------------------------------------------------ shaft (kept in LOW slabs so head pieces that reach back over it never fight with it)
+	S.box(0, -1.6, 0.5 + 0.02 * t, 8.0, 0.04, 0.10, 0, shaftCol, shaftMat)
+	S.box(0.12, 0.15, 0.14, 3.3, 0.14, 0.04, 0, woodHi, shaftMat)
 	if v == 2 and t == 1 then -- knots of the branch
-		for _, z in ipairs({ -0.2, -2.6 }) do S.disc(0.8, darker(shaftCol, 0.8), 0.15, z, 0.1, WOOD, 0, 0.3) end
+		for _, z in ipairs({ -2.2, -3.4 }) do S.disc(0.12, z, 0.8, 0.18, 0.06, darker(shaftCol, 0.8), WOOD) end
 	end
-	for _, z in ipairs({ 0.4, -1.4, -3.2 }) do
-		S.block(0.8, 0.3, darker(metalCol, 0.65), 0, z, 0.1, 0, METAL, 0, 0.36)
-		S.block(0.8, 0.12, metalCol, 0, z, 0.14, 0, METAL, 0, 0.38)
+	for _, z in ipairs({ 1.2, 0.2, -0.8 }) do
+		S.box(0, z, 0.8, 0.3, 0.14, 0.09, 0, darker(metalCol, 0.65), METAL)
+		S.box(0, z, 0.8, 0.12, 0.23, 0.04, 0, metalCol, METAL)
 	end
 	if t >= 2 then
-		for _, z in ipairs({ -0.5, -2.3, -4.3 }) do S.block(0.1, 0.36, P.glow, 0, z, 0.22, 0, NEON, 0.35, 0.05) end
+		for _, z in ipairs({ 0.7, -0.3 }) do S.box(-0.04, z, 0.1, 0.36, 0.14, 0.05, 0, P.glow, NEON, 0.35) end
 	end
-	S.disc(0.86, darker(metalCol, 0.65), 0, 2.4, 0.05, METAL, 0, 0.35)
-	S.disc(0.5, metalCol, 0, 2.4, 0.07, METAL, 0, 0.4)
-	if t >= 4 then S.disc(0.4, P.glow, 0, 2.4, 0.14, NEON, 0.1, 0.1) end
+	S.disc(0, 2.4, 0.86, 0.04, 0.15, darker(metalCol, 0.65), METAL)
+	S.disc(0, 2.4, 0.5, 0.19, 0.06, metalCol, METAL)
+	if t >= 4 then S.disc(0, 2.4, 0.4, 0.25, 0.05, P.glow, NEON) end
 
-	-- ============ heads
+	-- ------------------------------------------------------------------ heads
 	local haloD = 3.7 + 0.45 * t
-	if t == 1 and v == 1 then
-		for i = 0, 9 do
-			local a = i * math.pi / 5
-			local vx, vz = math.cos(a), math.sin(a)
-			S.block(0.34, 0.62, metalCol, vx * 1.5, orbZ + vz * 1.5, 0.12, rot(-vz, vx), METAL, 0, 0.3)
-		end
+	local function leaf(cx, cz, len, wid, a, y0, h, col, mat, tr) S.shard(cx, cz, len, wid, a, 0.45, y0, h, col, mat, tr) end
+	if t == 1 and v == 1 then -- apprentice: bronze cradle holding the orb
+		S.ring(0, o, 1.25, 10, 0.4, 0.10, 0.10, metalCol, METAL, 0, 0.8)
 		for i = 0, 3 do
 			local a = math.rad(45 + i * 90)
-			local vx, vz = math.cos(a), math.sin(a)
-			S.block(0.24, 1.0, darker(metalCol, 0.8), vx * 2.0, orbZ + vz * 2.0, 0.1, rot(vx, vz), METAL, 0, 0.3)
+			S.spike(cos(a) * 1.5, o + sin(a) * 1.5, 1.1, 0.5, a, 0.10, 0.10, darker(metalCol, 0.8), METAL)
 		end
-	elseif t == 1 then -- gnarled branch fork
+		for i = 0, 3 do
+			local a = math.rad(i * 90)
+			S.spike(cos(a) * 1.5, o + sin(a) * 1.5, 0.55, 0.34, a, 0.10, 0.10, metalCol, METAL)
+		end
+	elseif t == 1 then -- gnarled branch fork with leaves
 		for _, sx in ipairs({ -1, 1 }) do
-			S.block(0.4, 2.8, shaftCol, sx * 0.9, orbZ + 1.3, 0.08, sx * -0.38, WOOD, 0, 0.3)
-			S.block(0.3, 1.6, shaftCol, sx * 1.6, orbZ + 0.1, 0.1, sx * 0.3, WOOD, 0, 0.3)
-			S.disc(0.9, P.acc, sx * 1.9, orbZ + 1.0, 0.16, FABRIC, 0, 0.12)
-			S.disc(0.7, lighter(P.acc, 0.2), sx * 1.4, orbZ - 1.1, 0.16, FABRIC, 0, 0.12)
+			S.ribbon({
+				{ x = sx * 0.2, z = o + 0.55, a = 0.3, b = 0.3 }, { x = sx * 1.05, z = o - 0.1, a = 0.26, b = 0.26 },
+				{ x = sx * 1.7, z = o - 1.1, a = 0.2, b = 0.2 }, { x = sx * 1.6, z = o - 2.1, a = 0.1, b = 0.1 },
+				{ x = sx * 1.15, z = o - 2.75, a = 0, b = 0 },
+			}, 0.10, 0.10, shaftCol, WOOD)
+			leaf(sx * 1.95, o - 0.35, 1.3, 0.7, sx > 0 and -0.5 or PI + 0.5, 0.20, 0.06, P.acc, FABRIC)
+			leaf(sx * 1.75, o - 1.5, 1.2, 0.62, sx > 0 and -1.0 or PI + 1.0, 0.20, 0.06, lighter(P.acc, 0.25), FABRIC)
+			leaf(sx * 1.0, o + 0.2, 1.0, 0.5, sx > 0 and 0.4 or PI - 0.4, 0.20, 0.06, darker(P.acc, 0.8), FABRIC)
 		end
 	elseif t == 2 and v == 1 then -- jade rod: crystal + leaves
-		S.block(1.9, 1.9, P.main, 0, orbZ, 0.12, math.pi / 4, METAL, 0, 0.3)
-		S.block(1.3, 1.3, lighter(P.main, 0.35), 0, orbZ, 0.2, math.pi / 4, NEON, 0.1, 0.2)
 		for i = 0, 3 do
-			local a = i * math.pi / 2
-			S.block(0.5, 1.6, P.acc, math.cos(a) * 1.6, orbZ + math.sin(a) * 1.6, 0.1, rot(math.cos(a), math.sin(a)) + 0.4, METAL, 0, 0.25)
+			local a = i * PI / 2 + PI / 4
+			leaf(cos(a) * 0.5, o + sin(a) * 0.5, 2.1, 0.8, a, 0.04, 0.05, P.acc, METAL)
 		end
-	elseif t == 2 then -- crook with leaf-wrapped hook
-		S.ring(1.7, 14, 0.4, P.main, 0, orbZ, 0.1, WOOD, 0, 0.3)
+		S.shard(0, o + 1.5, 3.2, 1.8, -PI / 2, 0.45, 0.10, 0.10, P.main, METAL)
+		S.shard(0, o + 0.9, 2.0, 1.0, -PI / 2, 0.45, 0.20, 0.06, lighter(P.main, 0.35), NEON, 0.1)
+	elseif t == 2 then -- crook with a leaf-wrapped hook
+		S.arc(0, o, 1.6, -PI / 2 + 0.55, PI * 1.5 - 0.55, 9, 0.42, 0.3, 0.10, 0.10, P.acc, WOOD)
 		for i = 0, 5 do
-			local a = i / 6 * math.pi * 2
-			S.disc(0.8, (i % 2 == 0) and P.main or lighter(P.main, 0.25), math.cos(a) * 2.1, orbZ + math.sin(a) * 2.1, 0.18, FABRIC, 0, 0.1)
+			local a = -PI / 2 + 0.75 + i * (PI * 2 - 1.5) / 5
+			leaf(cos(a) * 1.82, o + sin(a) * 1.82, 1.0, 0.62, a, 0.10, 0.10, (i % 2 == 0) and P.main or lighter(P.main, 0.25), FABRIC)
 		end
-	elseif t == 3 and v == 1 then -- aqua: tall crystal + floating drops
-		S.block(1.5, 3.2, P.main, 0, orbZ - 0.4, 0.12, 0, METAL, 0, 0.3)
-		S.block(1.4, 1.4, P.main, 0, orbZ - 2.0, 0.12, math.pi / 4, METAL, 0, 0.3)
-		S.block(1.4, 1.4, P.main, 0, orbZ + 1.2, 0.12, math.pi / 4, METAL, 0, 0.3)
-		S.block(0.8, 2.6, P.glow, 0, orbZ - 0.4, 0.22, 0, NEON, 0.2, 0.2)
+	elseif t == 3 and v == 1 then -- aqua: long crystal, prongs and floating drops
+		S.poly({
+			{ 0, o - 2.5 }, { 0.8, o - 1.2 }, { 0.8, o + 0.5 }, { 0, o + 1.7 }, { -0.8, o + 0.5 }, { -0.8, o - 1.2 },
+		}, 0.10, 0.10, P.main, METAL)
+		S.poly({
+			{ 0, o - 2.0 }, { 0.38, o - 1.1 }, { 0.38, o + 0.3 }, { 0, o + 1.2 }, { -0.38, o + 0.3 }, { -0.38, o - 1.1 },
+		}, 0.20, 0.06, lighter(P.main, 0.35), NEON, 0.2)
 		for _, sx in ipairs({ -1, 1 }) do
-			S.block(0.5, 1.6, P.acc, sx * 1.6, orbZ + 0.4, 0.1, sx * 0.3, METAL, 0, 0.25)
-			S.disc(0.55, P.glow, sx * 2.5, orbZ - 1.0, 0.3, NEON, 0.15, 0.1)
+			S.shard(sx * 0.8, o + 0.5, 2.3, 0.6, sx > 0 and -0.55 or PI + 0.55, 0.4, 0.10, 0.10, P.acc, METAL)
+			S.disc(sx * 2.7, o - 1.3, 0.55, 0.10, 0.12, P.glow, NEON, 0.15)
+			S.disc(sx * 2.2, o + 0.4, 0.34, 0.10, 0.12, P.glow, NEON, 0.15)
 		end
 	elseif t == 3 then -- prism hexagon
-		S.ring(1.9, 6, 0.5, P.main, 0, orbZ, 0.12, METAL, 0, 0.3, 1.25)
-		S.ring(1.2, 6, 0.3, P.glow, 0, orbZ, 0.2, NEON, 0.2, 0.1, 1.3)
-		for i = 0, 2 do
-			local a = i * math.pi * 2 / 3
-			S.block(0.3, 2.4, P.acc, 0, orbZ, 0.16, a, METAL, 0, 0.2)
-		end
+		S.band(0, o, 1.5, 2.0, 6, 0.10, 0.10, P.main, METAL, nil, PI / 6)
+		S.band(0, o, 0.95, 1.25, 6, 0.20, 0.06, P.glow, NEON, 0.2, PI / 6)
+		local tr3 = {}
+		for i = 0, 2 do local a = i * PI * 2 / 3 - PI / 2; tr3[#tr3 + 1] = { cos(a) * 1.15, o + sin(a) * 1.15 } end
+		S.poly(tr3, 0.26, 0.04, P.acc, METAL)
 	elseif t == 4 and v == 1 then -- amethyst cluster + orbit ring
+		S.ring(0, o, 2.9, 22, 0.2, 0.05, 0.03, P.glow, NEON, 0.15, 0.7)
 		for i = 0, 4 do
-			local a = i / 5 * math.pi * 2 + 0.3
-			local vx, vz = math.cos(a), math.sin(a)
-			S.block(0.7, 2.6, (i % 2 == 0) and P.main or lighter(P.main, 0.25), vx * 1.2, orbZ + vz * 1.2, 0.1 + i * 0.01, rot(vx, vz), METAL, 0, 0.3)
+			local a = i / 5 * PI * 2 + 0.3
+			S.shard(cos(a) * 0.9, o + sin(a) * 0.9, 2.3, 0.8, a, 0.35, 0.10 + 0.02 * (i % 2), 0.10, (i % 2 == 0) and P.main or lighter(P.main, 0.25), METAL)
 		end
-		S.ring(2.9, 22, 0.2, P.glow, 0, orbZ, 0.08, NEON, 0.15, 0.08)
 		for i = 0, 2 do
-			local a = i / 3 * math.pi * 2
-			S.disc(0.7, P.glow, math.cos(a) * 2.9, orbZ + math.sin(a) * 2.9, 0.3, NEON, 0.05, 0.16)
+			local a = i / 3 * PI * 2
+			S.disc(cos(a) * 2.9, o + sin(a) * 2.9, 0.7, 0.10, 0.16, P.glow, NEON, 0.05)
 		end
-	elseif t == 4 then -- stormspire
-		S.block(1.1, 4.6, P.main, 0, orbZ - 0.6, 0.12, 0, METAL, 0, 0.3)
-		S.block(1.3, 1.3, P.main, 0, orbZ - 3.0, 0.12, math.pi / 4, METAL, 0, 0.3)
+	elseif t == 4 then -- stormspire: spire + lightning
+		S.ring(0, o, 2.6, 18, 0.2, 0.05, 0.03, P.acc, NEON, 0.2, 0.7)
+		S.shard(0, o + 1.5, 5.4, 1.3, -PI / 2, 0.38, 0.10, 0.10, P.main, METAL)
+		S.shard(0, o + 0.6, 3.2, 0.5, -PI / 2, 0.4, 0.20, 0.06, lighter(P.main, 0.4), NEON, 0.1)
 		for _, sx in ipairs({ -1, 1 }) do
-			for i = 0, 2 do
-				S.block(0.22, 1.2, P.acc, sx * (1.5 + (i % 2) * 0.5), orbZ - 1.4 + i * 1.3, 0.2, sx * (i % 2 == 0 and 0.6 or -0.6), NEON, 0.05, 0.1)
+			local pts = { { 1.2, 0.9 }, { 2.1, 0.0 }, { 1.5, -0.7 }, { 2.4, -1.7 }, { 1.8, -2.3 }, { 2.7, -3.3 } }
+			for i = 2, #pts do
+				S.beam(sx * pts[i - 1][1], o + pts[i - 1][2], sx * pts[i][1], o + pts[i][2], 0.22, 0.20, 0.06, P.acc, NEON, 0.05)
 			end
 		end
-		S.ring(2.6, 18, 0.2, P.acc, 0, orbZ, 0.08, NEON, 0.2, 0.08)
 	elseif t == 5 and v == 1 then -- sun disc with rays
-		S.ring(2.3, 24, 0.5, metalCol, 0, orbZ, 0.1, METAL, 0, 0.3)
-		S.ring(1.7, 20, 0.28, P.glow, 0, orbZ, 0.16, NEON, 0.1, 0.1)
-		S.rays(16, 2.7, 4.2 + (t - 5) * 0.4, 0.34, P.main, 0, orbZ, 0.12, NEON, 0.1, 0.1)
-		S.rays(16, 2.7, 3.2, 0.5, P.glow, 0, orbZ, 0.08, NEON, 0.4, 0.1, math.pi / 16)
+		S.ring(0, o, 2.25, 24, 0.5, 0.10, 0.10, metalCol, METAL, 0, 0.82)
+		S.ring(0, o, 1.7, 20, 0.28, 0.20, 0.06, P.glow, NEON, 0.1, 0.78)
+		for i = 0, 15 do
+			local a = i / 16 * PI * 2
+			local long = (i % 2 == 0)
+			S.spike(cos(a) * 2.55, o + sin(a) * 2.55, long and (1.7 + (t - 5) * 0.3) or 0.95, long and 0.5 or 0.44, a, 0.10, 0.10, long and P.main or P.glow, NEON, 0.08)
+		end
 	elseif t == 5 then -- astral lantern cage
-		S.ring(1.9, 6, 0.5, metalCol, 0, orbZ, 0.1, METAL, 0, 0.3, 1.3)
-		for i = 0, 3 do
-			local a = i * math.pi / 2 + math.pi / 4
-			S.block(0.3, 3.4, P.main, 0, orbZ, 0.14, a, NEON, 0.12, 0.1)
+		S.band(0, o, 1.6, 2.05, 6, 0.10, 0.10, metalCol, METAL, nil, PI / 6)
+		for i = 0, 5 do
+			local a = i / 6 * PI * 2
+			S.beam(cos(a) * 0.65, o + sin(a) * 0.65, cos(a) * 1.6, o + sin(a) * 1.6, 0.26, 0.20, 0.06, P.main, NEON, 0.12)
 		end
-		S.ring(2.9, 20, 0.2, P.glow, 0, orbZ, 0.06, NEON, 0.3, 0.08)
-		for i = 0, 2 do S.block(0.2, 1.1 + i * 0.4, P.main, (i - 1) * 0.5, orbZ + 2.7, 0.1, 0, FABRIC, 0.1, 0.1) end
+		S.ring(0, o, 2.9, 20, 0.2, 0.05, 0.03, P.glow, NEON, 0.3, 0.7)
+		for i, sx in ipairs({ -1.25, -0.8, 0.8, 1.25 }) do
+			S.box(sx, o + 2.15 + (0.5 + 0.18 * i) / 2, 0.2, 0.5 + 0.18 * i, 0.10, 0.06, 0, P.main, FABRIC, 0.1)
+		end
 	elseif t == 6 and v == 1 then -- nether crown
+		S.ring(0, o, 3.4, 26, 0.16, 0.05, 0.03, P.glow, NEON, 0.3, 0.7)
+		S.ring(0, o, 1.3, 14, 0.4, 0.10, 0.10, P.main, NEON, 0.1, 0.8)
 		for i = 0, 7 do
-			local a = i / 8 * math.pi * 2
-			local vx, vz = math.cos(a), math.sin(a)
-			S.block(0.55, 2.6, P.dark, vx * 2.2, orbZ + vz * 2.2, 0.1, rot(vx, vz), METAL, 0, 0.3)
-			S.block(0.3, 0.9, P.main, vx * 3.3, orbZ + vz * 3.3, 0.16, rot(vx, vz), NEON, 0.05, 0.12)
+			local a = i / 8 * PI * 2
+			S.shard(cos(a) * 1.7, o + sin(a) * 1.7, 2.3, 0.75, a, 0.3, 0.10, 0.10, P.dark, METAL)
+			S.shard(cos(a) * 2.6, o + sin(a) * 2.6, 1.3, 0.32, a, 0.4, 0.20, 0.06, P.main, NEON, 0.05)
 		end
-		S.ring(1.7, 20, 0.35, P.main, 0, orbZ, 0.14, NEON, 0.1, 0.1)
-		S.ring(3.2, 26, 0.16, P.glow, 0, orbZ, 0.05, NEON, 0.3, 0.06)
 	elseif t == 6 then -- hellfire pyre
-		S.disc(3.6, P.dark, 0, orbZ, 0.08, METAL, 0, 0.3)
-		S.disc(2.8, P.main, 0, orbZ, 0.14, NEON, 0.35, 0.2)
+		S.disc(0, o, 3.6, 0.10, 0.10, P.dark, METAL)
+		S.disc(0, o, 2.8, 0.20, 0.06, P.main, NEON, 0.35)
 		for i = 0, 6 do
-			local a = i / 7 * math.pi * 2
-			local vx, vz = math.cos(a), math.sin(a)
-			S.block(0.6, 2.2 + (i % 3) * 0.6, (i % 2 == 0) and P.main or P.glow, vx * 1.5, orbZ + vz * 1.5, 0.2 + i * 0.01, rot(vx, vz), NEON, 0.12, 0.2)
+			local a = i / 7 * PI * 2
+			S.shard(cos(a) * 1.0, o + sin(a) * 1.0, 2.2 + (i % 3) * 0.6, 0.65, a, 0.35, 0.26, 0.04, (i % 2 == 0) and P.main or P.glow, NEON, 0.12)
 		end
-		S.disc(1.9, P.glow, 0, orbZ, 0.34, NEON, 0.1, 0.2)
 		for i = 0, 3 do
-			local a = i * math.pi / 2 + 0.4
-			S.block(0.35, 1.6, P.dark, math.cos(a) * 3.3, orbZ + math.sin(a) * 3.3, 0.1, rot(math.cos(a), math.sin(a)), METAL, 0, 0.3)
+			local a = i * PI / 2 + 0.4
+			S.spike(cos(a) * 1.8, o + sin(a) * 1.8, 1.6, 0.6, a, 0.10, 0.10, P.dark, METAL)
 		end
 	else -- galaxy weaver (secret)
-		S.disc(5.0, RB, 0, orbZ, 0.02, NEON, 0.9, 0.05)
-		S.ring(2.4, 20, 0.28, RB, 0, orbZ, 0.1, NEON, 0.1, 0.1)
-		S.ring(3.4, 26, 0.2, RB, 0, orbZ, 0.12, NEON, 0.25, 0.08)
-		S.ring(4.4, 32, 0.14, RB, 0, orbZ, 0.14, NEON, 0.4, 0.06)
-		for i = 0, 11 do
-			local a = i / 12 * math.pi * 2
-			S.block(0.3, 0.3, RB, math.cos(a) * (3.4 + (i % 3) * 0.5), orbZ + math.sin(a) * (3.4 + (i % 3) * 0.5), 0.3, a + 0.78, NEON, 0, 0.12)
+		S.ring(0, o, 2.3, 20, 0.28, 0.05, 0.03, RB, NEON, 0.3, 0.7)
+		S.ring(0, o, 4.5, 30, 0.2, 0.05, 0.03, RB, NEON, 0.4, 0.7)
+		for i = 0, 2 do
+			local a0 = i / 3 * PI * 2
+			S.arc(0, o, 1.1, a0, a0 + PI * 1.15, 5, 0.55, 0.1, 0.18, 0.06, RB, NEON, 0.1, 3.4)
 		end
-		S.rays(4, 1.5, 5.6, 0.2, RB, 0, orbZ, 0.2, NEON, 0.2, 0.06, math.pi / 4)
+		for i = 0, 11 do
+			local a = i / 12 * PI * 2 + 0.2
+			local r = 3.6 + (i % 3) * 0.45
+			S.shard(cos(a) * r, o + sin(a) * r, 0.7, 0.3, a + 0.8, 0.5, 0.34, 0.06, RB, NEON)
+		end
+		for i = 0, 3 do
+			local a = i * PI / 2 + PI / 4
+			S.spike(cos(a) * 1.8, o + sin(a) * 1.8, 3.8, 0.34, a, 0.26, 0.04, RB, NEON, 0.2)
+		end
 		for i = 0, 5 do
-			S.block(0.26, 0.7, RB, 0, 1.0 + (i % 2) * 0.3 - i * 1.0, 0.3, i, NEON, 0.1, 0.1)
+			S.shard(0, 1.0 - i * 1.0, 0.7, 0.26, i * 1.1, 0.5, 0.36, 0.06, RB, NEON, 0.1)
 		end
 	end
 
-	-- orb (always present; the server animates it when you attack)
+	-- ------------------------------------------------------------------ orb (always present; the server animates it when you attack)
 	local glowC = P.glow
-	local halo = S.disc(haloD, glowC, 0, orbZ, 0.04, NEON, 0.86, 0.1)
-	local mid = S.disc(2.4 + 0.1 * t, glowC, 0, orbZ, 0.15, NEON, 0.45, 0.4)
-	local core = S.disc(1.2 + 0.06 * t, (w.rainbow and RB) or C(250, 252, 255), 0, orbZ, 0.4, NEON, 0, 0.3)
+	local halo = S.disc(0, o, haloD, 0.0, 0.02, glowC, NEON, 0.86)
+	local mid = S.disc(0, o, 2.4 + 0.1 * t, 0.30, 0.06, glowC, NEON, 0.45)
+	local core = S.disc(0, o, 1.2 + 0.06 * t, 0.36, 0.08, (w.rainbow and RB) or C(250, 252, 255), NEON, 0)
 	local lt = light(mid, glowC, 14 + t * 2, 1 + t * 0.15)
 	local em = emitter(core, C(235, 245, 255), glowC, 8 + t * 4, 0.45 * k + 0.05 * t, 1.0 + 0.1 * t, 1.5 + 0.3 * t)
 	if t >= 5 then em.Speed = NumberRange.new(2, 6) end
@@ -1051,7 +1512,7 @@ end
 function WM.build(kind, w, root, parent, handCF, scale, opts)
 	local anchored = opts and opts.anchored
 	local k = (scale or 1) * (1 + 0.022 * (w.tier - 1))
-	local pivot = mk(parent, BLK, Vector3.new(0.3, 0.3, 0.3), root.CFrame * handCF, Color3.new(1, 1, 1), nil, 1, anchored)
+	local pivot = mkPart(parent, BLK, Vector3.new(0.3, 0.3, 0.3), root.CFrame * handCF, Color3.new(1, 1, 1), nil, 1, anchored)
 	local weld
 	if not anchored then
 		weld = Instance.new("Weld")
@@ -1073,25 +1534,28 @@ function WM.build(kind, w, root, parent, handCF, scale, opts)
 	return out
 end
 
--- glowing rune circle under the hero's feet for high rarities
+-- glowing rune circle under the hero's feet for high rarities (own slabs above the hero's shadow disc)
 function WM.heroAura(root, parent, w, baseY)
 	local t = w.tier
 	if t < 4 then return end
 	local P = palette(w)
-	local pivot = mk(parent, BLK, Vector3.new(0.2, 0.2, 0.2), root.CFrame * CFrame.new(0, baseY + 0.05, 0), Color3.new(1, 1, 1), nil, 1, false)
+	local pivot = mkPart(parent, BLK, Vector3.new(0.2, 0.2, 0.2), root.CFrame * CFrame.new(0, baseY + 0.05, 0), Color3.new(1, 1, 1), nil, 1, false)
 	local wd = Instance.new("WeldConstraint")
 	wd.Part0 = root
 	wd.Part1 = pivot
 	wd.Parent = pivot
 	local S = newS(pivot, parent, 1, false)
-	S.disc(7.5 + (t - 4) * 1.0, P.glow, 0, 0, 0.02, NEON, 0.88, 0.04)
-	S.ring(3.9 + (t - 4) * 0.4, 28, 0.2, P.main, 0, 0, 0.04, NEON, 0.2, 0.05)
-	if t >= 5 then S.ring(2.9, 20, 0.16, P.glow, 0, 0, 0.05, NEON, 0.3, 0.05) end
+	S.disc(0, 0, 7.5 + (t - 4) * 1.0, 0.10, 0.03, P.glow, NEON, 0.88)
+	S.ring(0, 0, 3.9 + (t - 4) * 0.4, 28, 0.2, 0.14, 0.03, P.main, NEON, 0.2, 0.7)
+	if t >= 5 then S.ring(0, 0, 2.9, 20, 0.16, 0.14, 0.03, P.glow, NEON, 0.3, 0.7) end
 	if t >= 6 then
-		S.rays(8, 4.4, 6.4, 0.3, P.main, 0, 0, 0.05, NEON, 0.2, 0.05)
-		S.ring(6.6 + (t - 6), 36, 0.14, P.glow, 0, 0, 0.06, NEON, 0.35, 0.05)
+		for i = 0, 7 do
+			local a = i / 8 * PI * 2
+			S.spike(cos(a) * 4.5, sin(a) * 4.5, 2.0, 0.3, a, 0.18, 0.03, P.main, NEON, 0.2)
+		end
+		S.ring(0, 0, 6.8 + (t - 6), 36, 0.14, 0.14, 0.03, P.glow, NEON, 0.35, 0.7)
 	end
-	local p = S.disc(0.5, P.glow, 0, 0, 0.1, NEON, 1, 0.05)
+	local p = S.ghost(0, 0, 0.5, 0.5, 0.1, 0.05)
 	emitter(p, P.glow, P.main, 6 + t * 3, 0.4 + 0.05 * t, 1.4, 4 + t * 0.5)
 end
 
@@ -1421,7 +1885,7 @@ local function swingWeapon(st, cls, cd)
 			task.delay(math.clamp((cd or 0.4) * 0.45, 0.06, 0.3), function()
 				if not alive() then return end
 				for _, ap in ipairs(w.arrow) do
-					if ap.Parent then tween(ap, 0.12, { Transparency = 0 }, Enum.EasingStyle.Linear) end
+					if ap.Parent then tween(ap, 0.12, { Transparency = ap:GetAttribute("T0") or 0 }, Enum.EasingStyle.Linear) end
 				end
 			end)
 		end
