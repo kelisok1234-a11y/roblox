@@ -2987,6 +2987,679 @@ return Recipes
 ]]></ProtectedString>
 </Properties>
 </Item>
+<Item class="ModuleScript" referent="RBX_SKL1">
+<Properties>
+<string name="Name">SkillRecipes</string>
+<ProtectedString name="Source"><![CDATA[-- SkillRecipes (ReplicatedStorage.SkillRecipes): a unique Q and a unique E skill for every weapon of tier 2+.
+-- Standard (tier 1 / Common) weapons keep the original class skills. Z (the ultimate) lives in UltRecipes.
+--
+-- Same timeline format as UltRecipes: every step is S(kind, t, params) and runs t seconds after the cast.
+--   kinds: tele hit drop rain beam nova orbit pull zone dash volley chain wall spokes heal screen sky muzzle
+--          + blink (teleport the caster)  + buff (attack speed / damage / move speed boost)
+-- The rarer the weapon, the longer, bigger and more spectacular its skills are:
+--   Uncommon/Rare  = one or two effects            Epic   = combos with crowd control
+--   Legendary      = sky elements + buffs          Mythic = cinematic multi-stage skills
+--   Secret         = full light show (screen tint, galaxy / prism core, buff, finishing wave)
+-- Damage numbers are multipliers of (weapon damage x ability damage); radii and counts grow with rarity.
+local Skills = {}
+Skills.MinTier = 2
+
+local function S(kind, t, p)
+	p = p or {}
+	p.k = kind
+	p.t = t
+	return p
+end
+
+local Q, E = {}, {}
+
+-- =====================================================================================================
+-- SWORDS
+-- =====================================================================================================
+
+-- T2 Emerald Edge ------------------------------------------------------------------------------------
+Q.sw_emerald = { name = "Thorn Lunge", icon = "🌿", cd = 7, lock = 0.5, range = 40,
+	desc = "Рывок вперёд сквозь врагов, в конце пути из земли вырываются шипы и замедляют всех вокруг.",
+	steps = {
+		S("dash", 0, { style = "blade", dist = 22, dur = 0.22, w = 4.5, dmg = 2.2, slow = 1.5, sm = 0.5, push = 3 }),
+		S("hit", 0.3, { style = "spikes", variant = "thorn", at = "c", r = 9, dmg = 2.0, slow = 2, sm = 0.5, push = 1.5 }),
+	} }
+E.sw_emerald = { name = "Verdant Aegis", icon = "🛡️", cd = 12, lock = 0.7, range = 40,
+	desc = "Лоза окутывает владельца: короткая неуязвимость и немного здоровья, вокруг вырастает поле терний.",
+	steps = {
+		S("heal", 0, { pct = 0.06, inv = 0.9 }),
+		S("tele", 0, { style = "rune", at = "c", r = 11, dur = 0.5 }),
+		S("hit", 0.5, { style = "bloom", at = "c", r = 10, dmg = 2.5, push = 2 }),
+		S("zone", 0.5, { style = "thorns", at = "c", r = 11, dur = 4, ticks = 8, dmg = 0.45, slow = 1.2, sm = 0.5 }),
+	} }
+
+-- T2 Jade Scimitar -----------------------------------------------------------------------------------
+Q.sw_jade = { name = "Jade Crescent", icon = "🌙", cd = 7, lock = 0.5, range = 40,
+	desc = "Три нефритовых полумесяца веером летят вперёд, рассекая врагов и отбрасывая их.",
+	steps = {
+		S("wall", 0, { style = "spirits", at = "c", ang = -22, len = 34, w = 4.5, dur = 0.8, dmg = 2.0, once = true, push = 2 }),
+		S("wall", 0, { style = "spirits", at = "c", ang = 0, len = 40, w = 4.5, dur = 0.8, dmg = 2.2, once = true, push = 2 }),
+		S("wall", 0, { style = "spirits", at = "c", ang = 22, len = 34, w = 4.5, dur = 0.8, dmg = 2.0, once = true, push = 2 }),
+	} }
+E.sw_jade = { name = "Serpent Coil", icon = "🐍", cd = 12, lock = 0.5, range = 40,
+	desc = "Три нефритовых клинка кружат вокруг владельца 4 секунды и рубят всех, кто подошёл близко.",
+	steps = {
+		S("tele", 0, { style = "rune", at = "c", r = 8, dur = 0.4 }),
+		S("orbit", 0.2, { obj = "blade", n = 3, nc = 0.5, rad = 8, dur = 4, speed = 6, hitR = 5, ticks = 12, dmg = 0.85, slow = 0.6, sm = 0.7, size = 0.8 }),
+		S("heal", 0.2, { pct = 0.04 }),
+	} }
+
+-- T3 Frostbrand --------------------------------------------------------------------------------------
+Q.sw_frost = { name = "Glacial Rush", icon = "❄️", cd = 7.5, lock = 0.6, range = 40,
+	desc = "Ледяной рывок через строй врагов, в конце — волна холода и ледяной взрыв, замораживающий оставшихся.",
+	steps = {
+		S("dash", 0, { style = "blade", dist = 24, dur = 0.22, w = 4.8, dmg = 2.6, stun = 0.6, slow = 2, sm = 0.4, push = 3 }),
+		S("nova", 0.3, { style = "frost", at = "c", r0 = 2, r = 14, dur = 0.5, dmg = 2.4, slow = 3, sm = 0.4 }),
+		S("hit", 0.35, { style = "ice", at = "c", r = 12, dmg = 2.2, crit = true, stun = 1.0 }),
+	} }
+E.sw_frost = { name = "Permafrost Cage", icon = "🧊", cd = 13, lock = 0.8, range = 40,
+	desc = "Руна холода, затем ледяная клетка сковывает всех рядом, а вечная мерзлота ещё 5 секунд замораживает землю.",
+	steps = {
+		S("heal", 0, { inv = 0.8 }),
+		S("tele", 0, { style = "rune", at = "c", r = 16, dur = 0.8 }),
+		S("hit", 0.8, { style = "cage", at = "c", r = 16, dmg = 3.2, stun = 2, slow = 3, sm = 0.4 }),
+		S("zone", 0.8, { style = "frost", at = "c", r = 16, dur = 5, ticks = 10, dmg = 0.45, slow = 1.2, sm = 0.35 }),
+		S("hit", 1.5, { style = "ice", at = "c", r = 14, dmg = 2.5, crit = true }),
+	} }
+
+-- T3 Tidecaller Saber --------------------------------------------------------------------------------
+Q.sw_tide = { name = "Riptide", icon = "🌊", cd = 7.5, lock = 0.6, range = 40,
+	desc = "Волна цунами катится вперёд, а владелец проносится вслед за ней, добивая смытых врагов.",
+	steps = {
+		S("wall", 0, { style = "tsunami", at = "o", len = 40, w = 9, dur = 1.0, dmg = 3.2, once = true, push = 5, slow = 1, sm = 0.6 }),
+		S("dash", 0.05, { style = "blade", dist = 26, dur = 0.25, w = 5, dmg = 2.0, push = 3 }),
+		S("hit", 0.9, { style = "water", at = "o", fw = 36, r = 12, dmg = 2.4, push = 4, stun = 0.8 }),
+	} }
+E.sw_tide = { name = "Maelstrom", icon = "🌀", cd = 13, lock = 0.8, range = 40,
+	desc = "Водоворот затягивает врагов к владельцу, а затем взрывается гейзером, отбрасывая всех и немного исцеляя героя.",
+	steps = {
+		S("tele", 0, { style = "rune", at = "c", r = 14, dur = 0.6 }),
+		S("pull", 0.1, { style = "whirlpool", at = "c", r = 14, dur = 2.4, ticks = 8, dmg = 0.8, pull = 12, slow = 1, sm = 0.5 }),
+		S("hit", 2.6, { style = "water", at = "c", r = 15, dmg = 4.5, push = 5, stun = 1.2, crit = true }),
+		S("heal", 2.6, { pct = 0.06 }),
+	} }
+
+-- T4 Voidfang ----------------------------------------------------------------------------------------
+Q.sw_void = { name = "Shadow Step", icon = "🌑", cd = 8, lock = 0.7, range = 42, healCap = 0.15,
+	desc = "Владелец растворяется в тени и появляется впереди: разрыв Бездны в обеих точках, добивание раненых и клинки тьмы.",
+	steps = {
+		S("hit", 0, { style = "void", at = "o", r = 10, dmg = 2.8, stun = 0.8 }),
+		S("blink", 0.05, { dist = 24, inv = 0.7 }),
+		S("hit", 0.22, { style = "void", at = "c", r = 12, dmg = 4, exec = 0.3, execMul = 2, ls = 0.006, crit = true, stun = 0.8 }),
+		S("beam", 0.25, { style = "void", at = "c", arms = 2, spread = 180, len = 16, w = 2.5, dur = 0.5, ticks = 3, dmg = 1.4 }),
+	} }
+E.sw_void = { name = "Soul Rend", icon = "👁️", cd = 14, lock = 0.9, range = 42, healCap = 0.2,
+	desc = "Портал Бездны вырывает души: врагов затягивает внутрь, затем казнь — раненые получают тройной урон, а владелец лечится.",
+	steps = {
+		S("sky", 0, { style = "portal", at = "c", r = 16, dur = 3.0 }),
+		S("tele", 0, { style = "rune", at = "c", r = 17, dur = 1.8 }),
+		S("pull", 0, { style = "blackhole", at = "c", r = 17, dur = 1.8, ticks = 8, dmg = 0.8, pull = 14, ls = 0.003 }),
+		S("hit", 1.8, { style = "void", at = "c", r = 17, dmg = 6, stun = 1.5, exec = 0.35, execMul = 3, ls = 0.01, crit = true }),
+		S("heal", 1.9, { pct = 0.05 }),
+	} }
+
+-- T4 Thunder Reaver ----------------------------------------------------------------------------------
+Q.sw_thunder = { name = "Voltage Dash", icon = "⚡", cd = 8, lock = 0.9, range = 42,
+	desc = "Два молниеносных рывка к ближайшим врагам, второй заканчивается громовым ударом по площади.",
+	steps = {
+		S("dash", 0, { style = "lightning", to = "nearest", dist = 28, dur = 0.2, w = 5, dmg = 2.6, stun = 0.5 }),
+		S("dash", 0.4, { style = "lightning", to = "nearest", dist = 28, dur = 0.2, w = 5, dmg = 2.6, stun = 0.5, fin = 9, finDmg = 2.6, finStyle = "bolt" }),
+	} }
+E.sw_thunder = { name = "Thunderclap", icon = "🌩️", cd = 14, lock = 0.8, range = 42,
+	desc = "Хлопок грома оглушает всех рядом, над владельцем собирается грозовая туча и бьёт молниями по врагам.",
+	steps = {
+		S("nova", 0, { style = "shock", at = "c", r0 = 3, r = 20, dur = 0.5, dmg = 3.2, stun = 1.0 }),
+		S("sky", 0.1, { style = "cloud", at = "c", r = 20, dur = 3.0 }),
+		S("rain", 0.3, { obj = "none", style = "bolt", at = "c", ar = 20, n = 8, nc = 2, mode = "enemies", over = 2.0, fall = 0.3, r = 5, dmg = 1.9, stun = 0.5, im = 0.8 }),
+		S("nova", 2.6, { style = "shock", at = "c", r0 = 3, r = 22, dur = 0.6, dmg = 3, stun = 0.8 }),
+	} }
+
+-- T5 Solar Excalibur ---------------------------------------------------------------------------------
+Q.sw_solar = { name = "Sunblade Arc", icon = "☀️", cd = 8.5, lock = 0.9, range = 42, healCap = 0.1,
+	desc = "Огромная дуга солнечного света сметает всё перед владельцем на 180°, затем лучи расходятся звездой и взрываются.",
+	steps = {
+		S("tele", 0, { style = "star", at = "c", r = 12, dur = 0.5 }),
+		S("beam", 0.2, { style = "holy", at = "c", arms = 1, ang0 = -90, sweep = 180, len = 28, w = 3.2, dur = 0.8, ticks = 8, dmg = 1.3, stun = 0.3 }),
+		S("spokes", 1.0, { style = "ray", at = "c", n = 8, len = 24, w = 2.6, dur = 0.6, dmg = 2.2 }),
+		S("hit", 1.1, { style = "holy", at = "c", r = 14, dmg = 3.5, stun = 1.2, crit = true }),
+		S("heal", 1.1, { pct = 0.04 }),
+	} }
+E.sw_solar = { name = "Dawn Sanctuary", icon = "🌅", cd = 15, lock = 0.9, range = 42, healCap = 0.15,
+	desc = "Над владельцем восходит солнце: святая земля жжёт врагов, лучи бьют по кругу, клинок ускоряется на 5 секунд.",
+	steps = {
+		S("sky", 0, { style = "sun", at = "c", r = 18, dur = 4.5 }),
+		S("heal", 0, { pct = 0.08, inv = 0.8 }),
+		S("buff", 0, { as = 1.35, dur = 5, style = "aura" }),
+		S("tele", 0, { style = "star", at = "c", r = 18, dur = 0.7 }),
+		S("zone", 0.6, { style = "holy", at = "c", r = 18, dur = 4.4, ticks = 8, dmg = 0.55, slow = 0.8, sm = 0.7 }),
+		S("spokes", 0.8, { style = "ray", at = "c", n = 8, len = 22, w = 2.8, dur = 0.7, dmg = 2.6 }),
+		S("nova", 4.7, { style = "holy", at = "c", r0 = 3, r = 24, dur = 0.7, dmg = 4.5, flash = true }),
+	} }
+
+-- T5 Phoenix Dawnblade -------------------------------------------------------------------------------
+Q.sw_phoenix = { name = "Phoenix Strike", icon = "🔥", cd = 8.5, lock = 0.8, range = 42,
+	desc = "Владелец вспыхивает и рвётся вперёд, а следом летит огненный феникс; на пути остаётся пламя.",
+	steps = {
+		S("wall", 0, { style = "phoenix", at = "o", len = 46, w = 8, dur = 1.0, dmg = 3.6, once = true, burn = 0.6 }),
+		S("dash", 0.05, { style = "flame", dist = 28, dur = 0.24, w = 5, dmg = 3, burn = 0.5, push = 3 }),
+		S("hit", 0.35, { style = "fire", at = "c", r = 12, dmg = 3, burn = 0.6, crit = true }),
+		S("zone", 0.35, { style = "fire", at = "c", r = 10, dur = 3, ticks = 6, dmg = 0.5, burn = 0.4 }),
+	} }
+E.sw_phoenix = { name = "Ashen Wings", icon = "🪶", cd = 15, lock = 0.9, range = 42, healCap = 0.3,
+	desc = "Крылья из пепла: исцеление и неуязвимость, огненная волна, дождь углей, а герой быстрее бегает и бьёт.",
+	steps = {
+		S("heal", 0, { pct = 0.1, inv = 1.2, style = "phoenix" }),
+		S("buff", 0, { as = 1.4, spd = 1.3, dur = 5, style = "aura" }),
+		S("nova", 0.15, { style = "fire", at = "c", r0 = 2, r = 17, dur = 0.6, dmg = 4, burn = 0.7, push = 4 }),
+		S("rain", 0.5, { obj = "ember", style = "fire", at = "c", ar = 20, n = 12, nc = 2, over = 1.8, fall = 0.7, r = 5, dmg = 1.3, burn = 0.5, scale = 0.8 }),
+		S("hit", 2.4, { style = "fire", at = "c", r = 17, dmg = 3, crit = true, burn = 0.6 }),
+	} }
+
+-- T6 Abyssal Eclipse ---------------------------------------------------------------------------------
+Q.sw_eclipse = { name = "Umbral Rift", icon = "🌘", cd = 9, lock = 1.0, range = 42, healCap = 0.15,
+	desc = "Мир темнеет: разрыв в точке старта, прыжок сквозь тень и чёрная дыра на месте приземления с алыми лучами.",
+	steps = {
+		S("screen", 0, { dark = 0.35, dc = "k", hold = 1.2, tin = 0.2, tout = 0.6 }),
+		S("hit", 0, { style = "void", at = "o", r = 12, dmg = 3, stun = 1 }),
+		S("blink", 0.05, { dist = 28, inv = 0.9 }),
+		S("tele", 0.2, { style = "rune", at = "c", r = 15, dur = 0.8 }),
+		S("pull", 0.25, { style = "blackhole", at = "c", r = 15, dur = 1.2, ticks = 6, dmg = 0.8, pull = 14, ls = 0.003 }),
+		S("beam", 0.3, { style = "void", at = "c", arms = 4, spread = 90, sweep = 180, len = 22, w = 2.8, dur = 1.0, ticks = 8, dmg = 1.2 }),
+		S("hit", 1.5, { style = "void", at = "c", r = 17, dmg = 6, stun = 1.5, exec = 0.3, execMul = 2, crit = true }),
+	} }
+E.sw_eclipse = { name = "Black Sun", icon = "🌑", cd = 16, lock = 1.0, range = 42, healCap = 0.2,
+	desc = "Чёрное солнце над героем: тьма, лучи бездны вращаются вокруг, враги затянуты, а герой бьёт сильнее и быстрее.",
+	steps = {
+		S("screen", 0, { dark = 0.5, dc = "k", hold = 3.4, tin = 0.4, tout = 0.9 }),
+		S("sky", 0, { style = "eclipse", at = "c", r = 22, dur = 4.2 }),
+		S("heal", 0, { pct = 0.06, inv = 1.4 }),
+		S("buff", 0.1, { as = 1.3, dm = 1.3, dur = 6, style = "aura" }),
+		S("tele", 0, { style = "rune", at = "c", r = 22, dur = 1.0 }),
+		S("beam", 0.8, { style = "void", at = "c", arms = 6, spread = 60, sweep = 180, len = 26, w = 2.8, dur = 2.0, ticks = 12, dmg = 1.1 }),
+		S("pull", 0.8, { style = "blackhole", at = "c", r = 22, dur = 2.0, ticks = 8, dmg = 0.8, pull = 14, ls = 0.003 }),
+		S("nova", 3.0, { style = "void", at = "c", r0 = 3, r = 32, dur = 0.9, dmg = 5, stun = 1.5, exec = 0.3, flash = true }),
+	} }
+
+-- T6 Infernal Reaper ---------------------------------------------------------------------------------
+Q.sw_reaper = { name = "Reaping Sweep", icon = "💀", cd = 9, lock = 1.0, range = 42,
+	desc = "Рывок вперёд, затем три призрачных косы описывают огненный круг, поджигая всё вокруг.",
+	steps = {
+		S("dash", 0, { style = "flame", dist = 26, dur = 0.22, w = 5, dmg = 3, burn = 0.5, push = 3 }),
+		S("tele", 0.2, { style = "rune", at = "c", r = 14, dur = 0.4 }),
+		S("beam", 0.35, { style = "fire", at = "c", arms = 3, spread = 120, sweep = 360, len = 17, w = 2.6, dur = 1.0, ticks = 10, dmg = 1.2, burn = 0.4 }),
+		S("hit", 1.4, { style = "fire", at = "c", r = 16, dmg = 4, burn = 0.8, crit = true, stun = 1 }),
+	} }
+E.sw_reaper = { name = "Soul Harvest", icon = "⚰️", cd = 16, lock = 0.8, range = 42, healCap = 0.15,
+	desc = "Четыре косы вращаются вокруг героя 5 секунд, с неба падают пылающие черепа, а пламя ада лечит жнеца.",
+	steps = {
+		S("tele", 0, { style = "rune", at = "c", r = 16, dur = 0.6 }),
+		S("orbit", 0.6, { obj = "scythe", n = 4, nc = 0.5, rad = 10, dur = 5, speed = 5, hitR = 6, ticks = 16, dmg = 1.0, burn = 0.5, size = 0.85 }),
+		S("zone", 0.6, { style = "fire", at = "c", r = 16, dur = 5, ticks = 10, dmg = 0.5, burn = 0.4, ls = 0.002 }),
+		S("rain", 1.0, { obj = "skull", style = "fire", at = "c", ar = 20, n = 8, nc = 2, mode = "enemies", over = 3.0, fall = 0.8, r = 6, dmg = 2.0, burn = 0.5, scale = 0.9 }),
+		S("heal", 1.0, { pct = 0.04 }),
+		S("nova", 5.7, { style = "fire", at = "c", r0 = 3, r = 24, dur = 0.7, dmg = 3.5, burn = 0.7 }),
+	} }
+
+-- T7 Prismatic Singularity (secret) ------------------------------------------------------------------
+Q.sw_prism = { name = "Spectrum Cut", icon = "🌈", cd = 10, lock = 1.6, range = 42, healCap = 0.1,
+	desc = "Три радужных рывка сквозь врагов, каждый оставляет призматическую ударную волну; финал — вспышка спектра.",
+	steps = {
+		S("dash", 0, { style = "blade", dist = 24, dur = 0.2, w = 5, dmg = 2.8, stun = 0.4, push = 3 }),
+		S("nova", 0.25, { style = "prism", at = "c", r0 = 2, r = 15, dur = 0.5, rings = 3, stagger = 0.06, dmg = 2.2 }),
+		S("dash", 0.55, { style = "blade", to = "nearest", dist = 26, dur = 0.2, w = 5, dmg = 2.8, stun = 0.4, push = 3 }),
+		S("nova", 0.8, { style = "prism", at = "c", r0 = 2, r = 16, dur = 0.5, rings = 4, stagger = 0.06, dmg = 2.2 }),
+		S("dash", 1.1, { style = "blade", to = "nearest", dist = 28, dur = 0.2, w = 5.5, dmg = 3.2, stun = 0.6, push = 3, fin = 10, finDmg = 3, finStyle = "prism" }),
+		S("hit", 1.4, { style = "prism", at = "c", r = 18, dmg = 6, stun = 1.5, crit = true }),
+		S("screen", 1.4, { flash = 0.6, fc = "w", fd = 0.5, shake = 1.2, sd = 0.5 }),
+	} }
+E.sw_prism = { name = "Prismatic Overload", icon = "🔮", cd = 18, lock = 1.4, range = 42, healCap = 0.15,
+	desc = "Призматическое ядро над героем: радужные лучи вращаются, волны цвета расходятся каскадом, а герой — быстрее, сильнее и неуязвим.",
+	steps = {
+		S("screen", 0, { dark = 0.45, dc = "k", hold = 4.2, tin = 0.5, tout = 1.0 }),
+		S("sky", 0, { style = "prismcore", at = "c", r = 24, dur = 5.2 }),
+		S("tele", 0, { style = "rune", at = "c", r = 26, dur = 1.0 }),
+		S("heal", 0.1, { pct = 0.06, inv = 1.8 }),
+		S("buff", 0.1, { as = 1.6, dm = 1.4, spd = 1.3, dur = 8, style = "aura" }),
+		S("beam", 0.9, { style = "prism", at = "c", arms = 7, spread = 51.43, sweep = 360, len = 28, w = 3, dur = 2.4, ticks = 14, dmg = 1.1 }),
+		S("pull", 1.0, { style = "galaxy", at = "c", r = 26, dur = 2.0, ticks = 8, dmg = 0.6, pull = 14 }),
+		S("nova", 3.4, { style = "prism", at = "c", r0 = 2, r = 36, dur = 0.9, rings = 5, stagger = 0.08, dmg = 4.5, flash = true }),
+		S("hit", 3.6, { style = "prism", at = "c", r = 24, dmg = 6, stun = 2.5, crit = true, big = true }),
+		S("screen", 3.6, { flash = 0.9, fc = "w", fd = 0.9, shake = 1.8, sd = 0.9 }),
+	} }
+
+-- =====================================================================================================
+-- BOWS
+-- =====================================================================================================
+
+-- T2 Verdant Longbow ---------------------------------------------------------------------------------
+Q.bw_verdant = { name = "Thorn Volley", icon = "🌿", cd = 6, lock = 0.4, range = 40,
+	desc = "Веер шипастых стрел природы: каждая попавшая стрела замедляет цель.",
+	steps = {
+		S("muzzle", 0, { dur = 0.5 }),
+		S("volley", 0, { kind = "arrow", pattern = "fan", n = 5, nc = 1, spread = 42, dmg = 1.3, speed = 1.15 }),
+	} }
+E.bw_verdant = { name = "Entangling Roots", icon = "🌱", cd = 11, lock = 0.6, range = 44,
+	desc = "Руна природы под целью: из земли вырываются шипы, обездвиживают врагов и оставляют поле тернистой лозы.",
+	steps = {
+		S("tele", 0, { style = "rune", r = 12, dur = 0.7 }),
+		S("hit", 0.7, { style = "spikes", variant = "thorn", r = 12, dmg = 2.8, stun = 1.5, slow = 3, sm = 0.5 }),
+		S("zone", 0.7, { style = "thorns", r = 12, dur = 4, ticks = 8, dmg = 0.45, slow = 1.2, sm = 0.5 }),
+	} }
+
+-- T2 Sylvan Reflex -----------------------------------------------------------------------------------
+Q.bw_sylvan = { name = "Leaf Barrage", icon = "🍃", cd = 6, lock = 0.8, range = 44,
+	desc = "Лучник быстро выпускает ливень стрел, разворачивая его слева направо.",
+	steps = {
+		S("muzzle", 0, { dur = 0.8 }),
+		S("volley", 0, { kind = "arrow", pattern = "fan", n = 8, nc = 1, spread = 70, over = 0.7, dmg = 1.1, speed = 1.2 }),
+	} }
+E.bw_sylvan = { name = "Windstep", icon = "💨", cd = 11, lock = 0.5, range = 44,
+	desc = "Прыжок назад с отбрасыванием врагов, ускорение на 3 секунды и ответный веер стрел.",
+	steps = {
+		S("dash", 0, { style = "blade", ang = 180, dist = 20, dur = 0.22, w = 5, dmg = 1.4, push = 4 }),
+		S("buff", 0, { spd = 1.3, dur = 3, style = "aura" }),
+		S("volley", 0.3, { kind = "arrow", pattern = "fan", n = 7, nc = 1, spread = 60, dmg = 1.3, speed = 1.2 }),
+	} }
+
+-- T3 Glacier Bow -------------------------------------------------------------------------------------
+Q.bw_glacier = { name = "Frostbite Shot", icon = "❄️", cd = 6.5, lock = 0.5, range = 44,
+	desc = "Три ледяные стрелы подряд летят в одну линию, а в точке прицела взрывается лёд и замедляет всех рядом.",
+	steps = {
+		S("muzzle", 0, { dur = 0.5 }),
+		S("volley", 0, { kind = "arrow", pattern = "line", n = 3, nc = 1, gap = 1.8, dmg = 1.8, speed = 1.3 }),
+		S("hit", 0.5, { style = "ice", r = 10, dmg = 2.2, slow = 2.5, sm = 0.4, stun = 0.6 }),
+	} }
+E.bw_glacier = { name = "Blizzard Trap", icon = "🥶", cd = 12, lock = 0.7, range = 44,
+	desc = "Ледяная руна взрывается клеткой льда, сверху падают сосульки, поле мороза замедляет всех внутри.",
+	steps = {
+		S("tele", 0, { style = "rune", r = 15, dur = 0.8 }),
+		S("hit", 0.8, { style = "cage", r = 15, dmg = 3, stun = 2.5, slow = 3, sm = 0.4 }),
+		S("zone", 0.8, { style = "frost", r = 15, dur = 5, ticks = 10, dmg = 0.4, slow = 1.2, sm = 0.35 }),
+		S("rain", 1.0, { obj = "icicle", style = "ice", ar = 15, n = 10, nc = 2, mode = "enemies", over = 2.2, fall = 0.6, r = 5, dmg = 1.5, slow = 1, sm = 0.5, scale = 0.8 }),
+	} }
+
+-- T3 Azure Gale --------------------------------------------------------------------------------------
+Q.bw_gale = { name = "Cyclone Arrows", icon = "🌪️", cd = 6.5, lock = 0.6, range = 44,
+	desc = "Кольцо стрел разлетается во все стороны, а лёгкая волна ветра отбрасывает врагов от лучника.",
+	steps = {
+		S("nova", 0, { style = "frost", at = "c", r0 = 2, r = 10, dur = 0.4, dmg = 1.4, push = 4 }),
+		S("volley", 0.1, { kind = "arrow", pattern = "ring", n = 10, nc = 2, dmg = 1.4, speed = 1.2 }),
+	} }
+E.bw_gale = { name = "Gale Leap", icon = "🌬️", cd = 12, lock = 0.6, range = 44,
+	desc = "Порыв ветра отбрасывает врагов, лучник отпрыгивает назад и тут же осыпает их веером стрел.",
+	steps = {
+		S("nova", 0, { style = "frost", at = "c", r0 = 2, r = 13, dur = 0.4, dmg = 3, push = 6, slow = 1.5, sm = 0.5 }),
+		S("dash", 0.05, { style = "blade", ang = 180, dist = 26, dur = 0.25, w = 4, dmg = 1.2, push = 3 }),
+		S("volley", 0.35, { kind = "arrow", pattern = "fan", n = 9, nc = 2, spread = 80, dmg = 1.4, speed = 1.25 }),
+		S("buff", 0.35, { spd = 1.25, dur = 3, style = "aura" }),
+	} }
+
+-- T4 Stormcaller -------------------------------------------------------------------------------------
+Q.bw_storm = { name = "Arc Shot", icon = "⚡", cd = 7, lock = 0.5, range = 46,
+	desc = "Три громовые стрелы и разряд молнии, перепрыгивающий между врагами.",
+	steps = {
+		S("muzzle", 0, { dur = 0.5 }),
+		S("volley", 0, { kind = "arrow", pattern = "fan", n = 3, nc = 1, spread = 14, dmg = 1.6, speed = 1.3 }),
+		S("chain", 0.1, { style = "lightning", at = "c", n = 6, nc = 2, jr = 20, dmg = 2.2, stun = 0.5, range = 60 }),
+	} }
+E.bw_storm = { name = "Storm Cell", icon = "🌩️", cd = 14, lock = 0.7, range = 46,
+	desc = "Над целью зависает грозовая туча: поле статики бьёт током, а молнии выбирают врагов сами.",
+	steps = {
+		S("sky", 0, { style = "cloud", r = 20, dur = 4.2 }),
+		S("tele", 0, { style = "circle", r = 20, dur = 0.7 }),
+		S("zone", 0.4, { style = "storm", r = 18, dur = 3.6, ticks = 8, dmg = 0.5, stun = 0.2 }),
+		S("rain", 0.6, { obj = "none", style = "bolt", ar = 20, n = 12, nc = 3, mode = "enemies", over = 3.0, fall = 0.3, r = 5, dmg = 1.9, stun = 0.5, im = 0.8 }),
+		S("nova", 4.0, { style = "shock", r0 = 3, r = 22, dur = 0.6, dmg = 3, stun = 1.0 }),
+	} }
+
+-- T4 Nightshade Arc ----------------------------------------------------------------------------------
+Q.bw_night = { name = "Shade Volley", icon = "🌙", cd = 7, lock = 0.7, range = 46, healCap = 0.1,
+	desc = "Широкий веер стрел Тьмы и тёмный луч по линии прицела, который немного лечит лучника.",
+	steps = {
+		S("muzzle", 0, { dur = 0.6 }),
+		S("beam", 0.1, { style = "void", at = "c", arms = 1, len = 32, w = 2.2, dur = 0.5, ticks = 3, dmg = 2, ls = 0.004 }),
+		S("volley", 0.1, { kind = "arrow", pattern = "fan", n = 7, nc = 2, spread = 55, dmg = 1.5, speed = 1.25 }),
+	} }
+E.bw_night = { name = "Veil of Night", icon = "🌌", cd = 14, lock = 0.5, range = 46, healCap = 0.15,
+	desc = "Покров ночи: неуязвимость, ускорение и быстрая стрельба, а поле тьмы вокруг высасывает силы врагов.",
+	steps = {
+		S("sky", 0, { style = "moon", at = "c", r = 16, dur = 4.2 }),
+		S("heal", 0, { pct = 0.05, inv = 1.2 }),
+		S("buff", 0, { as = 1.4, spd = 1.35, dur = 5, style = "aura" }),
+		S("tele", 0, { style = "rune", at = "c", r = 15, dur = 0.5 }),
+		S("zone", 0.5, { style = "night", at = "c", r = 15, dur = 4.5, ticks = 9, dmg = 0.5, slow = 1, sm = 0.6, ls = 0.002 }),
+		S("nova", 0.5, { style = "void", at = "c", r0 = 2, r = 16, dur = 0.6, dmg = 3, push = 3 }),
+	} }
+
+-- T5 Dawn Piercer ------------------------------------------------------------------------------------
+Q.bw_dawn = { name = "Radiant Lance", icon = "✨", cd = 8, lock = 0.9, range = 46,
+	desc = "Святое копьё света пронзает всю линию, на конце вспыхивает звезда, а следом летят три стрелы.",
+	steps = {
+		S("muzzle", 0, { dur = 0.7 }),
+		S("tele", 0, { style = "line", at = "o", len = 50, w = 3.4, dur = 0.5 }),
+		S("beam", 0.5, { style = "holy", at = "o", arms = 1, len = 50, w = 3.2, dur = 0.7, ticks = 5, dmg = 2.2, stun = 0.4 }),
+		S("hit", 0.7, { style = "holy", at = "o", fw = 46, r = 12, dmg = 3.5, stun = 1.2, crit = true }),
+		S("volley", 0.5, { kind = "arrow", pattern = "line", n = 3, nc = 1, gap = 1.8, dmg = 1.6, speed = 1.4 }),
+	} }
+E.bw_dawn = { name = "Sun Volley", icon = "🌞", cd = 15, lock = 0.8, range = 46, healCap = 0.1,
+	desc = "Мини-солнце повисает над целью: копья света летят на врагов, лучи расходятся звездой и лечат лучника.",
+	steps = {
+		S("sky", 0, { style = "sun", r = 18, dur = 3.8 }),
+		S("tele", 0, { style = "star", r = 18, dur = 0.8 }),
+		S("rain", 0.5, { obj = "lance", style = "holy", ar = 20, n = 12, nc = 3, mode = "enemies", over = 2.2, fall = 0.55, r = 5, dmg = 1.8, stun = 0.5, scale = 0.9 }),
+		S("spokes", 3.0, { style = "ray", n = 8, len = 24, w = 2.6, dur = 0.7, dmg = 2.8 }),
+		S("hit", 3.2, { style = "holy", r = 18, dmg = 4, stun = 1.5, crit = true }),
+		S("heal", 3.3, { pct = 0.06 }),
+	} }
+
+-- T5 Emberwing ---------------------------------------------------------------------------------------
+Q.bw_ember = { name = "Ember Spiral", icon = "☄️", cd = 8, lock = 1.0, range = 46,
+	desc = "Спираль горящих стрел закручивается вокруг лучника; удар огня сзади отбрасывает преследователей.",
+	steps = {
+		S("hit", 0, { style = "fire", at = "c", r = 9, dmg = 2.2, push = 4, burn = 0.5 }),
+		S("muzzle", 0, { dur = 1.0 }),
+		S("volley", 0.1, { kind = "arrow", pattern = "spiral", n = 14, nc = 3, turns = 2, over = 1.0, dmg = 1.3, speed = 1.2 }),
+	} }
+E.bw_ember = { name = "Wildfire Wall", icon = "🔥", cd = 15, lock = 0.8, range = 46,
+	desc = "Стена огня рвётся вперёд по линии, а на цели поле пламени и метеоры из углей.",
+	steps = {
+		S("tele", 0, { style = "line", at = "o", len = 46, w = 11, dur = 0.5 }),
+		S("wall", 0.5, { style = "firewall", at = "o", len = 46, w = 11, dur = 1.2, dmg = 3.2, once = true, burn = 0.6 }),
+		S("zone", 0.8, { style = "fire", r = 15, dur = 5, ticks = 10, dmg = 0.55, burn = 0.5 }),
+		S("rain", 1.0, { obj = "ember", style = "fire", ar = 17, n = 12, nc = 3, mode = "enemies", over = 2.4, fall = 0.7, r = 5, dmg = 1.5, burn = 0.5, scale = 0.8 }),
+	} }
+
+-- T6 Phoenix Wing ------------------------------------------------------------------------------------
+Q.bw_phoenix = { name = "Phoenix Dive", icon = "🦅", cd = 9, lock = 1.0, range = 46,
+	desc = "Феникс пролетает вперёд и сжигает всё на пути, лучник одновременно выпускает веер горящих стрел.",
+	steps = {
+		S("muzzle", 0, { dur = 0.8 }),
+		S("wall", 0, { style = "phoenix", at = "o", len = 56, w = 9, dur = 1.2, dmg = 4.5, once = true, burn = 0.7 }),
+		S("volley", 0.2, { kind = "arrow", pattern = "fan", n = 9, nc = 3, spread = 75, over = 0.5, dmg = 1.4, speed = 1.25 }),
+		S("hit", 1.3, { style = "fire", at = "o", fw = 50, r = 14, dmg = 3.5, burn = 0.7, crit = true }),
+	} }
+E.bw_phoenix = { name = "Rising Flame", icon = "♨️", cd = 16, lock = 0.8, range = 46, healCap = 0.25,
+	desc = "Огненное возрождение: лечение и неуязвимость, волна пламени, дождь углей и мощное ускорение стрельбы на 7 секунд.",
+	steps = {
+		S("heal", 0, { pct = 0.12, inv = 1.5, style = "phoenix" }),
+		S("buff", 0, { as = 1.5, dm = 1.3, spd = 1.3, dur = 7, style = "aura" }),
+		S("nova", 0.15, { style = "fire", at = "c", r0 = 2, r = 20, dur = 0.7, dmg = 5, burn = 0.8, push = 4 }),
+		S("rain", 0.5, { obj = "ember", style = "fire", at = "c", ar = 24, n = 14, nc = 3, over = 2.4, fall = 0.7, r = 5, dmg = 1.5, burn = 0.5, scale = 0.8 }),
+		S("wall", 1.0, { style = "phoenix", at = "c", ang = 180, len = 50, w = 9, dur = 1.2, dmg = 4, once = true, burn = 0.7 }),
+		S("hit", 2.8, { style = "fire", at = "c", r = 20, dmg = 3.5, burn = 0.6, crit = true }),
+	} }
+
+-- T6 Bloodmoon Harbinger -----------------------------------------------------------------------------
+Q.bw_blood = { name = "Crimson Barrage", icon = "🩸", cd = 9, lock = 0.9, range = 46, healCap = 0.15,
+	desc = "Три алых луча и веер кровавых стрел: каждый луч возвращает лучнику часть здоровья.",
+	steps = {
+		S("muzzle", 0, { dur = 0.8 }),
+		S("beam", 0.1, { style = "blood", at = "c", arms = 3, spread = 20, ang0 = -20, len = 40, w = 2.2, dur = 0.8, ticks = 6, dmg = 1.4, ls = 0.004 }),
+		S("volley", 0.2, { kind = "arrow", pattern = "fan", n = 9, nc = 3, spread = 60, over = 0.5, dmg = 1.4, speed = 1.3 }),
+		S("hit", 0.9, { style = "blood", r = 12, dmg = 3.5, ls = 0.006, crit = true }),
+	} }
+E.bw_blood = { name = "Blood Moon Pact", icon = "🌕", cd = 16, lock = 0.9, range = 46, healCap = 0.25,
+	desc = "Восходит кровавая луна: алые копья падают на врагов и лечат лучника, а сам он стреляет быстрее и больнее 7 секунд.",
+	steps = {
+		S("screen", 0, { dark = 0.4, dc = "k", hold = 3.2, tin = 0.4, tout = 0.8 }),
+		S("sky", 0, { style = "moon", at = "c", r = 22, dur = 4.6 }),
+		S("heal", 0.1, { pct = 0.08, inv = 1.2 }),
+		S("buff", 0.1, { as = 1.5, dm = 1.35, dur = 7, style = "aura" }),
+		S("rain", 0.8, { obj = "lance", style = "blood", at = "c", ar = 24, n = 14, nc = 3, mode = "enemies", over = 2.5, fall = 0.6, r = 5, dmg = 1.8, ls = 0.003, scale = 0.9 }),
+		S("nova", 3.6, { style = "void", at = "c", r0 = 3, r = 28, dur = 0.9, dmg = 5, exec = 0.3, ls = 0.01, flash = true }),
+	} }
+
+-- T7 Cosmic Nova (secret) ----------------------------------------------------------------------------
+Q.bw_nova = { name = "Starfall Barrage", icon = "🌟", cd = 10, lock = 1.4, range = 46,
+	desc = "Спираль звёздных стрел, дождь падающих звёзд на цель и ослепительный взрыв сверхновой в конце.",
+	steps = {
+		S("muzzle", 0, { dur = 1.2 }),
+		S("volley", 0.1, { kind = "arrow", pattern = "spiral", n = 18, nc = 4, turns = 3, over = 1.4, dmg = 1.4, speed = 1.3 }),
+		S("tele", 0.1, { style = "star", r = 20, dur = 0.8 }),
+		S("rain", 0.6, { obj = "star", style = "star", area = "spiral", ar = 22, n = 14, nc = 4, over = 1.6, fall = 0.7, r = 5, dmg = 1.5, scale = 0.8 }),
+		S("hit", 2.1, { style = "star", r = 20, dmg = 6, stun = 1.5, crit = true, big = true }),
+		S("screen", 2.1, { flash = 0.7, fc = "w", fd = 0.6, shake = 1.4, sd = 0.6 }),
+	} }
+E.bw_nova = { name = "Supernova Step", icon = "💫", cd = 18, lock = 1.3, range = 46, healCap = 0.1,
+	desc = "Прыжок назад сквозь звёздную вспышку, кольцо стрел во все стороны, галактика затягивает врагов и взрывается; лучник быстрее и сильнее 8 секунд.",
+	steps = {
+		S("screen", 0, { dark = 0.4, dc = "k", hold = 3.6, tin = 0.4, tout = 0.9 }),
+		S("nova", 0, { style = "prism", at = "c", r0 = 2, r = 16, dur = 0.6, rings = 4, stagger = 0.07, dmg = 3.5, push = 5 }),
+		S("blink", 0.1, { ang = 180, dist = 26, inv = 1.0 }),
+		S("buff", 0.2, { as = 1.7, dm = 1.4, spd = 1.3, dur = 8, style = "aura" }),
+		S("sky", 0.3, { style = "galaxy", at = "t", r = 22, dur = 3.4 }),
+		S("volley", 0.5, { kind = "arrow", pattern = "ring", n = 16, nc = 4, over = 0.8, dmg = 1.5, speed = 1.3 }),
+		S("pull", 0.6, { style = "galaxy", r = 22, dur = 2.4, ticks = 8, dmg = 0.7, pull = 16 }),
+		S("nova", 3.1, { style = "prism", r0 = 3, r = 34, dur = 0.9, rings = 5, stagger = 0.08, dmg = 5, flash = true }),
+		S("hit", 3.2, { style = "star", r = 24, dmg = 7, stun = 2, crit = true, big = true }),
+		S("screen", 3.2, { flash = 0.9, fc = "w", fd = 0.9, shake = 1.8, sd = 0.9 }),
+	} }
+
+-- =====================================================================================================
+-- STAFFS
+-- =====================================================================================================
+
+-- T2 Jade Rod ----------------------------------------------------------------------------------------
+Q.st_jade = { name = "Crystal March", icon = "💎", cd = 6.5, lock = 0.6, range = 44,
+	desc = "Две волны нефритовых кристаллов вырываются из земли одна за другой вдоль линии прицела.",
+	steps = {
+		S("hit", 0.1, { style = "spikes", variant = "crystal", at = "c", fw = 13, r = 9, dmg = 2.2, stun = 0.6 }),
+		S("hit", 0.4, { style = "spikes", variant = "crystal", at = "c", fw = 27, r = 11, dmg = 2.4, stun = 0.8, push = 1.5 }),
+	} }
+E.st_jade = { name = "Crystal Ward", icon = "🔷", cd = 12, lock = 0.5, range = 44,
+	desc = "Три нефритовых кристалла кружат вокруг мага и бьют подошедших; в начале — краткая неуязвимость.",
+	steps = {
+		S("heal", 0, { inv = 0.8 }),
+		S("hit", 0.05, { style = "bloom", at = "c", r = 9, dmg = 2.2, push = 3 }),
+		S("orbit", 0.2, { obj = "crystal", n = 3, nc = 0.5, rad = 8, dur = 4, speed = 5, hitR = 5, ticks = 12, dmg = 0.9, size = 0.8 }),
+	} }
+
+-- T2 Verdant Crook -----------------------------------------------------------------------------------
+Q.st_crook = { name = "Seed Bomb", icon = "🌳", cd = 6.5, lock = 0.5, range = 44,
+	desc = "Три семени-бомбы летят веером и лопаются, замедляя врагов шипами.",
+	steps = {
+		S("volley", 0, { kind = "fireball", pattern = "fan", n = 3, nc = 1, spread = 30, dmg = 1.5, radius = 6, speed = 1.0 }),
+	} }
+E.st_crook = { name = "Overgrowth", icon = "🌲", cd = 12, lock = 0.7, range = 44,
+	desc = "Заросли хватают врагов и стягивают их к центру, затем расцветают взрывом и лечат мага.",
+	steps = {
+		S("tele", 0, { style = "rune", r = 14, dur = 0.5 }),
+		S("pull", 0.3, { style = "thorn", r = 14, dur = 2.0, ticks = 6, dmg = 0.7, pull = 8, slow = 1, sm = 0.5 }),
+		S("hit", 2.3, { style = "bloom", r = 14, dmg = 3.5, stun = 1.0 }),
+		S("heal", 2.3, { pct = 0.04 }),
+	} }
+
+-- T3 Aqua Scepter ------------------------------------------------------------------------------------
+Q.st_aqua = { name = "Water Jet", icon = "💧", cd = 7, lock = 0.8, range = 44,
+	desc = "Мощная водяная струя бьёт по линии прицела, отбрасывает врагов и взрывается брызгами на конце.",
+	steps = {
+		S("beam", 0, { style = "ice", at = "c", arms = 1, len = 40, w = 2.8, dur = 1.0, ticks = 6, dmg = 1.0, slow = 1, sm = 0.5, push = 0.8 }),
+		S("hit", 1.0, { style = "water", at = "c", fw = 36, r = 11, dmg = 3, push = 4, stun = 0.8 }),
+	} }
+E.st_aqua = { name = "Tidal Surge", icon = "🌊", cd = 13, lock = 0.8, range = 44,
+	desc = "Водоворот затягивает врагов в центр и выбрасывает мощным гейзером; маг получает немного здоровья.",
+	steps = {
+		S("tele", 0, { style = "rune", r = 14, dur = 0.5 }),
+		S("pull", 0.3, { style = "whirlpool", r = 14, dur = 2.2, ticks = 8, dmg = 0.8, pull = 10, slow = 1, sm = 0.5 }),
+		S("hit", 2.5, { style = "water", r = 15, dmg = 5, push = 5, stun = 1.5, crit = true }),
+		S("heal", 2.5, { pct = 0.05 }),
+	} }
+
+-- T3 Cyan Prism Staff --------------------------------------------------------------------------------
+Q.st_prism = { name = "Prism Bolt", icon = "🔷", cd = 7, lock = 0.5, range = 46,
+	desc = "Ледяной разряд призмы перескакивает между врагами и замораживает каждого, в кого попал.",
+	steps = {
+		S("chain", 0, { style = "frost", at = "c", n = 6, nc = 2, jr = 20, dmg = 2.2, slow = 2.5, sm = 0.4, range = 60 }),
+		S("hit", 0.3, { style = "ice", r = 9, dmg = 2, slow = 2, sm = 0.4 }),
+	} }
+E.st_prism = { name = "Refraction", icon = "🌈", cd = 13, lock = 0.7, range = 46,
+	desc = "Маг преломляется и появляется в другой точке: ледяные взрывы на старте и на финише, призматические лучи.",
+	steps = {
+		S("nova", 0, { style = "frost", at = "c", r0 = 2, r = 13, dur = 0.4, dmg = 2.6, slow = 2, sm = 0.4, push = 3 }),
+		S("blink", 0.05, { dist = 24, to = "aim", inv = 0.7 }),
+		S("hit", 0.25, { style = "prism", at = "c", r = 13, dmg = 3.4, stun = 1, crit = true }),
+		S("beam", 0.3, { style = "prism", at = "c", arms = 3, spread = 120, len = 20, w = 2.4, dur = 0.6, ticks = 3, dmg = 1.2 }),
+	} }
+
+-- T4 Amethyst Arcana ---------------------------------------------------------------------------------
+Q.st_amethyst = { name = "Arcane Barrage", icon = "🔮", cd = 7.5, lock = 0.7, range = 46,
+	desc = "Пять взрывных аркановых сфер разлетаются широким веером один за другим.",
+	steps = {
+		S("muzzle", 0, { dur = 0.7 }),
+		S("volley", 0, { kind = "fireball", pattern = "fan", n = 5, nc = 2, spread = 85, over = 0.5, dmg = 1.7, radius = 5.5, speed = 1.1 }),
+	} }
+E.st_amethyst = { name = "Gravity Well", icon = "🌀", cd = 14, lock = 0.8, range = 46,
+	desc = "Портал в небе, под ним гравитационный колодец стягивает врагов в одну точку и схлопывается мощным взрывом.",
+	steps = {
+		S("sky", 0, { style = "portal", r = 18, dur = 3.2 }),
+		S("tele", 0, { style = "rune", r = 18, dur = 0.8 }),
+		S("pull", 0.5, { style = "arcane", r = 18, dur = 2.2, ticks = 8, dmg = 0.9, pull = 16 }),
+		S("hit", 2.8, { style = "arcane", r = 18, dmg = 6, stun = 1.5, crit = true }),
+	} }
+
+-- T4 Stormspire --------------------------------------------------------------------------------------
+Q.st_spire = { name = "Lightning Spire", icon = "🗼", cd = 7.5, lock = 0.8, range = 46,
+	desc = "Громовой шпиль бьёт в точку прицела, а от удара молния перескакивает между врагами.",
+	steps = {
+		S("tele", 0, { style = "circle", r = 10, dur = 0.5 }),
+		S("hit", 0.5, { style = "bolt", r = 10, dmg = 4, stun = 1 }),
+		S("chain", 0.5, { style = "lightning", at = "c", n = 8, nc = 2, jr = 22, dmg = 2, stun = 0.4, range = 60 }),
+	} }
+E.st_spire = { name = "Static Field", icon = "🌩️", cd = 14, lock = 0.8, range = 46,
+	desc = "Поле статики вокруг мага: туча над головой, молнии выбирают врагов, а по краю поля пробегает оглушающая волна.",
+	steps = {
+		S("sky", 0, { style = "cloud", at = "c", r = 18, dur = 5.0 }),
+		S("zone", 0.2, { style = "storm", at = "c", r = 18, dur = 4.8, ticks = 10, dmg = 0.5, stun = 0.2 }),
+		S("rain", 0.4, { obj = "none", style = "bolt", at = "c", ar = 18, n = 8, nc = 2, mode = "enemies", over = 3.6, fall = 0.3, r = 5, dmg = 1.8, stun = 0.5, im = 0.8 }),
+		S("nova", 5.0, { style = "shock", at = "c", r0 = 3, r = 22, dur = 0.6, dmg = 3.5, stun = 1.2 }),
+	} }
+
+-- T5 Sunfire Scepter ---------------------------------------------------------------------------------
+Q.st_sunfire = { name = "Solar Flare", icon = "🌞", cd = 8.5, lock = 0.8, range = 46,
+	desc = "Мини-солнце падает на цель, поджигает врагов и оглушает их.",
+	steps = {
+		S("tele", 0, { style = "circle", r = 13, dur = 0.9 }),
+		S("drop", 0, { obj = "sun", scale = 2.2, fall = 0.9, style = "fire", r = 13, dmg = 5.5, stun = 1.2, burn = 0.8, crit = true }),
+		S("zone", 0.9, { style = "fire", r = 11, dur = 3, ticks = 6, dmg = 0.5, burn = 0.4 }),
+	} }
+E.st_sunfire = { name = "Heliacal Rain", icon = "☀️", cd = 15, lock = 0.8, range = 46,
+	desc = "Огненные метеориты падают на врагов в зоне, под ними разливается пламя, а в конце — солнечная вспышка.",
+	steps = {
+		S("tele", 0, { style = "star", r = 20, dur = 0.8 }),
+		S("zone", 0.8, { style = "fire", r = 20, dur = 4, ticks = 8, dmg = 0.5, burn = 0.5 }),
+		S("rain", 0.8, { obj = "meteor", style = "fire", ar = 20, n = 12, nc = 3, mode = "enemies", over = 2.6, fall = 0.8, r = 6, dmg = 1.9, burn = 0.5, scale = 0.9 }),
+		S("nova", 4.0, { style = "fire", r0 = 3, r = 24, dur = 0.7, dmg = 4, burn = 0.6, flash = true }),
+	} }
+
+-- T5 Astral Lantern ----------------------------------------------------------------------------------
+Q.st_lantern = { name = "Guiding Light", icon = "🏮", cd = 8.5, lock = 0.7, range = 46,
+	desc = "Звёздный свет соединяет врагов созвездием и бьёт по каждому, пока над целью падает святой луч.",
+	steps = {
+		S("chain", 0, { style = "star", at = "c", n = 8, nc = 2, jr = 22, dmg = 2.4, stun = 0.6, range = 60 }),
+		S("rain", 0.2, { obj = "lance", style = "holy", ar = 16, n = 6, nc = 2, mode = "enemies", over = 1.2, fall = 0.5, r = 5, dmg = 1.6, scale = 0.8 }),
+		S("hit", 1.4, { style = "holy", r = 12, dmg = 3, stun = 1, crit = true }),
+	} }
+E.st_lantern = { name = "Astral Beacon", icon = "✨", cd = 15, lock = 0.7, range = 46, healCap = 0.15,
+	desc = "Фонарь повисает над магом: святое поле лечит и жжёт врагов, лучи суда падают сверху, магия ускоряется на 6 секунд.",
+	steps = {
+		S("sky", 0, { style = "lantern", at = "c", r = 18, dur = 5.0 }),
+		S("heal", 0, { pct = 0.08, inv = 0.8 }),
+		S("buff", 0, { as = 1.4, dm = 1.25, dur = 6, style = "aura" }),
+		S("zone", 0.4, { style = "holy", at = "c", r = 18, dur = 4.4, ticks = 8, dmg = 0.5 }),
+		S("rain", 0.6, { obj = "lance", style = "holy", at = "c", ar = 20, n = 10, nc = 2, mode = "enemies", over = 3.0, fall = 0.55, r = 5, dmg = 1.7, scale = 0.9 }),
+		S("hit", 4.8, { style = "holy", at = "c", r = 18, dmg = 4, stun = 1.5, crit = true }),
+	} }
+
+-- T6 Nether Crown ------------------------------------------------------------------------------------
+Q.st_nether = { name = "Nether Gate", icon = "👑", cd = 9, lock = 0.9, range = 46, healCap = 0.1,
+	desc = "Тройной поток духов вырывается вперёд из портала, на конце — удар Бездны.",
+	steps = {
+		S("sky", 0, { style = "portal", at = "c", r = 12, dur = 1.8 }),
+		S("wall", 0.2, { style = "spirits", at = "c", ang = -30, len = 46, w = 6, dur = 1.2, dmg = 3.2, once = true, slow = 1.5, sm = 0.6 }),
+		S("wall", 0.2, { style = "spirits", at = "c", ang = 0, len = 50, w = 6, dur = 1.2, dmg = 3.4, once = true, slow = 1.5, sm = 0.6 }),
+		S("wall", 0.2, { style = "spirits", at = "c", ang = 30, len = 46, w = 6, dur = 1.2, dmg = 3.2, once = true, slow = 1.5, sm = 0.6 }),
+		S("hit", 1.4, { style = "void", at = "c", fw = 32, r = 15, dmg = 4.5, stun = 1.5, crit = true, ls = 0.004 }),
+		S("screen", 1.4, { shake = 1.2, sd = 0.4 }),
+	} }
+E.st_nether = { name = "Crown of Ruin", icon = "☠️", cd = 16, lock = 0.9, range = 46, healCap = 0.2,
+	desc = "Корона Бездны над магом: черепа кружат вокруг, чёрная дыра стягивает врагов, финальный коллапс; магия усилена на 7 секунд.",
+	steps = {
+		S("screen", 0, { dark = 0.45, dc = "k", hold = 4.0, tin = 0.4, tout = 0.9 }),
+		S("sky", 0, { style = "crown", at = "c", dur = 4.4 }),
+		S("heal", 0.1, { pct = 0.05, inv = 1.6 }),
+		S("buff", 0.1, { dm = 1.4, as = 1.3, dur = 7, style = "aura" }),
+		S("orbit", 0.4, { obj = "skull", n = 4, nc = 0.5, rad = 10, dur = 4, speed = 5, hitR = 6, ticks = 12, dmg = 1.0, size = 0.85 }),
+		S("pull", 0.6, { style = "blackhole", at = "c", r = 22, dur = 2.6, ticks = 8, dmg = 0.8, pull = 14, ls = 0.003 }),
+		S("hit", 3.3, { style = "void", at = "c", r = 22, dmg = 6, stun = 2, crit = true }),
+		S("nova", 3.4, { style = "void", at = "c", r0 = 3, r = 34, dur = 0.9, dmg = 4.5, exec = 0.3, flash = true }),
+	} }
+
+-- T6 Hellfire Pyre -----------------------------------------------------------------------------------
+Q.st_pyre = { name = "Hellfire Comet", icon = "🌋", cd = 9, lock = 0.9, range = 46,
+	desc = "Огненная комета обрушивается на цель, из земли вырываются адские шипы, а пламя долго горит.",
+	steps = {
+		S("tele", 0, { style = "rune", r = 14, dur = 0.8 }),
+		S("drop", 0, { obj = "comet", scale = 3, fall = 0.8, style = "fire", r = 14, dmg = 6.5, stun = 1.5, burn = 1.0, crit = true }),
+		S("nova", 0.8, { style = "spikes", variant = "flame", r0 = 3, r = 20, dur = 0.7, dmg = 3, burn = 0.6, push = 2 }),
+		S("zone", 0.8, { style = "fire", r = 16, dur = 4, ticks = 8, dmg = 0.5, burn = 0.5 }),
+	} }
+E.st_pyre = { name = "Infernal Pillar", icon = "🔥", cd = 16, lock = 0.9, range = 46,
+	desc = "Огненные шипы расходятся от мага, смерч затягивает врагов, метеориты падают на выживших, финальный взрыв ада.",
+	steps = {
+		S("tele", 0, { style = "rune", at = "c", r = 20, dur = 0.7 }),
+		S("nova", 0.7, { style = "spikes", variant = "flame", at = "c", r0 = 3, r = 22, dur = 0.9, dmg = 4, burn = 0.7, push = 3 }),
+		S("pull", 0.8, { style = "fire", at = "c", r = 18, dur = 2.6, ticks = 8, dmg = 0.8, pull = 10, burn = 0.5 }),
+		S("zone", 0.8, { style = "fire", at = "c", r = 22, dur = 4, ticks = 8, dmg = 0.5, burn = 0.4 }),
+		S("rain", 1.2, { obj = "meteor", style = "fire", at = "c", ar = 22, n = 12, nc = 3, mode = "enemies", over = 2.4, fall = 0.8, r = 7, dmg = 2.0, burn = 0.6, scale = 1.0 }),
+		S("hit", 3.7, { style = "fire", at = "c", r = 24, dmg = 6, stun = 1.5, crit = true, burn = 0.8 }),
+	} }
+
+-- T7 Galaxy Weaver (secret) --------------------------------------------------------------------------
+Q.st_galaxy = { name = "Starlight Cascade", icon = "🌌", cd = 10, lock = 1.2, range = 46,
+	desc = "Спираль падающих звёзд накрывает область, созвездие молний соединяет врагов, а в конце вспыхивает звёздная сверхновая.",
+	steps = {
+		S("tele", 0, { style = "star", r = 22, dur = 0.9 }),
+		S("rain", 0.8, { obj = "star", style = "star", area = "spiral", ar = 22, n = 24, nc = 4, over = 1.8, fall = 0.7, r = 5, dmg = 1.5, scale = 0.8 }),
+		S("chain", 0.9, { style = "star", at = "c", n = 10, nc = 3, jr = 24, dmg = 2.6, stun = 0.6, range = 60 }),
+		S("hit", 2.6, { style = "star", r = 22, dmg = 7, stun = 2, crit = true, big = true }),
+		S("screen", 2.6, { flash = 0.7, fc = "w", fd = 0.6, shake = 1.4, sd = 0.6 }),
+	} }
+E.st_galaxy = { name = "Event Horizon", icon = "🌀", cd = 18, lock = 1.3, range = 46, healCap = 0.1,
+	desc = "Галактика над магом: чёрная дыра стягивает врагов, призматические волны расходятся каскадом, время замирает; магия сильнее и быстрее 8 секунд.",
+	steps = {
+		S("screen", 0, { dark = 0.45, dc = "k", hold = 4.6, tin = 0.5, tout = 1.0 }),
+		S("sky", 0, { style = "galaxy", at = "c", r = 26, dur = 5.4 }),
+		S("tele", 0, { style = "rune", at = "c", r = 26, dur = 1.0 }),
+		S("heal", 0.1, { pct = 0.05, inv = 2.0 }),
+		S("buff", 0.1, { as = 1.6, dm = 1.4, spd = 1.3, dur = 8, style = "aura" }),
+		S("pull", 0.8, { style = "galaxy", at = "c", r = 26, dur = 2.8, ticks = 10, dmg = 0.7, pull = 18 }),
+		S("nova", 3.7, { style = "prism", at = "c", r0 = 3, r = 44, dur = 1.0, rings = 5, stagger = 0.08, dmg = 5, flash = true }),
+		S("hit", 3.8, { style = "star", at = "c", r = 28, dmg = 8, stun = 2.5, crit = true, big = true }),
+		S("screen", 3.8, { flash = 1, fc = "w", fd = 1.0, shake = 2, sd = 1.0 }),
+		S("nova", 4.6, { style = "frost", at = "c", r0 = 3, r = 46, dur = 1.1, dmg = 4, slow = 3, sm = 0.35, stun = 1.5 }),
+	} }
+
+-- =====================================================================================================
+-- API
+-- =====================================================================================================
+Skills.Q, Skills.E = Q, E
+
+-- key = "Q" or "E"; returns nil for standard weapons (tier 1) which keep their class skills
+function Skills.get(key, weaponId, tier)
+	if tier and tier < Skills.MinTier then return nil end
+	local t = key == "Q" and Q or (key == "E" and E or nil)
+	return t and t[weaponId] or nil
+end
+
+return Skills
+]]></ProtectedString>
+</Properties>
+</Item>
 </Item>
 <Item class="ServerScriptService" referent="RBX10">
 <Properties>
@@ -3012,6 +3685,8 @@ local MapBuilder = require(script:WaitForChild("MapBuilder"))
 local WM = require(RS:WaitForChild("WeaponModels"))
 -- [ULTS] unique Z ultimate for every weapon of tier 2+ (recipes in ReplicatedStorage.UltRecipes, executor in UltServer)
 local UltRecipes = require(RS:WaitForChild("UltRecipes"))
+-- [SKILLS] unique Q / E skills for every weapon of tier 2+ (recipes in ReplicatedStorage.SkillRecipes, run by UltServer)
+local SkillRecipes = require(RS:WaitForChild("SkillRecipes"))
 local UltServer
 do
 	local okU, resU = pcall(function() return require(script:WaitForChild("UltServer")) end)
@@ -4052,9 +4727,12 @@ local function playerAttack(p, aim)
 	if now < (st.lockAtk or 0) then return end
 	local ws = Config.weaponStats(cls, d.upg[cls], weaponDefOf(p))
 	local cdef = Config.Classes[cls]
-	st.nextAtk = now + ws.cooldown
+	-- [SKILLS] temporary attack speed / damage buffs from Q / E skills
+	local haste = ((st.buffAsUntil or 0) > now) and (st.buffAs or 1) or 1
+	local amp = ((st.buffDmUntil or 0) > now) and (st.buffDm or 1) or 1
+	st.nextAtk = now + ws.cooldown / haste
 	local crit = math.random() < ws.crit
-	local dmg = ws.damage * (0.92 + math.random() * 0.16) * (crit and 2 or 1)
+	local dmg = ws.damage * amp * (0.92 + math.random() * 0.16) * (crit and 2 or 1)
 	local px, pz = hrp.Position.X, hrp.Position.Z
 	local dx, dz = aim.X - px, aim.Z - pz
 	local m = math.sqrt(dx * dx + dz * dz)
@@ -4065,7 +4743,7 @@ local function playerAttack(p, aim)
 		if m < 0.01 then dx, dz, m = 0, -1, 1 end
 	end
 	dx, dz = dx / m, dz / m
-	swingWeapon(st, cls, ws.cooldown)
+	swingWeapon(st, cls, ws.cooldown / haste)
 	runFx(run, "Theme", ws.wid)
 	if cdef.kind == "melee" then
 		-- rarer swords cut a wider arc
@@ -4847,7 +5525,15 @@ local function castAbility(p, key)
 	local wdef = weaponDefOf(p)
 	local ws = Config.weaponStats(cls, d.upg[cls], wdef)
 	-- [ULTS] tier 2+ weapons have their own unique Z ultimate; common (tier 1) weapons keep the class ultimate
-	local recipe = (key == "Z" and UltServer and wdef) and UltRecipes.get(wdef.id, wdef.tier) or nil
+	local recipe = nil
+	if UltServer and wdef then
+		if key == "Z" then
+			recipe = UltRecipes.get(wdef.id, wdef.tier)
+		else
+			-- [SKILLS] tier 2+ weapons have their own Q / E, common weapons keep the class skills
+			recipe = SkillRecipes.get(key, wdef.id, wdef.tier)
+		end
+	end
 	local px, pz = hrp.Position.X, hrp.Position.Z
 	local dx, dz = aim.X - px, aim.Z - pz
 	local m = math.sqrt(dx * dx + dz * dz)
@@ -4879,6 +5565,8 @@ local function castAbility(p, key)
 	runFx(run, "Aura", px, pz, ws.tier, def.ult and 2 or 1, ws.wid)
 	if def.ult then
 		ToClient:FireClient(p, "UltBanner", wdef and wdef.ult or def.name, Config.Classes[cls].color, ws.wid)
+	elseif recipe and recipe.name then
+		ToClient:FireClient(p, "SkillBanner", recipe.name, ws.wid, key, ws.tier)
 	end
 end
 
@@ -6799,6 +7487,7 @@ end
 
 -- ------------------------------------------------------------ helpers
 local function casterPos(ctx)
+	if ctx.bx and os.clock() - ctx.bt < 0.7 then return ctx.bx, ctx.bz end
 	local _, _, r = E.getChar(ctx.p)
 	if r then return r.Position.X, r.Position.Z end
 	return ctx.px, ctx.pz
@@ -7141,7 +7830,7 @@ end
 -- caster dashes (towards the aim or the nearest enemy) cutting everything on the way
 X.dash = function(ctx, s)
 	local cx, cz = casterPos(ctx)
-	local ddx, ddz = ctx.dx, ctx.dz
+	local ddx, ddz = dirOf(ctx, s)
 	local dist = s.dist or 24
 	if s.to == "nearest" then
 		local best, bd = nil, (s.range or 45) ^ 2
@@ -7338,6 +8027,66 @@ X.heal = function(ctx, s)
 	end
 	if s.inv then ctx.st.invUntil = math.max(ctx.st.invUntil or 0, os.clock() + s.inv) end
 	fx(ctx, "heal", { uid = ctx.p.UserId, style = s.style })
+end
+
+-- blink: the caster teleports (forward / backward / to the aim point), invulnerable for a moment
+X.blink = function(ctx, s)
+	local cx, cz = casterPos(ctx)
+	local ddx, ddz = dirOf(ctx, s)
+	local want = (s.dist or 24) * (1 + (ctx.ws.rs - 1) * 0.3)
+	if s.to == "aim" then
+		local ad = math.sqrt((ctx.tx - cx) ^ 2 + (ctx.tz - cz) ^ 2)
+		want = math.clamp(ad, s.min or 8, want)
+	end
+	local nx, nz = E.clampXZ(ctx.run, cx + ddx * want, cz + ddz * want)
+	local info = ctx.run.info
+	if info and info.obstacles then
+		for _, o in ipairs(info.obstacles) do
+			local ox, oz = nx - o.x, nz - o.z
+			local minD = o.r + 2.5
+			local d2 = ox * ox + oz * oz
+			if d2 < minD * minD then
+				local d = math.sqrt(d2)
+				if d < 0.01 then d = 0.01 ox = 1 end
+				nx = o.x + ox / d * minD
+				nz = o.z + oz / d * minD
+			end
+		end
+	end
+	local now = os.clock()
+	ctx.st.invUntil = math.max(ctx.st.invUntil or 0, now + (s.inv or 0.5))
+	ctx.st.lockAtk = math.max(ctx.st.lockAtk or 0, now + 0.3)
+	ctx.bx, ctx.bz, ctx.bt = nx, nz, now
+	fx(ctx, "blink", { x0 = cx, z0 = cz, x1 = nx, z1 = nz, style = s.style or "blink" })
+	E.ToClient:FireClient(ctx.p, "BlinkTo", nx, nz)
+end
+
+-- buff: temporary attack speed / damage / move speed boost for the caster
+X.buff = function(ctx, s)
+	local st, now, dur = ctx.st, os.clock(), s.dur or 5
+	if s.as then st.buffAs, st.buffAsUntil = s.as, now + dur end
+	if s.dm then st.buffDm, st.buffDmUntil = s.dm, now + dur end
+	if s.spd then
+		local _, h = E.getChar(ctx.p)
+		if h and h.Health > 0 then
+			if (st.spdUntil or 0) < now or not st.baseWs then
+				st.baseWs = ctx.p:GetAttribute("WalkSpeed") or h.WalkSpeed
+			end
+			st.spdUntil = now + dur
+			st.spdTok = (st.spdTok or 0) + 1
+			local tok, base, p = st.spdTok, st.baseWs, ctx.p
+			local fast = base * s.spd
+			h.WalkSpeed = fast
+			p:SetAttribute("WalkSpeed", fast)
+			task.delay(dur, function()
+				if st.spdTok ~= tok then return end
+				local _, h2 = E.getChar(p)
+				p:SetAttribute("WalkSpeed", base)
+				if h2 then h2.WalkSpeed = base end
+			end)
+		end
+	end
+	fx(ctx, "buff", { uid = ctx.p.UserId, dur = dur, style = s.style or "aura" })
 end
 
 -- ------------------------------------------------------------ ENTRY POINT
@@ -8798,6 +9547,7 @@ WeaponModels.startRainbow()
 local WeaponFX = require(RS:WaitForChild("WeaponFX"))
 -- [ULTS] unique weapon ultimates: recipes (shared) + VFX library (children of this script)
 local UltRecipes = require(RS:WaitForChild("UltRecipes"))
+local SkillRecipes = require(RS:WaitForChild("SkillRecipes"))
 local UltFX = require(script:WaitForChild("UltFX"))
 
 -- ============================================================ SMALL UI HELPERS
@@ -9082,6 +9832,14 @@ local function refreshSlots()
 		local d = defs[key]
 		s.icon.Text = d.icon
 		s.name.Text = d.name
+		if (key == "Q" or key == "E") and curWeapon then
+			-- [SKILLS] unique Q / E of tier 2+ weapons
+			local sk = SkillRecipes.get(key, curWeapon.id, curWeapon.tier)
+			if sk then
+				s.icon.Text = sk.icon or d.icon
+				s.name.Text = sk.name or d.name
+			end
+		end
 		if key == "Z" and curWeapon then
 			local rc = UltRecipes.get(curWeapon.id, curWeapon.tier)
 			if rc then
@@ -9363,6 +10121,15 @@ H.UltBanner = function(name, color, wid)
 		pillar(x, z, 4, 70, col:Lerp(C3(255, 255, 255), 0.4), 0.6, 0.45)
 		burst(x, 1.5, z, col, 10, 14, 30, 0.9, 0.6, C3(255, 255, 255))
 	end
+end
+
+-- [SKILLS] cinematic name of the rarest Q / E skills (E from Mythic, Q only for Secret weapons)
+H.SkillBanner = function(name, wid, key, tier)
+	if (key == "E" and tier < 6) or (key == "Q" and tier < 7) then return end
+	local w = wid and Config.Weapons[wid]
+	local col = w and Theme.main(w) or C3(255, 206, 90)
+	showBanner(name, col)
+	screenFlash(col:Lerp(C3(255, 255, 255), 0.7), 0.3, 0.3)
 end
 
 H.Theme = function(wid)
@@ -12356,6 +13123,56 @@ local handlers = {
 	beam = Mo.beam, nova = Mo.nova, orbit = Mo.orbit, pull = Mo.pull, wall = Mo.wall, dash = Mo.dash,
 	chain = Mo.chain, spokes = Mo.spokes, rain = Mo.rain, drop = Mo.drop,
 }
+
+-- blink: weapon coloured teleport (the server moves the hero, this only draws it)
+handlers.blink = function(d)
+	local P = L.pal()
+	local a, b = L.V3(d.x0, 2.4, d.z0), L.V3(d.x1, 2.4, d.z1)
+	L.ring(d.x0, 0.7, d.z0, 18, 2, P.a, 0.3, 9)
+	L.flashBall(d.x0, 2.4, d.z0, 7, 1, P.c, 0.3, 0.2)
+	L.emit(d.x0, 2.4, d.z0, P.w, P.a, 28, 14, 38, 0.9, 0.7)
+	if (a - b).Magnitude > 1 then
+		local streak = L.seg(a, b, 2.4, 0.2, P.a, 0.3)
+		L.fade(streak, 0.5)
+		local core = L.seg(a, b, 0.8, 0.2, P.w, 0)
+		L.fade(core, 0.4)
+	end
+	L.later(d, 0.12, function()
+		local P2 = L.pal()
+		L.ring(d.x1, 0.7, d.z1, 2, 20, P2.a, 0.4, 9)
+		L.ring(d.x1, 0.8, d.z1, 2, 12, P2.c, 0.35, 6)
+		L.flashBall(d.x1, 2.4, d.z1, 2, 9, P2.w, 0.3, 0.2)
+		L.emit(d.x1, 2.4, d.z1, P2.c, P2.a, 30, 14, 40, 1.0, 0.8)
+		L.shakeAt(d.x1, d.z1, 0.7 * L.m(), 0.25)
+	end)
+end
+
+-- buff: pulsing aura that follows the hero while the boost lasts
+handlers.buff = function(d)
+	local dur = d.dur or 4
+	local pos0 = L.heroPos(d.uid)
+	if pos0 then
+		local P = L.pal()
+		L.ring(pos0.X, 0.7, pos0.Z, 3, 20, P.c, 0.5, 9)
+		L.flashBall(pos0.X, 2.2, pos0.Z, 2, 8, P.w, 0.35, 0.3)
+		L.emit(pos0.X, 1, pos0.Z, P.w, P.c, 26, 6, 18, 1.0, 1.0, { accel = 10 })
+	end
+	local nextT, nextRing = 0.2, 0.7
+	L.anim(dur, function(al, t)
+		if t < nextT then return end
+		nextT = t + 0.16
+		local p = L.heroPos(d.uid)
+		if not p then return end
+		L.setWeapon(d.wid)
+		local Pn = L.pal()
+		L.emit(p.X, 0.8, p.Z, Pn.c, Pn.a, 3, 3, 9, 0.8, 0.8, { accel = 9, spread = 40 })
+		if t >= nextRing then
+			nextRing = t + 0.7
+			L.ring(p.X, 0.6, p.Z, 2, 9, Pn.a, 0.55, 5, 0.1, 0.6)
+		end
+	end)
+end
+
 FX.handlers = handlers
 
 function FX.play(kind, wid, d)
@@ -12391,6 +13208,7 @@ local ToClient = Net:WaitForChild("ToClient")
 local Config = require(RS:WaitForChild("Config"))
 local WM = require(RS:WaitForChild("WeaponModels"))
 local Theme = require(RS:WaitForChild("Theme"))
+local SkillRecipes = require(RS:WaitForChild("SkillRecipes"))
 WM.startRainbow()
 local C3 = Color3.fromRGB
 
@@ -12907,15 +13725,16 @@ local function renderDetail()
 	else
 		extra = string.format("Молния: +%d прыжков, метеоры: +%d", cn * 2, cn * 3)
 	end
-	statLine(detail, string.format("Размер способностей: x%.2f", r.rs), C3(130, 200, 226), y)
+	statLine(detail, string.format("Размер: x%.2f   Урон: x%.2f   Перезарядка: -%.0f%%", r.rs, r.am, (1 - r.cdr) * 100), C3(130, 200, 226), y, 12)
+	y = y + 18
+	-- [SKILLS] unique Q / E skills (tier 2+); common weapons use the class skills
+	local qd, ed = Config.Abilities[w.type].Q, Config.Abilities[w.type].E
+	local qs, es = SkillRecipes.get("Q", w.id, w.tier), SkillRecipes.get("E", w.id, w.tier)
+	label(detail, "Q: " .. (qs and (qs.icon .. " " .. qs.name) or qd.name), UDim2.fromOffset(12, y), UDim2.new(1, -24, 0, 16), 12, C3(150, 225, 255))
 	y = y + 17
-	statLine(detail, string.format("Урон способностей: x%.2f", r.am), C3(130, 200, 226), y)
+	label(detail, "E: " .. (es and (es.icon .. " " .. es.name) or ed.name), UDim2.fromOffset(12, y), UDim2.new(1, -24, 0, 16), 12, C3(150, 225, 255))
 	y = y + 17
-	statLine(detail, extra, C3(130, 200, 226), y, 12)
-	y = y + 17
-	statLine(detail, string.format("Перезарядка: -%.0f%%", (1 - r.cdr) * 100), C3(130, 200, 226), y)
-	y = y + 19
-	local ult = label(detail, "ULT: " .. w.ult, UDim2.fromOffset(12, y), UDim2.new(1, -24, 0, 16), 13, GOLD)
+	local ult = label(detail, "Z (ULT): " .. w.ult, UDim2.fromOffset(12, y), UDim2.new(1, -24, 0, 16), 13, GOLD)
 	y = y + 18
 	local el = label(detail, Config.ElementInfo[w.elem] or "", UDim2.fromOffset(12, y), UDim2.new(1, -24, 0, 30), 11, TXT2, nil, Enum.Font.Gotham)
 	local eq = data.equip[w.type] == w.id and data.class == w.type
