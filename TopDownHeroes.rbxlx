@@ -8187,25 +8187,25 @@ local function new(class, props, parent)
 	return o
 end
 -- ------------------------------------------------------------ THEME (flat, crisp, muted)
-local GOLD = C3(214, 178, 98)
-local INK = C3(12, 14, 20)
-local PANEL = C3(21, 24, 33)
-local CARD = C3(30, 34, 46)
-local LINE = C3(62, 68, 86)
-local TXT = C3(232, 235, 242)
-local TXT2 = C3(150, 157, 175)
-local DISABLED_TXT = C3(124, 130, 148)
+local GOLD = C3(198, 167, 102)
+local INK = C3(8, 8, 10)
+local PANEL = C3(14, 14, 17)
+local CARD = C3(22, 22, 26)
+local LINE = C3(46, 46, 52)
+local TXT = C3(228, 228, 232)
+local TXT2 = C3(140, 140, 150)
+local DISABLED_TXT = C3(112, 112, 122)
 
 -- keeps hues but caps brightness / saturation so nothing screams
 local function tone(c)
 	local h, s, v = c:ToHSV()
-	if s > 0.3 then s = s * 0.72 end
-	if v > 0.62 then v = 0.62 end
+	if s > 0.3 then s = s * 0.6 end
+	if v > 0.58 then v = 0.58 end
 	return Color3.fromHSV(h, s, v)
 end
 
-local function corner(o, r) return new("UICorner", { CornerRadius = UDim.new(0, r or 6) }, o) end
-local function stroke(o, color, th, tr) return new("UIStroke", { Color = color or LINE, Thickness = th or 1.5, Transparency = tr or 0 }, o) end
+local function corner(o, r) return new("UICorner", { CornerRadius = UDim.new(0, math.min(r or 4, 6)) }, o) end
+local function stroke(o, color, th, tr) return new("UIStroke", { Color = color or LINE, Thickness = th or 1, Transparency = tr or 0 }, o) end
 local function mkLabel(parent, text, pos, size, ts, color, align, font)
 	return new("TextLabel", {
 		Text = text, Position = pos, Size = size, TextSize = ts or 16, TextColor3 = color or TXT,
@@ -8219,7 +8219,6 @@ local function mkBar(parent, pos, size, color)
 	stroke(bg, LINE, 1.5, 0.1)
 	local fill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = tone(color), BorderSizePixel = 0 }, bg)
 	corner(fill, 5)
-	new("UIGradient", { Color = ColorSequence.new(C3(255, 255, 255), C3(176, 176, 176)), Rotation = 90 }, fill)
 	local txt = mkLabel(bg, "", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 13, nil, Enum.TextXAlignment.Center)
 	txt.ZIndex = 3
 	txt.TextStrokeColor3 = INK
@@ -8246,16 +8245,12 @@ local function mkButton(parent, text, pos, size, color, cb)
 		Text = text, Position = pos, Size = size, BackgroundColor3 = tone(color), TextColor3 = TXT,
 		Font = Enum.Font.GothamBold, TextSize = 16, AutoButtonColor = false, BorderSizePixel = 0, TextWrapped = true,
 	}, parent)
-	corner(b, 6)
+	corner(b, 4)
 	-- crisp dark outline
-	new("UIStroke", { Color = C3(8, 10, 16), Thickness = 1.5, Transparency = 0.25 }, b)
-	-- soft top light (flat bevel)
-	local shine = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(255, 255, 255), BorderSizePixel = 0, Active = false }, b)
-	corner(shine, 6)
-	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.9), NumberSequenceKeypoint.new(0.5, 0.97), NumberSequenceKeypoint.new(1, 1) }), Rotation = 90 }, shine)
+	new("UIStroke", { Color = C3(6, 6, 8), Thickness = 1.5, Transparency = 0.25 }, b)
 	-- hover / press overlay
 	local hov = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(255, 255, 255), BackgroundTransparency = 1, BorderSizePixel = 0, Active = false }, b)
-	corner(hov, 6)
+	corner(hov, 4)
 	local sc = new("UIScale", {}, b)
 	local function over(tr, t) TweenService:Create(hov, TweenInfo.new(t or 0.1), { BackgroundTransparency = tr }):Play() end
 	b.MouseEnter:Connect(function()
@@ -8287,23 +8282,23 @@ local function hex(s) return Color3.fromHex(s) end
 local gui = new("ScreenGui", { Name = "HUD", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 5 }, lp:WaitForChild("PlayerGui"))
 
 -- ------------------------------------------------------------ HUD
-local info = new("Frame", { Position = UDim2.fromOffset(14, 14), Size = UDim2.fromOffset(290, 100), BackgroundColor3 = PANEL, BackgroundTransparency = 0.06, BorderSizePixel = 0 }, gui)
-corner(info, 8)
-stroke(info, LINE, 1.5, 0)
+local info = new("Frame", { Position = UDim2.fromOffset(14, 14), Size = UDim2.fromOffset(290, 100), BackgroundColor3 = PANEL, BackgroundTransparency = 0.03, BorderSizePixel = 0 }, gui)
+corner(info, 5)
+stroke(info, LINE, 1, 0)
 local lvlLabel = mkLabel(info, "Lv.1", UDim2.fromOffset(12, 6), UDim2.fromOffset(130, 28), 24, GOLD)
 local xpBar = mkBar(info, UDim2.fromOffset(12, 38), UDim2.fromOffset(266, 16), C3(80, 150, 255))
 local coinLabel = mkLabel(info, "Coins: 0", UDim2.fromOffset(12, 60), UDim2.fromOffset(140, 22), 16, GOLD)
-local ptsLabel = mkLabel(info, "Skill points: 0", UDim2.fromOffset(150, 60), UDim2.fromOffset(136, 22), 16, C3(130, 200, 156))
-local classLabel = mkLabel(info, "", UDim2.fromOffset(140, 6), UDim2.fromOffset(140, 28), 16, C3(196, 202, 218), Enum.TextXAlignment.Right)
+local ptsLabel = mkLabel(info, "Skill points: 0", UDim2.fromOffset(150, 60), UDim2.fromOffset(136, 22), 16, C3(122, 176, 142))
+local classLabel = mkLabel(info, "", UDim2.fromOffset(140, 6), UDim2.fromOffset(140, 28), 16, C3(192, 192, 200), Enum.TextXAlignment.Right)
 local winsLabel = mkLabel(info, "", UDim2.fromOffset(12, 80), UDim2.fromOffset(266, 16), 12, TXT2)
 
 local hpBar = mkBar(gui, UDim2.new(0.5, -200, 1, -50), UDim2.fromOffset(400, 28), C3(80, 210, 90))
 local dashBar = mkBar(gui, UDim2.new(0.5, -200, 1, -76), UDim2.fromOffset(400, 14), C3(90, 200, 255))
 dashBar.txt.TextSize = 11
 
-local waveFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.fromOffset(460, 46), BackgroundColor3 = PANEL, BackgroundTransparency = 0.06, BorderSizePixel = 0, Visible = false }, gui)
-corner(waveFrame, 8)
-stroke(waveFrame, LINE, 1.5, 0)
+local waveFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.fromOffset(460, 46), BackgroundColor3 = PANEL, BackgroundTransparency = 0.03, BorderSizePixel = 0, Visible = false }, gui)
+corner(waveFrame, 5)
+stroke(waveFrame, LINE, 1, 0)
 local waveTitle = mkLabel(waveFrame, "", UDim2.fromOffset(0, 2), UDim2.new(1, 0, 0, 24), 20, GOLD, Enum.TextXAlignment.Center)
 local waveSub = mkLabel(waveFrame, "", UDim2.fromOffset(0, 24), UDim2.new(1, 0, 0, 20), 14, TXT2, Enum.TextXAlignment.Center)
 local bossFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 66), Size = UDim2.fromOffset(620, 40), BackgroundTransparency = 1, Visible = false }, gui)
@@ -8333,7 +8328,7 @@ local function showToast(text, color, dur)
 end
 
 local hint = mkLabel(gui, "WASD - move   |   Mouse - aim   |   Hold LMB - attack   |   Q / E - skills   |   Z - ULTIMATE   |   SPACE / SHIFT - dash   |   B - inventory   |   Wheel - zoom",
-	UDim2.new(0, 14, 1, -66), UDim2.fromOffset(410, 56), 13, C3(196, 202, 218))
+	UDim2.new(0, 14, 1, -66), UDim2.fromOffset(410, 56), 13, C3(192, 192, 200))
 hint.TextStrokeColor3 = INK
 hint.TextYAlignment = Enum.TextYAlignment.Bottom
 hint.TextStrokeTransparency = 0.5
@@ -8350,9 +8345,16 @@ local function makePanel(title, w, h)
 		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -24, 0.5, 0), Size = UDim2.fromOffset(w, h),
 		BackgroundColor3 = PANEL, BackgroundTransparency = 0, BorderSizePixel = 0, Visible = false,
 	}, gui)
-	corner(f, 10)
-	local st = stroke(f, LINE, 1.5, 0)
-	local t = mkLabel(f, title, UDim2.fromOffset(16, 10), UDim2.new(1, -32, 0, 34), 26, GOLD, nil, Enum.Font.GothamBlack)
+	corner(f, 6)
+	local st = stroke(f, LINE, 1, 0)
+	new("Frame", { Position = UDim2.fromOffset(0, 0), Size = UDim2.new(1, 0, 0, 2), BackgroundColor3 = GOLD, BackgroundTransparency = 0.2, BorderSizePixel = 0 }, f)
+	local fit = new("UIScale", {}, f)
+	local function refit()
+		fit.Scale = math.clamp((gui.AbsoluteSize.Y - 36) / h, 0.55, 1)
+	end
+	refit()
+	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(refit)
+	local t = mkLabel(f, title, UDim2.fromOffset(16, 12), UDim2.new(1, -32, 0, 30), 22, GOLD, nil, Enum.Font.GothamBlack)
 	local sub = mkLabel(f, "", UDim2.fromOffset(16, 44), UDim2.new(1, -32, 0, 36), 14, TXT2, nil, Enum.Font.Gotham)
 	new("Frame", { Position = UDim2.fromOffset(12, 82), Size = UDim2.new(1, -24, 0, 1), BackgroundColor3 = LINE, BorderSizePixel = 0 }, f)
 	local content = new("Frame", { Position = UDim2.fromOffset(12, 86), Size = UDim2.new(1, -24, 1, -96), BackgroundTransparency = 1 }, f)
@@ -8372,13 +8374,139 @@ local function row(parent, h)
 	return new("Frame", { Size = UDim2.new(1, 0, 0, h), BackgroundTransparency = 1, LayoutOrder = order }, parent)
 end
 
+
+-- ------------------------------------------------------------ LOCATION PREVIEW (procedural mini top-down scene)
+local PV = {
+	forest = { g1 = C3(26, 38, 28), g2 = C3(12, 18, 14), tag = "ZOMBIES" },
+	cave = { g1 = C3(30, 27, 40), g2 = C3(11, 10, 16), tag = "GOBLINS" },
+}
+local function pvDot(parent, x, y, d, color, tr, z)
+	local f = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(x, 0, y, 0), Size = UDim2.fromOffset(d, d),
+		BackgroundColor3 = color, BackgroundTransparency = tr or 0, BorderSizePixel = 0, ZIndex = z or 2,
+	}, parent)
+	new("UICorner", { CornerRadius = UDim.new(0.5, 0) }, f)
+	return f
+end
+local function pvBox(parent, x, y, w, h, color, rot, tr, z, rad)
+	local f = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(x, 0, y, 0), Size = UDim2.fromOffset(w, h), Rotation = rot or 0,
+		BackgroundColor3 = color, BackgroundTransparency = tr or 0, BorderSizePixel = 0, ZIndex = z or 2,
+	}, parent)
+	new("UICorner", { CornerRadius = UDim.new(0, rad or 3) }, f)
+	return f
+end
+local function pvChip(parent, text, pos, anchor, color)
+	local w = 14 + #text * 6.4
+	local c = new("Frame", {
+		AnchorPoint = anchor, Position = pos, Size = UDim2.fromOffset(w, 20), BackgroundColor3 = INK, BackgroundTransparency = 0.18,
+		BorderSizePixel = 0, ZIndex = 8,
+	}, parent)
+	corner(c, 3)
+	stroke(c, LINE, 1, 0.2)
+	local l = mkLabel(c, text, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 11, color or TXT, Enum.TextXAlignment.Center)
+	l.ZIndex = 9
+	return c
+end
+
+local function buildPreview(parent, locId, h)
+	local loc = Config.Locations[locId]
+	local pv = PV[locId] or PV.forest
+	local rng = Random.new(locId == "cave" and 31 or 7)
+	local box = new("Frame", {
+		Size = UDim2.new(1, 0, 0, h or 118), BackgroundColor3 = pv.g2, BorderSizePixel = 0, ClipsDescendants = true,
+	}, parent)
+	corner(box, 5)
+	stroke(box, LINE, 1, 0)
+	local scene = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = pv.g1, BorderSizePixel = 0, ZIndex = 1 }, box)
+	new("UIGradient", { Color = ColorSequence.new(pv.g1, pv.g2), Rotation = 35 }, scene)
+
+	if locId == "cave" then
+		-- stone floor cracks
+		for i = 1, 5 do
+			pvBox(scene, rng:NextNumber(0.1, 0.9), rng:NextNumber(0.3, 0.7), rng:NextNumber(30, 70), 1, C3(52, 48, 66), rng:NextNumber(-40, 40), 0.5, 1, 0)
+		end
+		-- rocks hugging the walls
+		for i = 1, 20 do
+			local top = rng:NextNumber() < 0.5
+			local x = rng:NextNumber(0.02, 0.98)
+			local y = top and rng:NextNumber(0.0, 0.22) or rng:NextNumber(0.78, 1.0)
+			local w, hh = rng:NextNumber(18, 40), rng:NextNumber(14, 28)
+			local rot = rng:NextNumber(-30, 30)
+			pvBox(scene, x, y, w + 4, hh + 4, C3(8, 8, 12), rot, 0.4, 2, 5)
+			local r = pvBox(scene, x, y, w, hh, C3(54, 51, 66), rot, 0, 3, 5)
+			pvBox(scene, x - 0.004, y - 0.03, w * 0.55, hh * 0.45, C3(74, 70, 90), rot, 0, 4, 4)
+		end
+		-- glowing crystals
+		for _, p in ipairs({ { 0.30, 0.22 }, { 0.56, 0.80 }, { 0.90, 0.24 }, { 0.12, 0.80 } }) do
+			pvDot(scene, p[1], p[2], 30, C3(120, 90, 200), 0.86, 3)
+			pvBox(scene, p[1], p[2], 9, 14, C3(142, 112, 212), 20, 0, 5, 2)
+			pvBox(scene, p[1] + 0.012, p[2] + 0.04, 6, 9, C3(108, 82, 178), -25, 0, 5, 2)
+		end
+	else
+		-- trodden path
+		pvBox(scene, 0.5, 0.52, 520, 30, C3(58, 50, 38), -7, 0.35, 1, 14)
+		pvBox(scene, 0.5, 0.52, 520, 16, C3(70, 60, 44), -7, 0.55, 1, 8)
+		-- trees around the clearing
+		for i = 1, 26 do
+			local top = rng:NextNumber() < 0.5
+			local x = rng:NextNumber(0.0, 1.0)
+			local y = top and rng:NextNumber(0.0, 0.26) or rng:NextNumber(0.76, 1.02)
+			local d = rng:NextNumber(20, 34)
+			local g = rng:NextNumber(0.75, 1.1)
+			pvDot(scene, x, y, d + 2, C3(4, 8, 5), 0.45, 2).Position = UDim2.new(x, 3, y, 4)
+			pvDot(scene, x, y, d, C3(math.floor(32 * g), math.floor(66 * g), math.floor(40 * g)), 0, 3)
+			pvDot(scene, x, y, d * 0.62, C3(math.floor(44 * g), math.floor(88 * g), math.floor(52 * g)), 0, 4).Position = UDim2.new(x, -2, y, -3)
+		end
+		for i = 1, 8 do
+			local x, y = rng:NextNumber(0.05, 0.95), rng:NextNumber(0.28, 0.74)
+			pvDot(scene, x, y, rng:NextNumber(6, 10), C3(38, 74, 44), 0.2, 3)
+		end
+	end
+
+	-- enemies, boss and the hero
+	local pal = loc.enemies[1].pal.skin
+	for i = 1, 7 do
+		local x, y = rng:NextNumber(0.34, 0.74), rng:NextNumber(0.38, 0.66)
+		pvDot(scene, x, y, 11, C3(6, 6, 8), 0.4, 5).Position = UDim2.new(x, 1, y, 2)
+		pvDot(scene, x, y, 9, tone(pal), 0, 6)
+	end
+	local bp = loc.boss.pal.skin
+	local ring = pvDot(scene, 0.86, 0.5, 40, C3(150, 50, 50), 0.78, 5)
+	stroke(ring, C3(150, 56, 56), 1, 0.2)
+	pvDot(scene, 0.86, 0.5, 26, tone(bp), 0, 6)
+	pvDot(scene, 0.86, 0.5, 12, C3(150, 50, 50), 0.2, 7)
+	local hero = pvDot(scene, 0.13, 0.5, 14, GOLD, 0, 7)
+	stroke(hero, INK, 1.5, 0)
+	local halo = pvDot(scene, 0.13, 0.5, 30, GOLD, 0.88, 5)
+	stroke(halo, GOLD, 1, 0.55)
+
+	-- shading + info overlay
+	local shade = new("Frame", { Size = UDim2.fromScale(1, 0.62), Position = UDim2.fromScale(0, 0.38), BackgroundColor3 = INK, BorderSizePixel = 0, ZIndex = 7 }, box)
+	new("UIGradient", { Transparency = NumberSequence.new(1, 0.08), Rotation = 90 }, shade)
+	local top = new("Frame", { Size = UDim2.fromScale(1, 0.4), BackgroundColor3 = INK, BorderSizePixel = 0, ZIndex = 7 }, box)
+	new("UIGradient", { Transparency = NumberSequence.new(0.35, 1), Rotation = 90 }, top)
+	local nm = mkLabel(box, string.upper(loc.name), UDim2.new(0, 10, 1, -30), UDim2.new(0.7, 0, 0, 22), 17, TXT, nil, Enum.Font.GothamBlack)
+	nm.ZIndex = 9
+	local ds = mkLabel(box, #loc.enemies .. " enemy types   /   boss: " .. loc.boss.name, UDim2.new(0, 10, 1, -14), UDim2.new(1, -20, 0, 12), 11, TXT2, nil, Enum.Font.Gotham)
+	ds.ZIndex = 9
+	pvChip(box, "LV. " .. loc.minLvl .. "-" .. loc.maxLvl, UDim2.new(0, 8, 0, 8), Vector2.new(0, 0), GOLD)
+	pvChip(box, "BOSS", UDim2.new(1, -8, 0, 8), Vector2.new(1, 0), C3(200, 100, 96))
+
+	-- quick fade-in whenever the preview changes
+	local fade = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = INK, BackgroundTransparency = 0, BorderSizePixel = 0, ZIndex = 20 }, box)
+	TweenService:Create(fade, TweenInfo.new(0.28), { BackgroundTransparency = 1 }):Play()
+	task.delay(0.32, function() if fade.Parent then fade:Destroy() end end)
+	return box
+end
+
 -- ------------------------------------------------------------ GATE PANEL
-local portal = makePanel("", 430, 540)
+local portal = makePanel("", 430, 650)
 local curZone = nil
 local gateViews = {}
 local sel = { loc = Config.LocationOrder[1], diff = 1, max = 2, friends = false }
 local countdownLabel, countdownAt
-local LOC_COLORS = { forest = C3(70, 150, 90), cave = C3(124, 96, 190) }
+local LOC_COLORS = { forest = C3(62, 112, 74), cave = C3(98, 80, 150) }
 
 local function gateNumber(zid)
 	for _, zn in ipairs(Config.Lobby.zones) do
@@ -8393,7 +8521,7 @@ local function toggleRow(parent, labels, current, onPick, disabledFrom)
 		local dis = disabledFrom and i >= disabledFrom
 		local on = (current == i)
 		local b = mkButton(parent, text, UDim2.new((i - 1) / n, 2, 0, 0), UDim2.new(1 / n, -4, 1, 0),
-			on and C3(70, 120, 200) or C3(42, 47, 62), function() onPick(i) end)
+			on and C3(66, 90, 132) or C3(28, 28, 33), function() onPick(i) end)
 		b.TextSize = 14
 	end
 end
@@ -8412,6 +8540,8 @@ local function renderPortal()
 		local loc = Config.Locations[view.loc]
 		local d = Config.Difficulties[view.diff]
 		portal.sub.Text = view.mine and "You are in this party." or "This gate is already taken."
+		local pvr = row(portal.content, 118)
+		buildPreview(pvr, view.loc, 118)
 		local r = row(portal.content, 30)
 		mkLabel(r, string.upper(loc.name), UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 20, LOC_COLORS[view.loc] and LOC_COLORS[view.loc]:Lerp(C3(255, 255, 255), 0.35) or C3(255, 255, 255))
 		local r2 = row(portal.content, 24)
@@ -8421,25 +8551,25 @@ local function renderPortal()
 			mkLabel(names, (n == view.host and "[HOST] " or "") .. n, UDim2.fromOffset(8, (i - 1) * 24), UDim2.new(1, -8, 0, 24), 17)
 		end
 		local st = row(portal.content, 26)
-		countdownLabel = mkLabel(st, "Players " .. view.n .. " / " .. view.max .. "  -  waiting...", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 16, C3(200, 220, 255))
+		countdownLabel = mkLabel(st, "Players " .. view.n .. " / " .. view.max .. "  -  waiting...", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 16, C3(190, 200, 220))
 		countdownAt = view.startAt
 		local br = row(portal.content, 44)
 		if view.mine then
 			if view.hostId == lp.UserId then
-				mkButton(br, "START NOW", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0), C3(64, 140, 92), function() ToServer:FireServer("StartParty") end)
-				mkButton(br, "LEAVE", UDim2.new(0.5, 4, 0, 0), UDim2.new(0.5, -4, 1, 0), C3(160, 66, 66), function() ToServer:FireServer("LeaveParty") end)
+				mkButton(br, "START NOW", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0), C3(54, 108, 78), function() ToServer:FireServer("StartParty") end)
+				mkButton(br, "LEAVE", UDim2.new(0.5, 4, 0, 0), UDim2.new(0.5, -4, 1, 0), C3(132, 56, 56), function() ToServer:FireServer("LeaveParty") end)
 			else
-				mkButton(br, "LEAVE PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(160, 66, 66), function() ToServer:FireServer("LeaveParty") end)
+				mkButton(br, "LEAVE PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(132, 56, 56), function() ToServer:FireServer("LeaveParty") end)
 			end
 		else
 			if view.canJoin then
-				mkButton(br, "JOIN PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(70, 120, 200), function() ToServer:FireServer("JoinParty", view.id) end)
+				mkButton(br, "JOIN PARTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(66, 90, 132), function() ToServer:FireServer("JoinParty", view.id) end)
 			else
-				local b = mkButton(br, view.why or "UNAVAILABLE", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(44, 48, 58), nil)
+				local b = mkButton(br, view.why or "UNAVAILABLE", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(24, 24, 28), nil)
 				setDisabled(b, true)
 			end
 			local hr = row(portal.content, 40)
-			mkLabel(hr, "Wait for the run to start or use another gate.", UDim2.fromOffset(2, 0), UDim2.fromScale(1, 1), 14, C3(170, 175, 190), nil, Enum.Font.Gotham)
+			mkLabel(hr, "Wait for the run to start or use another gate.", UDim2.fromOffset(2, 0), UDim2.fromScale(1, 1), 14, C3(160, 160, 170), nil, Enum.Font.Gotham)
 		end
 		return
 	end
@@ -8452,21 +8582,23 @@ local function renderPortal()
 
 	local r1 = row(portal.content, 22)
 	mkLabel(r1, "LOCATION", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, GOLD)
-	local rl = row(portal.content, 56)
+	local rl = row(portal.content, 48)
 	local nloc = #Config.LocationOrder
 	for i, id in ipairs(Config.LocationOrder) do
 		local l = Config.Locations[id]
 		local on = sel.loc == id
-		local b = mkButton(rl, l.name .. "\nLv." .. l.minLvl .. "-" .. l.maxLvl, UDim2.new((i - 1) / nloc, 2, 0, 0), UDim2.new(1 / nloc, -4, 1, 0),
-			on and (LOC_COLORS[id] or C3(70, 120, 200)) or C3(42, 47, 62), function()
+		local b = mkButton(rl, string.upper(l.name) .. "\nLv." .. l.minLvl .. "-" .. l.maxLvl, UDim2.new((i - 1) / nloc, 2, 0, 0), UDim2.new(1 / nloc, -4, 1, 0),
+			on and (LOC_COLORS[id] or C3(66, 90, 132)) or C3(28, 28, 33), function()
 				sel.loc = id
 				renderPortal()
 			end)
-		b.TextSize = 15
+		b.TextSize = 13
 		if on then markSelected(b) end
 	end
+	local pvr = row(portal.content, 118)
+	buildPreview(pvr, sel.loc, 118)
 	local rd = row(portal.content, 34)
-	mkLabel(rd, loc.desc, UDim2.fromOffset(2, 0), UDim2.fromScale(1, 1), 13, C3(190, 195, 210), nil, Enum.Font.Gotham)
+	mkLabel(rd, loc.desc, UDim2.fromOffset(2, 0), UDim2.fromScale(1, 1), 13, C3(184, 184, 192), nil, Enum.Font.Gotham)
 
 	local r2 = row(portal.content, 22)
 	mkLabel(r2, "DIFFICULTY", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 15, GOLD)
@@ -8474,7 +8606,7 @@ local function renderPortal()
 	for i, d in ipairs(Config.Difficulties) do
 		local locked = i > unlocked
 		local b = mkButton(r3, locked and "LOCKED" or d.name, UDim2.new((i - 1) / 5, 2, 0, 0), UDim2.new(0.2, -4, 1, 0),
-			locked and C3(44, 48, 58) or (sel.diff == i and hex(d.color) or C3(42, 47, 62)), function()
+			locked and C3(24, 24, 28) or (sel.diff == i and hex(d.color) or C3(28, 28, 33)), function()
 				if not locked then sel.diff = i renderPortal() end
 			end)
 		b.TextSize = locked and 11 or 13
@@ -8486,7 +8618,7 @@ local function renderPortal()
 	local r5 = row(portal.content, 38)
 	for i = 1, Config.GateMaxPlayers do
 		mkButton(r5, tostring(i), UDim2.new((i - 1) / Config.GateMaxPlayers, 2, 0, 0), UDim2.new(1 / Config.GateMaxPlayers, -4, 1, 0),
-			sel.max == i and C3(70, 120, 200) or C3(42, 47, 62), function()
+			sel.max == i and C3(66, 90, 132) or C3(28, 28, 33), function()
 				sel.max = i
 				if i == 1 then sel.friends = false end
 				renderPortal()
@@ -8498,20 +8630,20 @@ local function renderPortal()
 	local r7 = row(portal.content, 38)
 	local solo = sel.max == 1
 	local b1 = mkButton(r7, "EVERYONE", UDim2.fromScale(0, 0), UDim2.new(0.5, -4, 1, 0),
-		(not sel.friends) and C3(70, 150, 100) or C3(42, 47, 62), function()
+		(not sel.friends) and C3(58, 116, 82) or C3(28, 28, 33), function()
 			sel.friends = false
 			renderPortal()
 		end)
 	local b2 = mkButton(r7, "FRIENDS ONLY", UDim2.new(0.5, 4, 0, 0), UDim2.new(0.5, -4, 1, 0),
-		(sel.friends and not solo) and C3(70, 120, 200) or C3(42, 47, 62), function()
+		(sel.friends and not solo) and C3(66, 90, 132) or C3(28, 28, 33), function()
 			if solo then return end
 			sel.friends = true
 			renderPortal()
 		end)
 	b1.TextSize, b2.TextSize = 14, 14
 	if solo then
-		b1.BackgroundColor3 = C3(36, 40, 52)
-		b2.BackgroundColor3 = C3(36, 40, 52)
+		b1.BackgroundColor3 = C3(20, 20, 24)
+		b2.BackgroundColor3 = C3(20, 20, 24)
 		setDisabled(b1, true)
 		setDisabled(b2, true)
 		b1.Text = "SOLO RUN"
@@ -8520,7 +8652,7 @@ local function renderPortal()
 	local dd = Config.Difficulties[sel.diff]
 	local r8 = row(portal.content, 46)
 	local tag = solo and "SOLO" or (sel.max .. "P" .. (sel.friends and ", FRIENDS" or ""))
-	mkButton(r8, "CREATE PARTY  (" .. loc.short .. ", " .. dd.name .. ", " .. tag .. ")", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(64, 140, 92), function()
+	mkButton(r8, "CREATE PARTY  (" .. loc.short .. ", " .. dd.name .. ", " .. tag .. ")", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), C3(54, 108, 78), function()
 		ToServer:FireServer("CreateParty", curZone, sel.loc, sel.diff, sel.max, sel.friends and sel.max > 1)
 	end).TextSize = 15
 end
@@ -8542,10 +8674,10 @@ local function renderUpgrade()
 	clearContent(upPanel)
 	order = 0
 	local r0 = row(upPanel.content, 26)
-	mkLabel(r0, "Skill points: " .. data.points .. "      Coins: " .. data.coins, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 18, C3(130, 200, 156))
+	mkLabel(r0, "Skill points: " .. data.points .. "      Coins: " .. data.coins, UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 18, C3(122, 176, 142))
 	local tabs = row(upPanel.content, 40)
 	for i, cls in ipairs(Config.ClassOrder) do
-		local b = mkButton(tabs, string.upper(cls), UDim2.new((i - 1) / 3, 2, 0, 0), UDim2.new(1 / 3, -4, 1, 0), upTab == cls and Config.Classes[cls].color or C3(42, 47, 62), function()
+		local b = mkButton(tabs, string.upper(cls), UDim2.new((i - 1) / 3, 2, 0, 0), UDim2.new(1 / 3, -4, 1, 0), upTab == cls and Config.Classes[cls].color or C3(28, 28, 33), function()
 			upTab = cls
 			renderUpgrade()
 		end)
@@ -8567,7 +8699,7 @@ local function renderUpgrade()
 		mkLabel(bg, now .. "  ->  " .. nxt, UDim2.fromOffset(10, 26), UDim2.new(1, -90, 0, 16), 14, C3(130, 190, 226), nil, Enum.Font.Gotham)
 		mkLabel(bg, s.fmt, UDim2.fromOffset(10, 42), UDim2.new(1, -90, 0, 16), 11, TXT2, nil, Enum.Font.Gotham)
 		local can = data.points >= 1 and lv < s.max
-		setDisabled(mkButton(bg, lv >= s.max and "MAX" or "+1", UDim2.new(1, -74, 0, 12), UDim2.fromOffset(64, 38), can and C3(64, 140, 92) or C3(44, 48, 58), function()
+		setDisabled(mkButton(bg, lv >= s.max and "MAX" or "+1", UDim2.new(1, -74, 0, 12), UDim2.fromOffset(64, 38), can and C3(54, 108, 78) or C3(24, 24, 28), function()
 			if can then ToServer:FireServer("Upgrade", upTab, s.id) end
 		end), not can)
 	end
@@ -8581,7 +8713,7 @@ local function renderUpgrade()
 		mkLabel(bg, name .. "   Lv." .. lvl .. "/" .. max, UDim2.fromOffset(10, 4), UDim2.new(1, -120, 0, 22), 17)
 		mkLabel(bg, desc, UDim2.fromOffset(10, 28), UDim2.new(1, -120, 0, 18), 12, TXT2, nil, Enum.Font.Gotham)
 		local can = lvl < max and data.coins >= cost
-		setDisabled(mkButton(bg, lvl >= max and "MAX" or (cost .. " coins"), UDim2.new(1, -108, 0, 8), UDim2.fromOffset(98, 36), can and C3(190, 150, 60) or C3(44, 48, 58), function()
+		setDisabled(mkButton(bg, lvl >= max and "MAX" or (cost .. " coins"), UDim2.new(1, -108, 0, 8), UDim2.fromOffset(98, 36), can and C3(190, 150, 60) or C3(24, 24, 28), function()
 			if can then ToServer:FireServer(action) end
 		end), not can)
 	end
@@ -8591,7 +8723,7 @@ end
 
 -- ------------------------------------------------------------ WEAPON SELECT PANEL (3 buttons)
 local wgui = new("ScreenGui", { Name = "WeaponSelect", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 20 }, lp:WaitForChild("PlayerGui"))
-local wDim = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(6, 8, 14), BackgroundTransparency = 0.3, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false }, wgui)
+local wDim = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(5, 5, 7), BackgroundTransparency = 0.3, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false }, wgui)
 local wFrame = new("Frame", {
 	AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(760, 500),
 	BackgroundColor3 = PANEL, BorderSizePixel = 0,
@@ -8610,7 +8742,7 @@ local function iconPart(parent, size, t, ang, color, shape, axis, outline)
 		Rotation = ang, BackgroundColor3 = color, BorderSizePixel = 0,
 	}, parent)
 	if shape == "round" then corner(f, 100) end
-	if outline then stroke(f, C3(10, 12, 18), 1, 0.35) end
+	if outline then stroke(f, C3(6, 6, 8), 1, 0.35) end
 	return f
 end
 
@@ -8621,16 +8753,16 @@ local function iconAt(parent, w, h, x, y, rot, color, round, outline)
 		Rotation = rot or 0, BackgroundColor3 = color, BorderSizePixel = 0,
 	}, parent)
 	if round then corner(f, 100) end
-	if outline then stroke(f, C3(10, 12, 18), 1, 0.35) end
+	if outline then stroke(f, C3(6, 6, 8), 1, 0.35) end
 	return f
 end
 
 local ICONS = {
 	Swordsman = function(c)
-		local steel, face, gold = C3(150, 162, 182), C3(222, 230, 241), C3(204, 164, 74)
+		local steel, face, gold = C3(140, 140, 150), C3(220, 220, 226), C3(190, 158, 92)
 		iconPart(c, Vector2.new(12, 78), 14, 45, steel, nil, nil, true)
 		iconPart(c, Vector2.new(6, 72), 14, 45, face)
-		iconPart(c, Vector2.new(2, 52), 12, 45, C3(120, 134, 158))
+		iconPart(c, Vector2.new(2, 52), 12, 45, C3(112, 112, 124))
 		iconPart(c, Vector2.new(9, 9), 54, 0, steel, nil, nil, true)
 		iconPart(c, Vector2.new(42, 9), -26, 45, gold, nil, nil, true)
 		iconPart(c, Vector2.new(8, 24), -42, 45, C3(104, 68, 42), nil, nil, true)
@@ -8656,18 +8788,18 @@ local ICONS = {
 		end
 		local tipX = cx + R * math.cos(math.rad(124))
 		local tipY = R * math.sin(math.rad(56))
-		iconAt(c, 8, 8, tipX, cy - tipY, 0, C3(204, 164, 74), true)
-		iconAt(c, 8, 8, tipX, cy + tipY, 0, C3(204, 164, 74), true)
+		iconAt(c, 8, 8, tipX, cy - tipY, 0, C3(190, 158, 92), true)
+		iconAt(c, 8, 8, tipX, cy + tipY, 0, C3(190, 158, 92), true)
 		iconAt(c, 2, tipY * 2, tipX, cy, 0, C3(228, 224, 206))
 		iconAt(c, 8, 18, 30, cy, 0, C3(70, 46, 30), false, true)
 		-- arrow
 		iconAt(c, 62, 3, 70, cy, 0, C3(232, 222, 188), false, true)
-		iconAt(c, 11, 11, 102, cy, 45, C3(176, 188, 206), false, true)
+		iconAt(c, 11, 11, 102, cy, 45, C3(170, 170, 180), false, true)
 		iconAt(c, 10, 3, 42, cy - 3, 25, C3(190, 70, 70))
 		iconAt(c, 10, 3, 42, cy + 3, -25, C3(190, 70, 70))
 	end,
 	Mage = function(c)
-		local gold = C3(204, 164, 74)
+		local gold = C3(190, 158, 92)
 		iconPart(c, Vector2.new(8, 94), -6, 45, C3(98, 66, 42), nil, nil, true)
 		iconPart(c, Vector2.new(3, 88), -6, 45, C3(140, 102, 66))
 		iconPart(c, Vector2.new(14, 6), -30, 45, gold, nil, nil, true)
@@ -8735,7 +8867,7 @@ for i, cls in ipairs(cardOrder) do
 	corner(icon, 60)
 	stroke(icon, ccol, 2, 0.3)
 	ICONS[cls](icon)
-	mkLabel(card, TAGLINE[cls], UDim2.fromOffset(8, 176), UDim2.new(1, -16, 0, 18), 12, C3(196, 202, 218), Enum.TextXAlignment.Center, Enum.Font.Gotham)
+	mkLabel(card, TAGLINE[cls], UDim2.fromOffset(8, 176), UDim2.new(1, -16, 0, 18), 12, C3(192, 192, 200), Enum.TextXAlignment.Center, Enum.Font.Gotham)
 	for k, sdef in ipairs(statDefs) do
 		local y = 200 + (k - 1) * 22
 		mkLabel(card, sdef[1], UDim2.fromOffset(12, y), UDim2.fromOffset(62, 16), 11, TXT2)
@@ -8781,7 +8913,7 @@ if workspace.CurrentCamera then
 end
 
 -- "change weapon" button under the info card (lobby only)
-local changeBtn = mkButton(gui, "CHANGE WEAPON", UDim2.fromOffset(14, 122), UDim2.fromOffset(290, 34), C3(52, 58, 86), function()
+local changeBtn = mkButton(gui, "CHANGE WEAPON", UDim2.fromOffset(14, 122), UDim2.fromOffset(290, 34), C3(36, 36, 44), function()
 	openWeaponPanel()
 end)
 changeBtn.TextSize = 15
@@ -8798,7 +8930,7 @@ corner(result, 10)
 local resStroke = stroke(result, GOLD, 2)
 local resTitle = mkLabel(result, "", UDim2.fromOffset(0, 14), UDim2.new(1, 0, 0, 50), 42, GOLD, Enum.TextXAlignment.Center, Enum.Font.GothamBlack)
 local resBody = mkLabel(result, "", UDim2.fromOffset(20, 76), UDim2.new(1, -40, 0, 190), 20, nil, Enum.TextXAlignment.Center)
-mkButton(result, "RETURN TO LOBBY", UDim2.new(0.5, -110, 1, -60), UDim2.fromOffset(220, 44), C3(70, 120, 200), function()
+mkButton(result, "RETURN TO LOBBY", UDim2.new(0.5, -110, 1, -60), UDim2.fromOffset(220, 44), C3(66, 90, 132), function()
 	ToServer:FireServer("ReturnLobby")
 end)
 
@@ -9183,7 +9315,7 @@ H.Proj = function(id, kind, x, z, dx, dz, speed, range)
 		-- nothing: WeaponFX filled pr.parts
 	elseif kind == "arrow" then
 		local shaft = addProjPart(pr, B, Vector3.new(0.2, 0.14, 2.8), CFrame.new(), C3(232, 222, 188), Enum.Material.Wood)
-		addProjPart(pr, B, Vector3.new(0.6, 0.16, 0.6), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), (tinted and Theme.glow(TH) or C3(176, 188, 206)), Enum.Material.Metal)
+		addProjPart(pr, B, Vector3.new(0.6, 0.16, 0.6), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), (tinted and Theme.glow(TH) or C3(170, 170, 180)), Enum.Material.Metal)
 		addProjPart(pr, B, Vector3.new(0.34, 0.2, 0.34), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), (tinted and Theme.glow(TH) or C3(232, 238, 246)), tinted and NEON or Enum.Material.Metal)
 		addProjPart(pr, B, Vector3.new(0.16, 0.12, 0.7), CFrame.new(-0.2, 0, 1.15) * CFrame.Angles(0, 0.3, 0), (tinted and Theme.main(TH) or C3(196, 62, 62)), Enum.Material.Fabric)
 		addProjPart(pr, B, Vector3.new(0.16, 0.12, 0.7), CFrame.new(0.2, 0, 1.15) * CFrame.Angles(0, -0.3, 0), (tinted and Theme.main(TH) or C3(196, 62, 62)), Enum.Material.Fabric)
@@ -9628,7 +9760,7 @@ bannerSub.TextTransparency = 1
 bannerSub.ZIndex = 5
 local bannerTxt = label(bannerBox, "", 52, C3(255, 255, 255), Enum.Font.GothamBlack, UDim2.fromOffset(0, 26), UDim2.new(1, 0, 0, 68))
 bannerTxt.TextTransparency = 1
-bannerTxt.TextStrokeColor3 = C3(10, 10, 16)
+bannerTxt.TextStrokeColor3 = C3(6, 6, 8)
 bannerTxt.TextStrokeTransparency = 1
 bannerTxt.ZIndex = 5
 
@@ -9672,7 +9804,7 @@ local function chFrame(parent, size, pos, anchor, rotation)
 		AnchorPoint = anchor or Vector2.new(0.5, 0.5), Position = pos or UDim2.fromOffset(0, 0), Size = size,
 		BackgroundColor3 = C3(255, 255, 255), BorderSizePixel = 0, Rotation = rotation or 0,
 	}, parent)
-	new("UIStroke", { Color = C3(8, 10, 16), Thickness = 1, Transparency = 0.35 }, f)
+	new("UIStroke", { Color = C3(6, 6, 8), Thickness = 1, Transparency = 0.35 }, f)
 	table.insert(chColored, f)
 	return f
 end
@@ -9801,7 +9933,7 @@ do
 			BackgroundColor3 = C3(255, 255, 255), BorderSizePixel = 0,
 		}, group)
 		corner(f, 12)
-		new("UIGradient", { Color = ColorSequence.new(C3(52, 56, 78), C3(14, 16, 24)), Rotation = 90 }, f)
+		new("UIGradient", { Color = ColorSequence.new(C3(34, 34, 40), C3(10, 10, 13)), Rotation = 90 }, f)
 		local sc = new("UIScale", { Scale = 1 }, f)
 		local st = new("UIStroke", { Color = C3(255, 255, 255), Thickness = isUlt and 3 or 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, f)
 		local icon = label(f, "", math.floor(w * 0.46), C3(255, 255, 255), Enum.Font.GothamBold, UDim2.fromOffset(0, 2), UDim2.new(1, 0, 1, -14))
@@ -9810,7 +9942,7 @@ do
 		new("UITextSizeConstraint", { MinTextSize = 7, MaxTextSize = 11 }, nm)
 		local badge = new("Frame", { Position = UDim2.fromOffset(4, 4), Size = UDim2.fromOffset(20, 18), BackgroundColor3 = C3(255, 255, 255), BorderSizePixel = 0, ZIndex = 3 }, f)
 		corner(badge, 5)
-		local bl = label(badge, l.key, 13, C3(12, 14, 20), Enum.Font.GothamBlack)
+		local bl = label(badge, l.key, 13, C3(8, 8, 10), Enum.Font.GothamBlack)
 		bl.ZIndex = 4
 		local cd = new("Frame", { Size = UDim2.new(1, 0, 0, 0), BackgroundColor3 = C3(0, 0, 0), BackgroundTransparency = 0.38, BorderSizePixel = 0, ZIndex = 5 }, f)
 		corner(cd, 12)
@@ -10293,11 +10425,11 @@ H.SwUlt = function(tx, tz, R, fall)
 		table.insert(sw, { p = p, off = off })
 		return p
 	end
-	local blade = sp(B, Vector3.new(4.4, 0.9, 20), CFrame.new(0, 0, -14), C3(214, 224, 240), Enum.Material.Metal, 0)
+	local blade = sp(B, Vector3.new(4.4, 0.9, 20), CFrame.new(0, 0, -14), C3(206, 206, 214), Enum.Material.Metal, 0)
 	sp(B, Vector3.new(0.9, 1.05, 19), CFrame.new(0, 0, -14), white, NEON, 0)
 	sp(B, Vector3.new(0.5, 1.0, 20), CFrame.new(2.2, 0, -14), gold, NEON, 0)
 	sp(B, Vector3.new(0.5, 1.0, 20), CFrame.new(-2.2, 0, -14), gold, NEON, 0)
-	sp(B, Vector3.new(3.1, 0.9, 3.1), CFrame.new(0, 0, -24) * CFrame.Angles(0, math.pi / 4, 0), C3(214, 224, 240), Enum.Material.Metal, 0)
+	sp(B, Vector3.new(3.1, 0.9, 3.1), CFrame.new(0, 0, -24) * CFrame.Angles(0, math.pi / 4, 0), C3(206, 206, 214), Enum.Material.Metal, 0)
 	sp(B, Vector3.new(1.3, 1.05, 1.3), CFrame.new(0, 0, -24.3) * CFrame.Angles(0, math.pi / 4, 0), white, NEON, 0)
 	sp(B, Vector3.new(12, 1.5, 1.8), CFrame.new(0, 0, -4), C3(228, 178, 70), Enum.Material.Metal, 0)
 	sp(B, Vector3.new(12.4, 0.6, 0.8), CFrame.new(0, 0.5, -4), gold, NEON, 0.1)
@@ -13213,13 +13345,13 @@ WM.startRainbow()
 local C3 = Color3.fromRGB
 
 -- ============================================================ UI HELPERS
-local GOLD = C3(214, 178, 98)
-local INK = C3(12, 14, 20)
-local PANEL = C3(21, 24, 33)
-local CARD = C3(30, 34, 46)
-local LINE = C3(62, 68, 86)
-local TXT = C3(232, 235, 242)
-local TXT2 = C3(150, 157, 175)
+local GOLD = C3(198, 167, 102)
+local INK = C3(8, 8, 10)
+local PANEL = C3(14, 14, 17)
+local CARD = C3(22, 22, 26)
+local LINE = C3(46, 46, 52)
+local TXT = C3(228, 228, 232)
+local TXT2 = C3(140, 140, 150)
 
 local function new(class, props, parent)
 	local o = Instance.new(class)
@@ -13267,8 +13399,8 @@ local function button(parent, text, pos, size, color, cb)
 		Text = text, Position = pos, Size = size, BackgroundColor3 = color, TextColor3 = TXT, Font = Enum.Font.GothamBold,
 		TextSize = 15, AutoButtonColor = false, BorderSizePixel = 0, TextWrapped = true,
 	}, parent)
-	corner(b, 6)
-	new("UIStroke", { Color = C3(8, 10, 16), Thickness = 1.5, Transparency = 0.25 }, b)
+	corner(b, 4)
+	new("UIStroke", { Color = C3(6, 6, 8), Thickness = 1.5, Transparency = 0.25 }, b)
 	local sc = new("UIScale", {}, b)
 	local base = color
 	b.MouseEnter:Connect(function()
@@ -13354,7 +13486,7 @@ local function makeCard(parent, w, opts)
 		}) }, bar)
 	end
 	-- soft rarity glow behind the model
-	local glow = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.new(1, -16, 0, (opts.size and 90 or 130)), BackgroundColor3 = owned and rc or C3(40, 44, 58), BackgroundTransparency = owned and 0.82 or 0.4, BorderSizePixel = 0 }, card)
+	local glow = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.new(1, -16, 0, (opts.size and 90 or 130)), BackgroundColor3 = owned and rc or C3(26, 26, 30), BackgroundTransparency = owned and 0.82 or 0.4, BorderSizePixel = 0 }, card)
 	corner(glow, 8)
 	local pv = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.new(1, -16, 0, (opts.size and 90 or 130)), BackgroundTransparency = 1 }, card)
 	makePreview(pv, w, not owned)
@@ -13465,7 +13597,7 @@ local function renderChest()
 	for i, typ in ipairs(Config.TypeOrder) do
 		local info = Config.TypeInfo[typ]
 		local sel = typ == selType
-		local b = button(chestPanel.content, info.icon .. "  " .. info.name, UDim2.new((i - 1) / 3, 2, 0, y), UDim2.new(1 / 3, -4, 0, 38), sel and C3(190, 140, 50) or C3(42, 47, 62), function()
+		local b = button(chestPanel.content, info.icon .. "  " .. info.name, UDim2.new((i - 1) / 3, 2, 0, y), UDim2.new(1 / 3, -4, 0, 38), sel and C3(190, 140, 50) or C3(28, 28, 33), function()
 			selType = typ
 			renderChest()
 		end)
@@ -13489,7 +13621,7 @@ local function renderChest()
 			local can = data.coins >= cost
 			local txt = "x" .. amount .. "  -  " .. cost
 			if amount > 1 then txt = txt .. (amount == 10 and "  (-10%)" or "  (-5%)") end
-			local b = button(row, txt, UDim2.new((k - 1) / 3, 6, 1, -34), UDim2.new(1 / 3, -8, 0, 28), can and C3(184, 138, 50) or C3(52, 56, 68), function()
+			local b = button(row, txt, UDim2.new((k - 1) / 3, 6, 1, -34), UDim2.new(1 / 3, -8, 0, 28), can and C3(184, 138, 50) or C3(34, 34, 40), function()
 				requestOpen(chest.id, selType, amount)
 			end)
 			b.TextSize = 12
@@ -13498,7 +13630,7 @@ local function renderChest()
 		y = y + 110
 	end
 	local total, n = dupValue()
-	local sb = button(chestPanel.content, n > 0 and ("Продать все дубликаты (" .. n .. " шт.)  +" .. total .. " монет") or "Нет дубликатов для продажи", UDim2.fromOffset(0, y + 2), UDim2.new(1, 0, 0, 34), n > 0 and C3(64, 140, 92) or C3(52, 56, 68), function()
+	local sb = button(chestPanel.content, n > 0 and ("Продать все дубликаты (" .. n .. " шт.)  +" .. total .. " монет") or "Нет дубликатов для продажи", UDim2.fromOffset(0, y + 2), UDim2.new(1, 0, 0, 34), n > 0 and C3(54, 108, 78) or C3(34, 34, 40), function()
 		ToServer:FireServer("Sell", "all")
 	end)
 	sb.TextSize = 14
@@ -13507,7 +13639,7 @@ end
 
 -- ============================================================ CHEST OPENING ANIMATION
 local rg = new("ScreenGui", { Name = "ChestReveal", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 40 }, lp:WaitForChild("PlayerGui"))
-local dim = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(4, 6, 12), BackgroundTransparency = 1, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false }, rg)
+local dim = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C3(4, 4, 6), BackgroundTransparency = 1, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false }, rg)
 local stage = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, dim)
 local revealToken = 0
 
@@ -13628,7 +13760,7 @@ local function showReveal(chestId, results)
 		local bw = 190
 		local by = 0.5 + (rows * (ch + pad) * gs.Scale) / (2 * vp.Y) + 0.08
 		by = math.clamp(by, 0.55, 0.94)
-		local b1 = button(stage, "ЗАБРАТЬ", UDim2.new(0.5, -bw - 8, by, 0), UDim2.fromOffset(bw, 46), C3(64, 140, 92), closeReveal)
+		local b1 = button(stage, "ЗАБРАТЬ", UDim2.new(0.5, -bw - 8, by, 0), UDim2.fromOffset(bw, 46), C3(54, 108, 78), closeReveal)
 		b1.TextSize = 19
 		b1.Font = Enum.Font.GothamBlack
 		local again = button(stage, "ОТКРЫТЬ ЕЩЁ", UDim2.new(0.5, 8, by, 0), UDim2.fromOffset(bw, 46), C3(184, 138, 50), function()
@@ -13656,9 +13788,9 @@ fitInv()
 if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitInv) end
 label(inv, "ИНВЕНТАРЬ", UDim2.fromOffset(20, 10), UDim2.fromOffset(300, 36), 28, GOLD, nil, Enum.Font.GothamBlack)
 local invSub = label(inv, "", UDim2.fromOffset(20, 44), UDim2.fromOffset(600, 22), 14, TXT2, nil, Enum.Font.Gotham)
-local invClose = button(inv, "X", UDim2.new(1, -52, 0, 12), UDim2.fromOffset(38, 34), C3(160, 66, 66), function() inv.Visible = false end)
+local invClose = button(inv, "X", UDim2.new(1, -52, 0, 12), UDim2.fromOffset(38, 34), C3(132, 56, 56), function() inv.Visible = false end)
 invClose.TextSize = 18
-local sellAll = button(inv, "", UDim2.new(1, -330, 0, 12), UDim2.fromOffset(270, 34), C3(64, 140, 92), function() ToServer:FireServer("Sell", "all") end)
+local sellAll = button(inv, "", UDim2.new(1, -330, 0, 12), UDim2.fromOffset(270, 34), C3(54, 108, 78), function() ToServer:FireServer("Sell", "all") end)
 sellAll.TextSize = 13
 new("Frame", { Position = UDim2.fromOffset(14, 72), Size = UDim2.new(1, -28, 0, 1), BackgroundColor3 = LINE, BorderSizePixel = 0 }, inv)
 
@@ -13666,7 +13798,7 @@ local invType = "Swordsman"
 local invSel = nil
 local tabBtns = {}
 for i, typ in ipairs(Config.TypeOrder) do
-	local b = button(inv, "", UDim2.fromOffset(14, 84 + (i - 1) * 62), UDim2.fromOffset(150, 54), C3(42, 47, 62), function()
+	local b = button(inv, "", UDim2.fromOffset(14, 84 + (i - 1) * 62), UDim2.fromOffset(150, 54), C3(28, 28, 33), function()
 		invType = typ
 		invSel = nil
 		lastInvKey = ""
@@ -13701,7 +13833,7 @@ local function renderDetail()
 	local cnt = data.inv[w.id] or 0
 	local owned = cnt > 0
 	local r = Config.Rarities[w.tier]
-	local pvBox = new("Frame", { Position = UDim2.fromOffset(34, 8), Size = UDim2.fromOffset(200, 190), BackgroundColor3 = w.rainbow and C3(40, 40, 60) or r.color:Lerp(C3(10, 12, 18), 0.82), BorderSizePixel = 0 }, detail)
+	local pvBox = new("Frame", { Position = UDim2.fromOffset(34, 8), Size = UDim2.fromOffset(200, 190), BackgroundColor3 = w.rainbow and C3(28, 28, 34) or r.color:Lerp(C3(6, 6, 8), 0.82), BorderSizePixel = 0 }, detail)
 	corner(pvBox, 10)
 	stroke(pvBox, w.rainbow and C3(255, 255, 255) or r.color, 2, 0.2)
 	makePreview(pvBox, w, not owned)
@@ -13740,13 +13872,13 @@ local function renderDetail()
 	local eq = data.equip[w.type] == w.id and data.class == w.type
 	local bY = 500 - 88
 	if owned then
-		local eb = button(detail, eq and "ЭКИПИРОВАНО" or "ЭКИПИРОВАТЬ", UDim2.fromOffset(12, bY), UDim2.new(1, -24, 0, 36), eq and C3(52, 56, 68) or C3(64, 140, 92), function()
+		local eb = button(detail, eq and "ЭКИПИРОВАНО" or "ЭКИПИРОВАТЬ", UDim2.fromOffset(12, bY), UDim2.new(1, -24, 0, 36), eq and C3(34, 34, 40) or C3(54, 108, 78), function()
 			ToServer:FireServer("Equip", w.id)
 		end)
 		eb.TextSize = 16
 		setDis(eb, eq or inRun())
 		local dup = cnt - 1
-		local sb = button(detail, dup > 0 and string.format("Продать дубликаты: %d  (+%d)", dup, dup * r.sell) or ("Экземпляров: " .. cnt .. "  (продажа: " .. r.sell .. " за дубликат)"), UDim2.fromOffset(12, bY + 42), UDim2.new(1, -24, 0, 34), dup > 0 and C3(184, 138, 50) or C3(52, 56, 68), function()
+		local sb = button(detail, dup > 0 and string.format("Продать дубликаты: %d  (+%d)", dup, dup * r.sell) or ("Экземпляров: " .. cnt .. "  (продажа: " .. r.sell .. " за дубликат)"), UDim2.fromOffset(12, bY + 42), UDim2.new(1, -24, 0, 34), dup > 0 and C3(184, 138, 50) or C3(34, 34, 40), function()
 			ToServer:FireServer("Sell", w.id)
 		end)
 		sb.TextSize = 12
@@ -13774,7 +13906,7 @@ local function renderInventory()
 			if (data.inv[w.id] or 0) > 0 then o = o + 1 end
 		end
 		b.Text = Config.TypeInfo[typ].icon .. " " .. Config.TypeInfo[typ].name .. "\n" .. o .. " / " .. t
-		b.BackgroundColor3 = typ == invType and C3(190, 140, 50) or C3(42, 47, 62)
+		b.BackgroundColor3 = typ == invType and C3(190, 140, 50) or C3(28, 28, 33)
 	end
 	-- grid (rebuilt only when the inventory itself changed)
 	local key = invType .. HttpService:JSONEncode(data.inv) .. tostring(data.equip[invType]) .. tostring(data.class)
@@ -13796,7 +13928,7 @@ local function renderInventory()
 			card.Size = UDim2.fromScale(1, 1)
 			if invSel == w.id then st.Color = GOLD st.Thickness = 3 end
 			if cnt > 1 then
-				local cb = new("TextLabel", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 10), Size = UDim2.fromOffset(34, 18), BackgroundColor3 = C3(10, 12, 18), BackgroundTransparency = 0.2, Text = "x" .. cnt, TextColor3 = TXT, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 6, BorderSizePixel = 0 }, card)
+				local cb = new("TextLabel", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 10), Size = UDim2.fromOffset(34, 18), BackgroundColor3 = C3(6, 6, 8), BackgroundTransparency = 0.2, Text = "x" .. cnt, TextColor3 = TXT, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 6, BorderSizePixel = 0 }, card)
 				corner(cb, 5)
 			end
 			if data.equip[w.type] == w.id and data.class == w.type then
@@ -13822,7 +13954,7 @@ local function openInventory()
 		renderInventory()
 	end
 end
-invBtn = button(gui, "ИНВЕНТАРЬ  [B]", UDim2.fromOffset(14, 122), UDim2.fromOffset(290, 34), C3(52, 58, 86), openInventory)
+invBtn = button(gui, "ИНВЕНТАРЬ  [B]", UDim2.fromOffset(14, 122), UDim2.fromOffset(290, 34), C3(36, 36, 44), openInventory)
 invBtn.TextSize = 15
 UIS.InputBegan:Connect(function(input, gp)
 	if gp then return end
