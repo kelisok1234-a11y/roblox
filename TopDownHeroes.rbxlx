@@ -2535,6 +2535,458 @@ return FX
 ]]></ProtectedString>
 </Properties>
 </Item>
+<Item class="ModuleScript" referent="RBX_ULT1">
+<Properties>
+<string name="Name">UltRecipes</string>
+<ProtectedString name="Source"><![CDATA[-- UltRecipes (ReplicatedStorage.UltRecipes): a unique Z ultimate for every weapon of tier 2+.
+-- Standard (tier 1 / Common) weapons keep the original class ultimates untouched.
+--
+-- A recipe is a timeline. Each step is S(kind, t, params) and runs t seconds after the cast.
+--   kinds:  tele hit drop rain beam nova orbit pull zone dash volley chain wall spokes heal screen sky muzzle
+--   damage numbers are multipliers of (weapon damage x ability damage), radii are scaled by weapon rarity,
+--   counts (n + nc * rarity count) grow with rarity, so the rarer the weapon the bigger and longer the ultimate.
+local Recipes = {}
+Recipes.MinTier = 2 -- weapons below this tier keep their class ultimate
+
+local function S(kind, t, p)
+	p = p or {}
+	p.k = kind
+	p.t = t
+	return p
+end
+
+local R = {}
+
+-- =====================================================================================================
+-- SWORDS
+-- =====================================================================================================
+
+-- T2 Emerald Edge: thorn judgement
+R.sw_emerald = { icon = "🌿", cd = 45, lock = 1.6, range = 40,
+	desc = "Руна природы, затем из земли вырываются гигантские шипы-лозы, замедляя всех. Поле терний жжёт 4 секунды.",
+	steps = {
+		S("tele", 0, { style = "rune", r = 15, dur = 0.9 }),
+		S("hit", 0.9, { style = "spikes", variant = "thorn", r = 15, dmg = 5, stun = 1.5, slow = 3, sm = 0.5, push = 2 }),
+		S("zone", 0.9, { style = "thorns", r = 15, dur = 4, ticks = 8, dmg = 0.5, slow = 1.2, sm = 0.5 }),
+		S("hit", 1.25, { style = "bloom", r = 9, dmg = 3.5, crit = true }),
+	} }
+
+-- T2 Jade Scimitar: jade dragon flight
+R.sw_jade = { icon = "🐉", cd = 45, lock = 2.4, range = 40,
+	desc = "Нефритовый дракон проносится по прямой, сметая врагов, и взрывается кристаллами в конце пути.",
+	steps = {
+		S("tele", 0, { style = "line", at = "o", len = 58, w = 8, dur = 0.7 }),
+		S("wall", 0.7, { style = "dragon", at = "o", len = 58, w = 9, dur = 1.4, dmg = 6, once = true, stun = 0.8, push = 3 }),
+		S("hit", 2.05, { style = "spikes", variant = "crystal", at = "o", fw = 58, r = 12, dmg = 6, stun = 1.5, crit = true }),
+	} }
+
+-- T3 Frostbrand: ice prison
+R.sw_frost = { icon = "🧊", cd = 48, lock = 2.8, range = 40,
+	desc = "Ледяная клетка смыкается вокруг врагов и замораживает их, затем волна холода и осколочный взрыв.",
+	steps = {
+		S("tele", 0, { style = "rune", r = 17, dur = 1.0 }),
+		S("hit", 1.0, { style = "cage", r = 17, dmg = 5, stun = 3, slow = 4, sm = 0.4 }),
+		S("zone", 1.0, { style = "frost", r = 17, dur = 4, ticks = 8, dmg = 0.5, slow = 1.2, sm = 0.4 }),
+		S("nova", 1.3, { style = "frost", r0 = 3, r = 24, dur = 0.7, dmg = 4, push = 3 }),
+		S("hit", 2.4, { style = "ice", r = 17, dmg = 6, crit = true, push = 2 }),
+	} }
+
+-- T3 Tidecaller Saber: tsunami + whirlpool
+R.sw_tide = { icon = "🌊", cd = 48, lock = 3.4, range = 40,
+	desc = "Огромная волна цунами сметает врагов вперёд, в конце рождается водоворот, затягивающий всех и взрывающийся.",
+	steps = {
+		S("tele", 0, { style = "line", at = "o", len = 60, w = 14, dur = 0.8 }),
+		S("wall", 0.8, { style = "tsunami", at = "o", len = 62, w = 15, dur = 1.6, dmg = 5, once = true, push = 6, slow = 1.5, sm = 0.6 }),
+		S("pull", 1.6, { style = "whirlpool", at = "o", fw = 50, r = 15, dur = 2.0, ticks = 8, dmg = 0.9, pull = 14, slow = 1, sm = 0.5 }),
+		S("hit", 3.6, { style = "water", at = "o", fw = 50, r = 16, dmg = 6, push = 5, stun = 1.2, crit = true }),
+	} }
+
+-- T4 Voidfang: execution
+R.sw_void = { icon = "🌑", cd = 50, lock = 3.6, range = 42, healCap = 0.2,
+	desc = "Разрыв Бездны затягивает врагов, затем казнь: добивающий удар втрое сильнее по раненым, лечит владельца.",
+	steps = {
+		S("sky", 0, { style = "portal", r = 20, dur = 3.4 }),
+		S("tele", 0, { style = "rune", r = 20, dur = 2.2 }),
+		S("pull", 0, { style = "blackhole", r = 20, dur = 2.2, ticks = 8, dmg = 0.9, pull = 14, ls = 0.004 }),
+		S("hit", 2.2, { style = "void", r = 20, dmg = 8, stun = 1.5, exec = 0.35, execMul = 2.5, ls = 0.01, crit = true }),
+		S("beam", 2.35, { style = "void", at = "t", arms = 2, spread = 180, len = 30, w = 3.5, dur = 0.5, ticks = 2, dmg = 3 }),
+		S("heal", 2.4, { pct = 0.08 }),
+	} }
+
+-- T4 Thunder Reaver: lightning dashes + storm
+R.sw_thunder = { icon = "⚡", cd = 50, lock = 4.2, range = 42,
+	desc = "Серия молниеносных рывков сквозь врагов, затем грозовая туча осыпает арену ударами молний.",
+	steps = {
+		S("dash", 0, { style = "lightning", to = "nearest", dist = 30, dur = 0.2, w = 5, dmg = 3.5, stun = 0.5 }),
+		S("dash", 0.4, { style = "lightning", to = "nearest", dist = 30, dur = 0.2, w = 5, dmg = 3.5, stun = 0.5 }),
+		S("dash", 0.8, { style = "lightning", to = "nearest", dist = 30, dur = 0.2, w = 5, dmg = 3.5, stun = 0.5 }),
+		S("dash", 1.2, { style = "lightning", to = "nearest", dist = 30, dur = 0.2, w = 5, dmg = 3.5, stun = 0.5, fin = 9, finDmg = 2.5, finStyle = "bolt" }),
+		S("sky", 1.6, { style = "cloud", at = "c", r = 28, dur = 3.2 }),
+		S("rain", 1.7, { obj = "none", style = "bolt", at = "c", ar = 28, n = 10, nc = 2, mode = "enemies", over = 2.2, fall = 0.3, r = 6, dmg = 2.6, stun = 0.5, im = 0.8 }),
+		S("nova", 4.0, { style = "shock", at = "c", r0 = 3, r = 26, dur = 0.7, dmg = 4, stun = 1.0 }),
+	} }
+
+-- T5 Solar Excalibur: dawn
+R.sw_solar = { icon = "☀️", cd = 55, lock = 4.4, range = 42, healCap = 0.2,
+	desc = "Восход: тьма сменяется светом, четыре луча вращаются вокруг цели, с неба падает золотой клинок и святая волна лечит владельца.",
+	steps = {
+		S("screen", 0, { dark = 0.45, dc = "k", hold = 1.2, tin = 0.3, tout = 0.8 }),
+		S("tele", 0, { style = "star", r = 24, dur = 1.4 }),
+		S("sky", 0, { style = "sun", r = 26, dur = 3.4 }),
+		S("beam", 1.4, { style = "holy", at = "t", arms = 4, spread = 90, sweep = 360, len = 30, w = 3.2, dur = 2.0, ticks = 12, dmg = 1.8 }),
+		S("drop", 2.6, { obj = "sword", scale = 3.0, fall = 0.9, style = "holy", r = 20, dmg = 9, stun = 2, push = 4, crit = true }),
+		S("nova", 3.6, { style = "holy", r0 = 3, r = 34, dur = 0.9, dmg = 5, flash = true }),
+		S("heal", 3.6, { pct = 0.12, style = "phoenix" }),
+	} }
+
+-- T5 Phoenix Dawnblade: rebirth
+R.sw_phoenix = { icon = "🔥", cd = 55, lock = 4.2, range = 42, healCap = 0.4,
+	desc = "Возрождение: владелец восстанавливает здоровье и неуязвим, два феникса пролетают через арену, с неба падают угли.",
+	steps = {
+		S("heal", 0, { pct = 0.3, inv = 1.6, style = "phoenix" }),
+		S("nova", 0.15, { style = "fire", at = "c", r0 = 2, r = 18, dur = 0.6, dmg = 5, burn = 0.8, push = 4 }),
+		S("wall", 0.7, { style = "phoenix", at = "c", len = 64, w = 11, dur = 1.5, dmg = 6, once = true, burn = 0.8 }),
+		S("rain", 0.9, { obj = "ember", style = "fire", at = "c", ar = 26, n = 18, nc = 3, over = 2.4, fall = 0.7, r = 5, dmg = 1.6, burn = 0.5, scale = 0.8 }),
+		S("wall", 2.4, { style = "phoenix", at = "o", fw = 64, ang = 180, len = 64, w = 11, dur = 1.5, dmg = 6, once = true, burn = 0.8 }),
+		S("hit", 4.0, { style = "fire", at = "c", r = 20, dmg = 4, crit = true, burn = 0.6 }),
+	} }
+
+-- T6 Abyssal Eclipse: black sun
+R.sw_eclipse = { icon = "🌘", cd = 60, lock = 5.8, range = 42, healCap = 0.2,
+	desc = "Над целью восходит чёрное солнце, Бездна затягивает врагов, алые лучи вращаются, затем затмение рушится вниз.",
+	steps = {
+		S("screen", 0, { dark = 0.7, dc = "k", hold = 4.8, tin = 0.6, tout = 1.0 }),
+		S("sky", 0, { style = "eclipse", r = 30, dur = 5.2 }),
+		S("tele", 0, { style = "rune", r = 28, dur = 1.5 }),
+		S("heal", 0.2, { inv = 1.5 }),
+		S("pull", 1.2, { style = "blackhole", r = 28, dur = 3.0, ticks = 10, dmg = 1.0, pull = 16, ls = 0.003 }),
+		S("beam", 1.8, { style = "void", at = "t", arms = 6, spread = 60, sweep = 180, len = 34, w = 3, dur = 2.2, ticks = 14, dmg = 1.5 }),
+		S("hit", 4.2, { style = "void", r = 26, dmg = 7, stun = 2.0, crit = true, ls = 0.01 }),
+		S("nova", 4.4, { style = "void", r0 = 3, r = 42, dur = 1.0, dmg = 6, stun = 1.5, exec = 0.3, flash = true }),
+		S("heal", 4.5, { pct = 0.1 }),
+	} }
+
+-- T6 Infernal Reaper: scythes + hellfire
+R.sw_reaper = { icon = "💀", cd = 60, lock = 5.2, range = 42,
+	desc = "Призрачные косы кружат вокруг владельца, на врагов падают пылающие черепа, пол арены горит адским огнём.",
+	steps = {
+		S("tele", 0, { style = "rune", at = "c", r = 26, dur = 0.8 }),
+		S("orbit", 0.8, { obj = "scythe", n = 3, nc = 0.5, rad = 11, dur = 3.6, speed = 5, hitR = 6.5, ticks = 14, dmg = 1.3, burn = 0.5, size = 0.85 }),
+		S("zone", 0.8, { style = "fire", at = "c", r = 24, dur = 4, ticks = 10, dmg = 0.6, burn = 0.5 }),
+		S("rain", 1.2, { obj = "skull", style = "fire", at = "c", ar = 26, n = 14, nc = 2, mode = "enemies", over = 3.0, fall = 0.8, r = 6, dmg = 2.2, burn = 0.5, scale = 0.9 }),
+		S("nova", 4.4, { style = "fire", at = "c", r0 = 3, r = 30, dur = 0.8, dmg = 4, burn = 0.8 }),
+		S("hit", 4.5, { style = "fire", at = "c", r = 24, dmg = 8, stun = 1.5, crit = true }),
+	} }
+
+-- T7 Prismatic Singularity: End of Colors (secret)
+R.sw_prism = { icon = "🌈", cd = 70, lock = 7.0, range = 42, healCap = 0.15,
+	desc = "Конец цветов: призматическое ядро, семь вращающихся радужных лучей, сингулярность, каскад цветных ударных волн и белая вспышка.",
+	steps = {
+		S("screen", 0, { dark = 0.55, dc = "k", hold = 5.6, tin = 0.6, tout = 1.2 }),
+		S("tele", 0, { style = "rune", r = 30, dur = 1.6 }),
+		S("sky", 0, { style = "prismcore", r = 30, dur = 6.4 }),
+		S("heal", 0.2, { inv = 2.2 }),
+		S("pull", 1.4, { style = "galaxy", r = 32, dur = 2.8, ticks = 10, dmg = 0.7, pull = 20, ls = 0.002 }),
+		S("beam", 1.6, { style = "prism", at = "t", arms = 7, spread = 51.43, sweep = 360, len = 36, w = 3.2, dur = 2.6, ticks = 16, dmg = 1.4 }),
+		S("nova", 4.3, { style = "prism", r0 = 2, r = 34, dur = 0.9, rings = 7, stagger = 0.07, dmg = 6, flash = true }),
+		S("hit", 4.5, { style = "prism", r = 26, dmg = 8, stun = 3, crit = true }),
+		S("rain", 4.7, { obj = "crystal", style = "prism", ar = 34, n = 22, nc = 5, mode = "enemies", over = 1.6, fall = 0.7, r = 6, dmg = 2, scale = 0.9 }),
+		S("nova", 5.0, { style = "prism", r0 = 2, r = 46, dur = 1.1, rings = 5, stagger = 0.1, dmg = 5, stun = 2 }),
+		S("hit", 6.3, { style = "star", r = 38, dmg = 10, crit = true, big = true, stun = 2 }),
+		S("screen", 6.3, { flash = 1, fc = "w", fd = 1.1, shake = 2.4, sd = 1.2 }),
+	} }
+
+-- =====================================================================================================
+-- BOWS
+-- =====================================================================================================
+
+-- T2 Verdant Longbow: piercing nature lance
+R.bw_verdant = { icon = "🏹", cd = 45, lock = 2.2, range = 40,
+	desc = "Зелёное копьё пронзает всю линию, на конце расцветает взрыв, затем веер стрел с шипами.",
+	steps = {
+		S("muzzle", 0, { dur = 0.7 }),
+		S("tele", 0, { style = "line", at = "o", len = 70, w = 5, dur = 0.6 }),
+		S("beam", 0.6, { style = "nature", at = "o", len = 70, w = 3, dur = 0.5, ticks = 3, dmg = 1.6, stun = 0.6 }),
+		S("hit", 1.0, { style = "bloom", at = "o", fw = 66, r = 12, dmg = 5, slow = 3, sm = 0.5 }),
+		S("zone", 1.0, { style = "nature", at = "o", fw = 66, r = 12, dur = 3.5, ticks = 7, dmg = 0.5, slow = 1.2, sm = 0.5 }),
+		S("volley", 1.2, { pattern = "fan", n = 7, nc = 1, spread = 50, dmg = 1.8 }),
+	} }
+
+-- T2 Sylvan Reflex: rain of arrows
+R.bw_sylvan = { icon = "🍃", cd = 45, lock = 2.8, range = 44,
+	desc = "Облако стрел с листвой обрушивается на область, оставляя поле тернистой лозы.",
+	steps = {
+		S("tele", 0, { style = "circle", r = 18, dur = 0.7 }),
+		S("rain", 0.7, { obj = "arrow", style = "bloom", ar = 18, n = 34, nc = 4, over = 1.8, fall = 0.55, r = 4.2, dmg = 1.8, slow = 1.5, sm = 0.6, scale = 0.7 }),
+		S("zone", 0.7, { style = "nature", r = 18, dur = 3.5, ticks = 7, dmg = 0.5, slow = 1.2, sm = 0.5 }),
+		S("hit", 2.8, { style = "bloom", r = 18, dmg = 6, crit = true, push = 2 }),
+	} }
+
+-- T3 Glacier Bow: ice lance
+R.bw_glacier = { icon = "❄️", cd = 48, lock = 2.8, range = 42,
+	desc = "Гигантское ледяное копьё замораживает линию, из земли вырастают ледяные шипы, затем веер ледяных стрел.",
+	steps = {
+		S("muzzle", 0, { dur = 0.8 }),
+		S("tele", 0, { style = "line", at = "o", len = 78, w = 5, dur = 0.8 }),
+		S("beam", 0.8, { style = "ice", at = "o", len = 78, w = 3.8, dur = 0.7, ticks = 3, dmg = 1.8, stun = 1.6, slow = 3, sm = 0.4 }),
+		S("wall", 0.8, { style = "glacier", at = "o", len = 78, w = 5, dur = 0.8, dmg = 3, once = true, stun = 1 }),
+		S("volley", 1.6, { pattern = "fan", n = 9, nc = 2, spread = 70, dmg = 2.0 }),
+		S("hit", 2.0, { style = "ice", at = "o", fw = 60, r = 14, dmg = 5, crit = true, slow = 3, sm = 0.4 }),
+	} }
+
+-- T3 Azure Gale: sweeping wind cutter
+R.bw_gale = { icon = "🌪️", cd = 48, lock = 4.2, range = 42,
+	desc = "Поток ветра разворачивается веером вперёд и назад, отбрасывая врагов, и завершается кольцом стрел.",
+	steps = {
+		S("tele", 0, { style = "rune", at = "c", r = 14, dur = 0.6 }),
+		S("beam", 0.6, { style = "gale", at = "c", ang0 = -90, sweep = 180, len = 50, w = 5.5, dur = 1.6, ticks = 12, dmg = 1.5, push = 3 }),
+		S("nova", 2.3, { style = "ring", at = "c", r0 = 2, r = 26, dur = 0.8, dmg = 3, push = 8 }),
+		S("beam", 2.3, { style = "gale", at = "c", ang0 = 90, sweep = -180, len = 50, w = 5.5, dur = 1.6, ticks = 12, dmg = 1.5, push = 3 }),
+		S("volley", 3.9, { pattern = "ring", n = 18, nc = 3, dmg = 1.6 }),
+	} }
+
+-- T4 Stormcaller: tempest lance
+R.bw_storm = { icon = "🌩️", cd = 50, lock = 4.2, range = 44,
+	desc = "Громовое копьё прошивает арену, молнии перепрыгивают между врагами, грозовая туча бьёт молниями.",
+	steps = {
+		S("sky", 0, { style = "cloud", r = 28, dur = 3.6 }),
+		S("tele", 0, { style = "line", at = "o", len = 85, w = 5, dur = 0.9 }),
+		S("beam", 0.9, { style = "lightning", at = "o", len = 85, w = 4, dur = 0.7, ticks = 4, dmg = 1.7, stun = 0.8 }),
+		S("chain", 1.0, { style = "lightning", at = "o", n = 8, nc = 1, jr = 20, dmg = 2.4, range = 60 }),
+		S("rain", 1.4, { obj = "none", style = "bolt", ar = 26, n = 12, nc = 1, mode = "enemies", over = 1.8, fall = 0.3, r = 5, dmg = 2.4, stun = 0.5, im = 0.8 }),
+		S("nova", 3.4, { style = "shock", r0 = 3, r = 22, dur = 0.7, dmg = 4, stun = 1.0 }),
+	} }
+
+-- T4 Nightshade Arc: night falls
+R.bw_night = { icon = "🌙", cd = 50, lock = 4.0, range = 44, healCap = 0.15,
+	desc = "Наступает ночь: луна, широкий веер луча Тьмы, падающие звёзды и поле ночи, лечащее лучника.",
+	steps = {
+		S("screen", 0, { dark = 0.6, dc = "k", hold = 3.6, tin = 0.5, tout = 0.9 }),
+		S("sky", 0, { style = "moon", r = 26, dur = 4.2 }),
+		S("muzzle", 0, { dur = 0.8 }),
+		S("beam", 0.9, { style = "void", at = "c", ang0 = -50, sweep = 100, len = 80, w = 4.5, dur = 1.8, ticks = 12, dmg = 1.2, ls = 0.003 }),
+		S("zone", 0.8, { style = "night", r = 20, dur = 4, ticks = 8, dmg = 0.5, slow = 1.2, sm = 0.5 }),
+		S("rain", 1.6, { obj = "star", style = "star", ar = 26, n = 14, nc = 2, mode = "enemies", over = 2.0, fall = 0.7, r = 5, dmg = 2.0, scale = 0.8 }),
+		S("heal", 3.4, { pct = 0.06 }),
+	} }
+
+-- T5 Dawn Piercer: radiant end
+R.bw_dawn = { icon = "✨", cd = 55, lock = 4.2, range = 44,
+	desc = "Святой луч через всю арену, сверху падают копья света, а на конце луча взрывается звезда.",
+	steps = {
+		S("muzzle", 0, { dur = 1.0 }),
+		S("tele", 0, { style = "line", at = "o", len = 90, w = 6, dur = 1.0 }),
+		S("beam", 1.0, { style = "holy", at = "o", len = 90, w = 6, dur = 1.0, ticks = 5, dmg = 2.0, stun = 1.2 }),
+		S("rain", 1.0, { obj = "lance", style = "holy", ar = 28, n = 12, nc = 2, mode = "enemies", over = 1.6, fall = 0.6, r = 5.5, dmg = 2.4, scale = 0.9 }),
+		S("spokes", 2.2, { style = "ray", at = "o", fw = 70, n = 12, len = 22, w = 3, dur = 0.7, dmg = 2.5 }),
+		S("hit", 2.3, { style = "holy", at = "o", fw = 70, r = 16, dmg = 6, crit = true, big = true }),
+		S("nova", 2.6, { style = "holy", at = "o", fw = 70, r0 = 3, r = 30, dur = 0.8, dmg = 3 }),
+	} }
+
+-- T5 Emberwing: fire cataclysm
+R.bw_ember = { icon = "☄️", cd = 55, lock = 4.6, range = 44,
+	desc = "Спираль горящих стрел, огромный метеор-стрела, стена огня и поле пламени.",
+	steps = {
+		S("muzzle", 0, { dur = 0.8 }),
+		S("volley", 0.3, { pattern = "spiral", n = 24, nc = 2, turns = 2, over = 1.4, dmg = 1.8, speed = 1.0 }),
+		S("drop", 1.0, { obj = "meteor", scale = 3.0, fall = 1.2, style = "fire", r = 18, dmg = 9, burn = 1.2, stun = 1.5, crit = true }),
+		S("wall", 2.0, { style = "firewall", at = "c", len = 60, w = 12, dur = 1.4, dmg = 4, once = true, burn = 0.8 }),
+		S("zone", 2.2, { style = "fire", r = 16, dur = 3, ticks = 6, dmg = 0.6, burn = 0.5 }),
+	} }
+
+-- T6 Phoenix Wing: ascension
+R.bw_phoenix = { icon = "🦅", cd = 60, lock = 5.0, range = 44, healCap = 0.35,
+	desc = "Вознесение: огненный столп исцеляет лучника, феникс пролетает туда и обратно, дождь горящих стрел.",
+	steps = {
+		S("heal", 0, { pct = 0.25, inv = 1.5, style = "phoenix" }),
+		S("hit", 0.2, { style = "pillar", at = "c", r = 14, dmg = 4, burn = 0.6, push = 4 }),
+		S("screen", 0.2, { flash = 0.7, fc = "a", shake = 1.2 }),
+		S("wall", 0.6, { style = "phoenix", at = "c", len = 70, w = 13, dur = 1.5, dmg = 6, once = true, burn = 0.8 }),
+		S("rain", 0.8, { obj = "arrow", style = "fire", ar = 30, n = 30, nc = 4, over = 2.4, fall = 0.55, r = 5, dmg = 1.6, burn = 0.5, scale = 0.9 }),
+		S("wall", 2.4, { style = "phoenix", at = "o", fw = 70, ang = 180, len = 70, w = 13, dur = 1.5, dmg = 6, once = true, burn = 0.8 }),
+		S("nova", 3.9, { style = "fire", at = "c", r0 = 3, r = 34, dur = 0.9, dmg = 6, burn = 0.8, flash = true }),
+	} }
+
+-- T6 Bloodmoon Harbinger: requiem
+R.bw_blood = { icon = "🩸", cd = 60, lock = 6.0, range = 44, healCap = 0.25,
+	desc = "Восходит кровавая луна, на врагов обрушиваются кровавые копья, вращающиеся лучи и вампирическая волна.",
+	steps = {
+		S("screen", 0, { dark = 0.55, dc = "a", hold = 5.0, tin = 0.6, tout = 1.0 }),
+		S("sky", 0, { style = "moon", r = 32, dur = 5.6 }),
+		S("tele", 0, { style = "rune", r = 26, dur = 1.2 }),
+		S("rain", 1.2, { obj = "lance", style = "blood", ar = 30, n = 26, nc = 3, mode = "enemies", over = 3.0, fall = 0.7, r = 5, dmg = 2.0, ls = 0.002, scale = 0.9 }),
+		S("beam", 2.0, { style = "blood", at = "t", arms = 3, spread = 120, sweep = 360, len = 36, w = 2.8, dur = 2.4, ticks = 16, dmg = 1.2, ls = 0.002 }),
+		S("nova", 4.8, { style = "void", r0 = 3, r = 40, dur = 1.0, dmg = 7, stun = 2, flash = true }),
+		S("hit", 4.9, { style = "blood", r = 24, dmg = 6, crit = true }),
+		S("heal", 5.0, { pct = 0.1 }),
+	} }
+
+-- T7 Cosmic Nova: birth of a star (secret)
+R.bw_nova = { icon = "🌟", cd = 70, lock = 6.6, range = 44, healCap = 0.1,
+	desc = "Рождение звезды: над целью растёт звезда, галактика затягивает врагов, сверху падают кометы, сверхновая заливает арену светом.",
+	steps = {
+		S("screen", 0, { dark = 0.45, dc = "k", hold = 5.4, tin = 0.6, tout = 1.2 }),
+		S("tele", 0, { style = "rune", r = 30, dur = 1.4 }),
+		S("muzzle", 0, { dur = 0.8 }),
+		S("sky", 0.4, { style = "star", r = 28, dur = 4.0 }),
+		S("pull", 1.4, { style = "galaxy", r = 34, dur = 3.0, ticks = 10, dmg = 0.7, pull = 18 }),
+		S("rain", 1.6, { obj = "comet", style = "star", ar = 34, n = 24, nc = 4, mode = "enemies", over = 2.6, fall = 0.7, r = 6, dmg = 1.6, scale = 0.9 }),
+		S("spokes", 4.3, { style = "ray", n = 16, len = 40, w = 3, dur = 0.8, dmg = 4 }),
+		S("nova", 4.4, { style = "prism", r0 = 3, r = 50, dur = 1.2, rings = 5, stagger = 0.1, dmg = 8, stun = 3, flash = true }),
+		S("hit", 4.5, { style = "star", r = 30, dmg = 12, crit = true, big = true }),
+		S("screen", 4.5, { flash = 1, fc = "w", fd = 1.1, shake = 2.2, sd = 1.1 }),
+	} }
+
+-- =====================================================================================================
+-- STAFFS
+-- =====================================================================================================
+
+-- T2 Jade Rod: crystal earthquake
+R.st_jade = { icon = "💎", cd = 45, lock = 2.4, range = 44,
+	desc = "Земля раскалывается: волны нефритовых кристаллов расходятся кольцами от центра.",
+	steps = {
+		S("tele", 0, { style = "circle", r = 10, dur = 0.5 }),
+		S("nova", 0.5, { style = "spikes", variant = "crystal", r0 = 2, r = 22, dur = 0.9, dmg = 5, stun = 1, push = 2 }),
+		S("hit", 0.5, { style = "spikes", variant = "crystal", r = 8, dmg = 4, crit = true }),
+		S("nova", 1.7, { style = "spikes", variant = "crystal", r0 = 2, r = 28, dur = 1.0, dmg = 4, push = 2 }),
+	} }
+
+-- T2 Verdant Crook: overgrowth storm
+R.st_crook = { icon = "🌳", cd = 45, lock = 3.0, range = 44,
+	desc = "Шипастый вихрь затягивает врагов, разрастающиеся тернии замедляют, финальный взрыв цветения.",
+	steps = {
+		S("pull", 0, { style = "thorn", r = 17, dur = 2.6, ticks = 8, dmg = 0.8, pull = 8, slow = 1, sm = 0.5 }),
+		S("zone", 0, { style = "thorns", r = 17, dur = 4.5, ticks = 9, dmg = 0.4, slow = 1.2, sm = 0.5 }),
+		S("hit", 2.6, { style = "bloom", r = 17, dmg = 6, stun = 1.5, crit = true }),
+	} }
+
+-- T3 Aqua Scepter: deluge
+R.st_aqua = { icon = "🌊", cd = 48, lock = 5.2, range = 44,
+	desc = "Потоп: две волны смывают врагов, водоворот затягивает уцелевших, финальный гейзер.",
+	steps = {
+		S("zone", 0.4, { style = "water", r = 26, dur = 5, ticks = 10, dmg = 0.6, slow = 1.2, sm = 0.55 }),
+		S("nova", 0.4, { style = "water", r0 = 2, r = 26, dur = 0.8, dmg = 3, push = 4 }),
+		S("rain", 0.4, { obj = "orb", style = "water", ar = 24, n = 20, nc = 2, over = 4, fall = 0.6, r = 4, dmg = 1, scale = 0.45 }),
+		S("nova", 1.9, { style = "water", r0 = 2, r = 28, dur = 0.8, dmg = 3, push = 4 }),
+		S("pull", 3.0, { style = "whirlpool", r = 20, dur = 2.0, ticks = 8, dmg = 0.7, pull = 10 }),
+		S("hit", 5.0, { style = "water", r = 24, dmg = 6, stun = 1.5, crit = true, push = 4 }),
+	} }
+
+-- T3 Cyan Prism Staff: prism meteorfall
+R.st_prism = { icon = "🔷", cd = 48, lock = 3.6, range = 44,
+	desc = "Дождь ледяных призм-метеоритов, созвездие молний-звёзд и финальная вспышка призмы.",
+	steps = {
+		S("tele", 0, { style = "circle", r = 22, dur = 0.7 }),
+		S("rain", 0.7, { obj = "crystal", style = "ice", ar = 22, n = 16, nc = 2, over = 2.2, fall = 1.0, r = 7, dmg = 2.4, slow = 2, sm = 0.5, scale = 1.0 }),
+		S("chain", 1.6, { style = "star", at = "t", n = 6, nc = 1, jr = 22, dmg = 2, stun = 0.5 }),
+		S("hit", 3.4, { style = "star", r = 22, dmg = 5, stun = 1.2, crit = true }),
+	} }
+
+-- T4 Amethyst Arcana: arcane collapse
+R.st_amethyst = { icon = "🔮", cd = 50, lock = 3.8, range = 44,
+	desc = "Аркановые сферы кружат вокруг мага и разлетаются лучами, портал схлопывается гравитационным коллапсом.",
+	steps = {
+		S("sky", 0, { style = "portal", r = 22, dur = 3.6 }),
+		S("tele", 0, { style = "rune", r = 22, dur = 1.0 }),
+		S("orbit", 0, { obj = "orb", n = 4, nc = 0.5, rad = 8, dur = 2.5, speed = 4, hitR = 5, ticks = 8, dmg = 1.0, size = 0.8 }),
+		S("spokes", 2.5, { style = "ray", at = "c", n = 8, nc = 1, len = 30, w = 2.5, dur = 0.6, dmg = 2.5 }),
+		S("pull", 1.0, { style = "arcane", r = 22, dur = 2.4, ticks = 8, dmg = 0.9, pull = 12 }),
+		S("hit", 3.4, { style = "arcane", r = 22, dmg = 8, stun = 2, crit = true }),
+	} }
+
+-- T4 Stormspire: tempest
+R.st_spire = { icon = "🗼", cd = 50, lock = 5.0, range = 44,
+	desc = "Громовой шпиль бьёт в цель, над ареной висит буря, молнии бьют по врагам и перепрыгивают между ними.",
+	steps = {
+		S("sky", 0, { style = "cloud", r = 30, dur = 5 }),
+		S("tele", 0, { style = "circle", r = 8, dur = 0.6 }),
+		S("hit", 0.6, { style = "bolt", r = 8, dmg = 5, stun = 1, crit = true, big = true }),
+		S("rain", 0.8, { obj = "none", style = "bolt", ar = 30, n = 18, nc = 3, mode = "enemies", over = 3.5, fall = 0.3, r = 5, dmg = 2.2, stun = 0.4, im = 0.8 }),
+		S("chain", 2.0, { style = "lightning", at = "t", n = 8, nc = 1, jr = 20, dmg = 2 }),
+		S("nova", 4.6, { style = "shock", r0 = 3, r = 30, dur = 0.8, dmg = 5, stun = 1.2 }),
+	} }
+
+-- T5 Sunfire Scepter: armageddon
+R.st_sunfire = { icon = "🌞", cd = 55, lock = 5.0, range = 44,
+	desc = "С небес опускается миниатюрное солнце, затем метеоры, солнечные вспышки и поле пламени.",
+	steps = {
+		S("tele", 0, { style = "rune", r = 26, dur = 1.8 }),
+		S("drop", 0.2, { obj = "sun", scale = 1.4, fall = 1.8, style = "fire", r = 26, dmg = 11, stun = 2, burn = 1.2, crit = true, tele = "star" }),
+		S("zone", 2.0, { style = "fire", r = 26, dur = 4, ticks = 8, dmg = 0.7, burn = 0.5 }),
+		S("rain", 2.2, { obj = "meteor", style = "fire", ar = 30, n = 14, nc = 2, mode = "enemies", over = 2.4, fall = 0.9, r = 7, dmg = 2.4, burn = 0.6, scale = 1.0 }),
+		S("spokes", 2.0, { style = "ray", n = 12, nc = 1, len = 34, w = 3, dur = 0.7, dmg = 3 }),
+	} }
+
+-- T5 Astral Lantern: judgement
+R.st_lantern = { icon = "🏮", cd = 55, lock = 5.0, range = 44, healCap = 0.1,
+	desc = "Звёздный фонарь повисает над ареной, созвездие соединяет врагов, лучи суда падают на каждого.",
+	steps = {
+		S("sky", 0, { style = "lantern", r = 24, dur = 4.8 }),
+		S("tele", 0, { style = "star", r = 24, dur = 1.3 }),
+		S("chain", 1.3, { style = "star", at = "t", n = 10, nc = 2, jr = 22, dmg = 3, stun = 0.8 }),
+		S("rain", 1.5, { obj = "lance", style = "holy", ar = 26, n = 16, nc = 2, mode = "enemies", over = 2.2, fall = 0.55, r = 5, dmg = 2.2, stun = 0.6, scale = 0.9 }),
+		S("spokes", 3.6, { style = "ray", n = 10, len = 34, w = 3, dur = 0.7, dmg = 3 }),
+		S("hit", 3.8, { style = "holy", r = 24, dmg = 8, stun = 2, crit = true, big = true }),
+		S("heal", 3.9, { pct = 0.08 }),
+	} }
+
+-- T6 Nether Crown: apocalypse
+R.st_nether = { icon = "👑", cd = 60, lock = 6.0, range = 44, healCap = 0.1,
+	desc = "Корона Бездны над магом, три волны духов, портал-воронка и апокалиптический коллапс.",
+	steps = {
+		S("screen", 0, { dark = 0.55, dc = "k", hold = 5.0, tin = 0.6, tout = 1.0 }),
+		S("sky", 0, { style = "crown", at = "c", dur = 4.0 }),
+		S("sky", 0.2, { style = "portal", r = 26, dur = 5 }),
+		S("heal", 0.3, { inv = 1.5 }),
+		S("wall", 1.0, { style = "spirits", at = "c", ang = -35, len = 55, w = 8, dur = 1.5, dmg = 5, once = true, slow = 1.5, sm = 0.6 }),
+		S("wall", 1.0, { style = "spirits", at = "c", ang = 0, len = 55, w = 8, dur = 1.5, dmg = 5, once = true, slow = 1.5, sm = 0.6 }),
+		S("wall", 1.0, { style = "spirits", at = "c", ang = 35, len = 55, w = 8, dur = 1.5, dmg = 5, once = true, slow = 1.5, sm = 0.6 }),
+		S("pull", 1.8, { style = "blackhole", r = 26, dur = 2.8, ticks = 10, dmg = 0.9, pull = 16, ls = 0.003 }),
+		S("hit", 4.6, { style = "void", r = 26, dmg = 8, stun = 2.5, crit = true }),
+		S("nova", 4.7, { style = "void", r0 = 3, r = 42, dur = 1.0, dmg = 6, exec = 0.3, flash = true }),
+	} }
+
+-- T6 Hellfire Pyre: ragnarok
+R.st_pyre = { icon = "🌋", cd = 60, lock = 6.0, range = 44,
+	desc = "Раскол ада: огненные шипы расходятся от центра, огненный смерч, метеориты и озеро лавы.",
+	steps = {
+		S("tele", 0, { style = "rune", r = 28, dur = 1.0 }),
+		S("nova", 1.0, { style = "spikes", variant = "flame", r0 = 3, r = 30, dur = 1.0, dmg = 6, burn = 0.8, push = 2 }),
+		S("zone", 1.0, { style = "fire", r = 30, dur = 5, ticks = 10, dmg = 0.7, burn = 0.5 }),
+		S("rain", 1.2, { obj = "meteor", style = "fire", ar = 30, n = 18, nc = 3, mode = "enemies", over = 3.0, fall = 0.9, r = 8, dmg = 2.4, burn = 0.6, scale = 1.1 }),
+		S("pull", 1.5, { style = "fire", r = 22, dur = 3.0, ticks = 10, dmg = 0.9, pull = 10, burn = 0.5 }),
+		S("hit", 4.6, { style = "fire", r = 32, dmg = 9, stun = 2, crit = true, burn = 1.0 }),
+		S("nova", 4.8, { style = "fire", r0 = 3, r = 44, dur = 1.0, dmg = 5, flash = true }),
+	} }
+
+-- T7 Galaxy Weaver: heat death (secret)
+R.st_galaxy = { icon = "🌌", cd = 70, lock = 7.4, range = 44, healCap = 0.1,
+	desc = "Тепловая смерть: галактика раскручивается над ареной, дождь звёзд по спирали, сингулярность и волна, замораживающая время.",
+	steps = {
+		S("screen", 0, { dark = 0.5, dc = "k", hold = 6.0, tin = 0.6, tout = 1.3 }),
+		S("tele", 0, { style = "rune", r = 34, dur = 1.4 }),
+		S("sky", 0.2, { style = "galaxy", r = 38, dur = 6.6 }),
+		S("heal", 0.3, { inv = 2.0 }),
+		S("rain", 1.4, { obj = "star", style = "star", area = "spiral", ar = 38, n = 36, nc = 5, over = 3.5, fall = 0.8, r = 6, dmg = 1.8, scale = 0.9 }),
+		S("pull", 1.6, { style = "galaxy", r = 36, dur = 3.0, ticks = 10, dmg = 0.7, pull = 18 }),
+		S("nova", 4.8, { style = "prism", r0 = 3, r = 50, dur = 1.2, rings = 6, stagger = 0.08, dmg = 8, stun = 3, flash = true }),
+		S("hit", 4.9, { style = "star", r = 34, dmg = 12, crit = true, big = true }),
+		S("screen", 4.9, { flash = 1, fc = "w", fd = 1.2, shake = 2.4, sd = 1.2 }),
+		S("nova", 5.6, { style = "frost", r0 = 3, r = 56, dur = 1.3, dmg = 6, slow = 4, sm = 0.35, stun = 2 }),
+		S("hit", 6.4, { style = "ice", r = 36, dmg = 6, crit = true }),
+	} }
+
+-- ------------------------------------------------------------ API
+Recipes.list = R
+function Recipes.get(weaponId, tier)
+	if tier and tier < Recipes.MinTier then return nil end
+	return R[weaponId]
+end
+
+return Recipes
+]]></ProtectedString>
+</Properties>
+</Item>
 </Item>
 <Item class="ServerScriptService" referent="RBX10">
 <Properties>
@@ -2558,6 +3010,13 @@ local Config = require(RS:WaitForChild("Config"))
 local Sprites = require(script:WaitForChild("Sprites"))
 local MapBuilder = require(script:WaitForChild("MapBuilder"))
 local WM = require(RS:WaitForChild("WeaponModels"))
+-- [ULTS] unique Z ultimate for every weapon of tier 2+ (recipes in ReplicatedStorage.UltRecipes, executor in UltServer)
+local UltRecipes = require(RS:WaitForChild("UltRecipes"))
+local UltServer
+do
+	local okU, resU = pcall(function() return require(script:WaitForChild("UltServer")) end)
+	if okU then UltServer = resU else warn("[UltServer] " .. tostring(resU)) end
+end
 Sprites.themed = WM -- rarity based weapon models
 
 -- [TESTAREA] optional weapon test place. Delete the "TestArea" module (and the TestAreaClient LocalScript) to remove it.
@@ -4353,6 +4812,16 @@ ABIL.Mage.Z = function(run, p, st, ws, hrp, px, pz, dx, dz, aim)
 	end
 end
 
+-- [ULTS] hand the combat helpers to the ultimate executor
+if UltServer then
+	UltServer.init({
+		Config = Config, runFx = runFx, later = later, enemiesInCircle = enemiesInCircle, damageEnemy = damageEnemy,
+		pushEnemy = pushEnemy, applyCC = applyCC, applyBurn = applyBurn, clampXZ = clampXZ, clampTarget = clampTarget,
+		rot = rot, rnd = rnd, aliveRun = aliveRun, getChar = getChar, spawnProj = spawnProj, swingWeapon = swingWeapon,
+		ToClient = ToClient,
+	})
+end
+
 local function castAbility(p, key)
 	local st = S[p]
 	if not st or type(key) ~= "string" then return end
@@ -4377,6 +4846,8 @@ local function castAbility(p, key)
 	if typeof(aim) ~= "Vector3" then aim = hrp.Position + hrp.CFrame.LookVector * 20 end
 	local wdef = weaponDefOf(p)
 	local ws = Config.weaponStats(cls, d.upg[cls], wdef)
+	-- [ULTS] tier 2+ weapons have their own unique Z ultimate; common (tier 1) weapons keep the class ultimate
+	local recipe = (key == "Z" and UltServer and wdef) and UltRecipes.get(wdef.id, wdef.tier) or nil
 	local px, pz = hrp.Position.X, hrp.Position.Z
 	local dx, dz = aim.X - px, aim.Z - pz
 	local m = math.sqrt(dx * dx + dz * dz)
@@ -4388,11 +4859,16 @@ local function castAbility(p, key)
 	end
 	dx, dz = dx / m, dz / m
 	-- rarer weapons recharge faster
-	local cd = def.cd * ws.cdr
+	local cd = ((recipe and recipe.cd) or def.cd) * ws.cdr
 	st.abCd[key] = now + cd
 	st.lockCast = now + 0.3
 	runFx(run, "Theme", ws.wid)
-	local ok, err = pcall(fn, run, p, st, ws, hrp, px, pz, dx, dz, aim)
+	local ok, err
+	if recipe then
+		ok, err = pcall(UltServer.cast, run, p, st, ws, hrp, px, pz, dx, dz, aim, recipe, wdef)
+	else
+		ok, err = pcall(fn, run, p, st, ws, hrp, px, pz, dx, dz, aim)
+	end
 	if not ok then
 		warn("[ability " .. cls .. key .. "] " .. tostring(err))
 		st.abCd[key] = 0
@@ -6305,6 +6781,589 @@ return TestArea
 ]]></ProtectedString>
 </Properties>
 </Item>
+<Item class="ModuleScript" referent="RBX_ULT2">
+<Properties>
+<string name="Name">UltServer</string>
+<ProtectedString name="Source"><![CDATA[-- UltServer: runs weapon ultimate recipes (ReplicatedStorage.UltRecipes) on the server.
+-- A recipe is a timeline of steps. For every step the server applies damage / crowd control and tells the
+-- clients what to draw with one "UltFx" event: UltFx(kind, weaponId, params).
+local U = {}
+local E -- environment handed over by GameServer
+
+local PI, TAU = math.pi, math.pi * 2
+local atan2 = math.atan2 or math.atan
+
+function U.init(env)
+	E = env
+end
+
+-- ------------------------------------------------------------ helpers
+local function casterPos(ctx)
+	local _, _, r = E.getChar(ctx.p)
+	if r then return r.Position.X, r.Position.Z end
+	return ctx.px, ctx.pz
+end
+
+-- radius scaling by weapon rarity (softened so tier 7 does not leave the screen)
+local function R(ctx, v) return v * (1 + (ctx.ws.rs - 1) * 0.45) end
+local function count(ctx, s, base) return (s.n or base) + math.floor((s.nc or 0) * ctx.ws.cnt) end
+local function D(ctx, mult) return ctx.ws.damage * mult * ctx.ws.am * E.rnd() end
+
+local function wrap(a)
+	while a > PI do a = a - TAU end
+	while a < -PI do a = a + TAU end
+	return a
+end
+
+-- anchor point of a step: "t" = aim target, "c" = caster (live), "o" = where the cast started
+local function anchor(ctx, s, default)
+	local at = s.at or default or "t"
+	local x, z
+	if at == "c" then
+		x, z = casterPos(ctx)
+	elseif at == "o" then
+		x, z = ctx.px, ctx.pz
+	else
+		x, z = ctx.tx, ctx.tz
+	end
+	local fw, rt = s.fw or 0, s.rt or 0
+	if fw ~= 0 or rt ~= 0 then
+		x = x + ctx.dx * fw - ctx.dz * rt
+		z = z + ctx.dz * fw + ctx.dx * rt
+		x, z = E.clampXZ(ctx.run, x, z)
+	end
+	return x, z
+end
+
+local function dirOf(ctx, s)
+	local a = math.rad(s.ang or 0)
+	if a == 0 then return ctx.dx, ctx.dz end
+	return E.rot(ctx.dx, ctx.dz, a)
+end
+
+local function fx(ctx, kind, d)
+	E.runFx(ctx.run, "UltFx", kind, ctx.wid, d)
+end
+
+local function healCaster(ctx, pct)
+	local cap = ctx.recipe.healCap or 0.35
+	local give = math.min(pct, cap - ctx.healed)
+	if give <= 0 then return end
+	ctx.healed = ctx.healed + give
+	local _, h = E.getChar(ctx.p)
+	if h and h.Health > 0 then h.Health = math.min(h.MaxHealth, h.Health + h.MaxHealth * give) end
+end
+
+-- one hit on one enemy with all the optional extras of a step
+local function hurt(ctx, e, mult, s, ox, oz, noProc)
+	if e.dead then return end
+	local m = mult
+	if s.exec and e.hp < e.maxHp * s.exec then m = m * (s.execMul or 2.5) end
+	E.damageEnemy(ctx.run, e, D(ctx, m), ctx.p, s.crit or false, noProc)
+	if s.ls then healCaster(ctx, s.ls) end
+	if e.dead then return end
+	if s.push then E.pushEnemy(ctx.run, e, e.x - ox, e.z - oz, s.push) end
+	if s.stun or s.slow then E.applyCC(e, s.stun or 0, s.slow, s.sm) end
+	if s.burn then E.applyBurn(e, ctx.ws.damage * s.burn, s.burnT or 3, ctx.p) end
+end
+
+local function shuffle(t)
+	for i = #t, 2, -1 do
+		local j = math.random(i)
+		t[i], t[j] = t[j], t[i]
+	end
+end
+
+-- ------------------------------------------------------------ STEP KINDS
+local X = {}
+
+-- client only: warning marker
+X.tele = function(ctx, s)
+	local line = s.style == "line"
+	local x, z = anchor(ctx, s, line and "o" or "t")
+	local dx, dz = dirOf(ctx, s)
+	fx(ctx, "tele", { x = x, z = z, r = R(ctx, s.r or 10), dur = s.dur or 1, style = s.style or "circle", dx = dx, dz = dz, len = s.len, w = s.w })
+end
+
+-- client only: screen flash / shake / tint
+X.screen = function(ctx, s)
+	fx(ctx, "screen", { flash = s.flash, fc = s.fc, fd = s.fd, shake = s.shake, sd = s.sd, dark = s.dark, dc = s.dc, tin = s.tin, hold = s.hold, tout = s.tout })
+end
+
+-- client only: persistent sky element (sun, moon, eclipse, cloud, lantern, star, crown, portal, galaxy, prismcore)
+X.sky = function(ctx, s)
+	local x, z = anchor(ctx, s, "t")
+	fx(ctx, "sky", { x = x, z = z, dur = s.dur or 3, r = R(ctx, s.r or 24), style = s.style or "sun", uid = ctx.p.UserId })
+end
+
+-- client only: magic circle in front of the shooter
+X.muzzle = function(ctx, s)
+	local dx, dz = dirOf(ctx, s)
+	fx(ctx, "muzzle", { uid = ctx.p.UserId, dx = dx, dz = dz, dur = s.dur or 0.7 })
+end
+
+-- instant area hit
+X.hit = function(ctx, s)
+	local x, z = anchor(ctx, s)
+	local r = R(ctx, s.r or 10)
+	fx(ctx, "hit", { x = x, z = z, r = r, style = s.style or "slam", variant = s.variant, big = s.big })
+	for _, e in ipairs(E.enemiesInCircle(ctx.run, x, z, r)) do
+		hurt(ctx, e, s.dmg or 3, s, x, z)
+	end
+end
+
+-- one big object falls on a point
+X.drop = function(ctx, s)
+	local x, z = anchor(ctx, s)
+	local r = R(ctx, s.r or 12)
+	local fall = s.fall or 1
+	fx(ctx, "drop", { x = x, z = z, r = r, fall = fall, obj = s.obj or "meteor", scale = s.scale or 2.2, impact = s.style or "fire", variant = s.variant, teleStyle = s.tele, big = true })
+	E.later(ctx.run, fall, function()
+		for _, e in ipairs(E.enemiesInCircle(ctx.run, x, z, r)) do
+			hurt(ctx, e, s.dmg or 8, s, x, z)
+		end
+	end)
+end
+
+local function areaPoint(ctx, area, cx, cz, rad, idx, n, s)
+	local x, z
+	if area == "ring" then
+		local a, rr = math.random() * TAU, rad * (0.8 + 0.2 * math.random())
+		x, z = cx + math.cos(a) * rr, cz + math.sin(a) * rr
+	elseif area == "spiral" then
+		local a, rr = idx * 2.39996, math.sqrt(idx / n) * rad
+		x, z = cx + math.cos(a) * rr, cz + math.sin(a) * rr
+	elseif area == "line" then
+		local t, lat = math.random() * rad, (math.random() - 0.5) * 2 * (s.lw or 7)
+		x, z = cx + ctx.dx * t - ctx.dz * lat, cz + ctx.dz * t + ctx.dx * lat
+	else
+		local a, rr = math.random() * TAU, math.sqrt(math.random()) * rad
+		x, z = cx + math.cos(a) * rr, cz + math.sin(a) * rr
+	end
+	return x, z
+end
+
+-- many small objects raining down (random / on enemies / along a line / in a spiral)
+X.rain = function(ctx, s)
+	local cx, cz = anchor(ctx, s)
+	local n = count(ctx, s, 12)
+	local over, fall = s.over or 2, s.fall or 0.7
+	local arad = R(ctx, s.ar or 20)
+	local r = R(ctx, s.r or 5)
+	local area = s.area or "circle"
+	local sliceDur = 0.3
+	local slices = {}
+	for i = 1, n do
+		local ti = (i - 1) / n * over
+		local k = math.floor(ti / sliceDur)
+		slices[k] = slices[k] or {}
+		table.insert(slices[k], { i = i, d = ti - k * sliceDur })
+	end
+	for k, list in pairs(slices) do
+		E.later(ctx.run, k * sliceDur, function()
+			local cand
+			if s.mode == "enemies" then
+				cand = {}
+				for _, e in ipairs(ctx.run.enemies) do
+					local ex, ez = e.x - cx, e.z - cz
+					if ex * ex + ez * ez <= (arad + e.r) ^ 2 then table.insert(cand, e) end
+				end
+				shuffle(cand)
+			end
+			local pts = {}
+			for j, it in ipairs(list) do
+				local x, z
+				if cand and #cand > 0 and math.random() < (s.focus or 0.75) then
+					local e = cand[(j - 1) % #cand + 1]
+					x, z = e.x + (math.random() - 0.5) * 2, e.z + (math.random() - 0.5) * 2
+				else
+					x, z = areaPoint(ctx, area, cx, cz, arad, it.i, n, s)
+				end
+				x, z = E.clampXZ(ctx.run, x, z)
+				pts[#pts + 1] = x
+				pts[#pts + 1] = z
+				pts[#pts + 1] = it.d
+				E.later(ctx.run, it.d + fall, function()
+					for _, e in ipairs(E.enemiesInCircle(ctx.run, x, z, r)) do
+						hurt(ctx, e, s.dmg or 2, s, x, z)
+					end
+				end)
+			end
+			fx(ctx, "rain", { pts = pts, fall = fall, obj = s.obj or "meteor", impact = s.style or "fire", variant = s.variant, r = r, scale = s.scale, im = s.im })
+		end)
+	end
+end
+
+-- beam: static or rotating, 1..n arms, damage in ticks
+X.beam = function(ctx, s)
+	local ox, oz = anchor(ctx, s, "c")
+	local len = (s.len or 40) * (1 + (ctx.ws.rs - 1) * 0.3)
+	local w = (s.w or 3) * (1 + (ctx.ws.rs - 1) * 0.25)
+	local arms = s.arms or 1
+	local spread = math.rad(s.spread or 0)
+	local ang0 = math.rad(s.ang0 or 0) + math.rad(s.ang or 0)
+	local sweep = math.rad(s.sweep or 0)
+	local dur = s.dur or 1
+	local ticks = s.ticks or 3
+	local follow = (s.at or "c") == "c"
+	fx(ctx, "beam", {
+		x = ox, z = oz, dx = ctx.dx, dz = ctx.dz, len = len, w = w, dur = dur, ang0 = math.deg(ang0), sweep = math.deg(sweep),
+		arms = arms, spread = math.deg(spread), style = s.style or "laser", follow = follow, uid = ctx.p.UserId,
+	})
+	local base = atan2(ctx.dz, ctx.dx)
+	for k = 0, ticks - 1 do
+		E.later(ctx.run, dur * (k + 0.5) / ticks, function()
+			local cx, cz = ox, oz
+			if follow then cx, cz = casterPos(ctx) end
+			local fa, fb = k / ticks, (k + 1) / ticks
+			for a = 1, arms do
+				local lo = ang0 + (a - 1) * spread + sweep * fa
+				local hi = ang0 + (a - 1) * spread + sweep * fb
+				if lo > hi then lo, hi = hi, lo end
+				local mid, half = (lo + hi) / 2, (hi - lo) / 2
+				for _, e in ipairs(table.clone(ctx.run.enemies)) do
+					local ex, ez = e.x - cx, e.z - cz
+					local dist = math.sqrt(ex * ex + ez * ez)
+					if dist <= len + e.r then
+						local th = wrap(atan2(ez, ex) - base - mid)
+						local margin = atan2(w + e.r, math.max(dist, 0.01))
+						if math.abs(th) <= half + margin then
+							hurt(ctx, e, s.dmg or 1.5, s, cx, cz, ticks > 3)
+						end
+					end
+				end
+			end
+		end)
+	end
+end
+
+-- expanding shockwave: every enemy is hit once when the ring reaches it
+X.nova = function(ctx, s)
+	local x, z = anchor(ctx, s)
+	local r1 = R(ctx, s.r or 20)
+	local r0 = s.r0 or 2
+	local dur = s.dur or 0.8
+	fx(ctx, "nova", { x = x, z = z, r0 = r0, r = r1, dur = dur, style = s.style or "ring", variant = s.variant, rings = s.rings, stagger = s.stagger, flash = s.flash })
+	task.spawn(function()
+		local hit, t0 = {}, os.clock()
+		while E.aliveRun(ctx.run) do
+			local f = math.min(1, (os.clock() - t0) / dur)
+			local rr = r0 + (r1 - r0) * f
+			for _, e in ipairs(table.clone(ctx.run.enemies)) do
+				if not hit[e] and not e.dead then
+					local ex, ez = e.x - x, e.z - z
+					if math.sqrt(ex * ex + ez * ez) - e.r <= rr then
+						hit[e] = true
+						hurt(ctx, e, s.dmg or 3, s, x, z)
+					end
+				end
+			end
+			if f >= 1 then break end
+			task.wait(0.05)
+		end
+	end)
+end
+
+-- orbiting objects around the caster
+X.orbit = function(ctx, s)
+	local n = count(ctx, s, 3)
+	local rad = R(ctx, s.rad or 10)
+	local dur, speed = s.dur or 3, s.speed or 4
+	local ticks = s.ticks or 10
+	local hitR = R(ctx, s.hitR or 5)
+	fx(ctx, "orbit", { uid = ctx.p.UserId, n = n, rad = rad, dur = dur, speed = speed, obj = s.obj or "orb", size = s.size or 0.8 })
+	ctx.st.lockAtk = math.max(ctx.st.lockAtk or 0, os.clock() + (s.lock or 0))
+	for k = 1, ticks do
+		local t = dur * k / ticks
+		E.later(ctx.run, t, function()
+			local cx, cz = casterPos(ctx)
+			local seen = {}
+			for i = 1, n do
+				local a = speed * t + (i - 1) * TAU / n
+				local ox, oz = cx + math.cos(a) * rad, cz + math.sin(a) * rad
+				for _, e in ipairs(E.enemiesInCircle(ctx.run, ox, oz, hitR)) do
+					if not seen[e] then
+						seen[e] = true
+						hurt(ctx, e, s.dmg or 1, s, ox, oz, true)
+					end
+				end
+			end
+		end)
+	end
+end
+
+-- vortex: drags enemies to the centre and hurts them; optional finale
+X.pull = function(ctx, s)
+	local x, z = anchor(ctx, s)
+	local r = R(ctx, s.r or 20)
+	local dur, ticks = s.dur or 2, s.ticks or 8
+	local strength = s.pull or 12
+	fx(ctx, "pull", { x = x, z = z, r = r, dur = dur, style = s.style or "blackhole" })
+	task.spawn(function()
+		local t0 = os.clock()
+		while E.aliveRun(ctx.run) and os.clock() - t0 < dur do
+			for _, e in ipairs(E.enemiesInCircle(ctx.run, x, z, r)) do
+				if not e.dead then
+					local ex, ez = x - e.x, z - e.z
+					local dist = math.sqrt(ex * ex + ez * ez)
+					local step = math.min(strength * 0.1, math.max(0, dist - 1.5))
+					if step > 0.01 then E.pushEnemy(ctx.run, e, ex, ez, step) end
+				end
+			end
+			task.wait(0.1)
+		end
+	end)
+	for k = 1, ticks do
+		E.later(ctx.run, dur * k / ticks, function()
+			for _, e in ipairs(E.enemiesInCircle(ctx.run, x, z, r)) do
+				local keep = { stun = nil, push = nil, slow = s.slow, sm = s.sm, burn = s.burn, burnT = s.burnT, ls = s.ls }
+				hurt(ctx, e, s.dmg or 1, keep, x, z, true)
+			end
+		end)
+	end
+end
+
+-- lingering field
+X.zone = function(ctx, s)
+	local x, z = anchor(ctx, s)
+	local r = R(ctx, s.r or 14)
+	local dur, ticks = s.dur or 3, s.ticks or 6
+	fx(ctx, "zone", { x = x, z = z, r = r, dur = dur, style = s.style or "fire" })
+	for k = 1, ticks do
+		E.later(ctx.run, dur * k / ticks, function()
+			for _, e in ipairs(E.enemiesInCircle(ctx.run, x, z, r)) do
+				hurt(ctx, e, s.dmg or 0.5, s, x, z, true)
+			end
+		end)
+	end
+end
+
+-- caster dashes (towards the aim or the nearest enemy) cutting everything on the way
+X.dash = function(ctx, s)
+	local cx, cz = casterPos(ctx)
+	local ddx, ddz = ctx.dx, ctx.dz
+	local dist = s.dist or 24
+	if s.to == "nearest" then
+		local best, bd = nil, (s.range or 45) ^ 2
+		for _, e in ipairs(ctx.run.enemies) do
+			local d2 = (e.x - cx) ^ 2 + (e.z - cz) ^ 2
+			if d2 < bd then best, bd = e, d2 end
+		end
+		if best then
+			local ex, ez = best.x - cx, best.z - cz
+			local m = math.sqrt(ex * ex + ez * ez)
+			if m > 0.5 then
+				ddx, ddz = ex / m, ez / m
+				dist = math.max(10, math.min(s.dist or 30, m + (s.over or 7)))
+			end
+		end
+	end
+	local dur = s.dur or 0.22
+	local now = os.clock()
+	ctx.st.invUntil = math.max(ctx.st.invUntil or 0, now + dur + 0.25)
+	ctx.st.lockAtk = math.max(ctx.st.lockAtk or 0, now + dur + 0.3)
+	E.ToClient:FireClient(ctx.p, "Lunge", ddx, ddz, dist / dur, dur)
+	fx(ctx, "dash", { x = cx, z = cz, dx = ddx, dz = ddz, dist = dist, dur = dur, style = s.style or "blade", uid = ctx.p.UserId })
+	local w = R(ctx, s.w or 4.5)
+	task.spawn(function()
+		local hit, t0 = {}, os.clock()
+		while E.aliveRun(ctx.run) and os.clock() - t0 < dur + 0.06 do
+			local px, pz = casterPos(ctx)
+			for _, e in ipairs(E.enemiesInCircle(ctx.run, px, pz, w)) do
+				if not hit[e] then
+					hit[e] = true
+					hurt(ctx, e, s.dmg or 3, { crit = s.crit, stun = s.stun, slow = s.slow, burn = s.burn, ls = s.ls, push = s.push or 3 }, px - ddx, pz - ddz)
+				end
+			end
+			task.wait()
+		end
+		if s.fin then
+			local px, pz = casterPos(ctx)
+			local fr = R(ctx, s.fin)
+			fx(ctx, "hit", { x = px, z = pz, r = fr, style = s.finStyle or "slam" })
+			for _, e in ipairs(E.enemiesInCircle(ctx.run, px, pz, fr)) do
+				hurt(ctx, e, s.finDmg or 2, { crit = true, push = 3, stun = s.stun }, px, pz)
+			end
+		end
+	end)
+end
+
+-- arrows / orbs shot through the normal projectile system
+X.volley = function(ctx, s)
+	local n = count(ctx, s, 9)
+	local pattern = s.pattern or "fan"
+	local spread = math.rad(s.spread or 60)
+	local over = s.over or 0
+	local kind = s.kind or "arrow"
+	for i = 1, n do
+		local ddx, ddz
+		if pattern == "ring" then
+			ddx, ddz = E.rot(ctx.dx, ctx.dz, (i - 1) / n * TAU + math.rad(s.ang0 or 0))
+		elseif pattern == "spiral" then
+			ddx, ddz = E.rot(ctx.dx, ctx.dz, (i - 1) / n * TAU * (s.turns or 2))
+		elseif pattern == "line" then
+			ddx, ddz = ctx.dx, ctx.dz
+		else
+			local a = n > 1 and ((i - 1) / (n - 1) - 0.5) or 0
+			ddx, ddz = E.rot(ctx.dx, ctx.dz, a * spread)
+		end
+		local delay = over > 0 and over * (i - 1) / n or 0
+		E.later(ctx.run, delay, function()
+			local cx, cz = casterPos(ctx)
+			local lat = 0
+			if pattern == "line" then lat = (i - (n + 1) / 2) * (s.gap or 1.6) end
+			local sx, sz = cx + ddx * 2 - ddz * lat, cz + ddz * 2 + ddx * lat
+			local t = {
+				kind = kind, x = sx, z = sz, dx = ddx, dz = ddz,
+				speed = E.Config.Classes.Archer.projSpeed * (s.speed or 1.1), range = ctx.ws.range * (s.rangeMul or 1),
+				dmg = D(ctx, s.dmg or 1.5), owner = ctx.p, crit = false, hitR = 0.9 * (s.hitR or 1),
+			}
+			if s.radius then t.radius = R(ctx, s.radius) end
+			if kind == "fireball" then t.speed = E.Config.Classes.Mage.projSpeed * (s.speed or 1) end
+			E.spawnProj(ctx.run, t)
+		end)
+	end
+end
+
+-- chain through enemies: lightning / constellation / frost / void
+X.chain = function(ctx, s)
+	local sx, sz = anchor(ctx, s, "c")
+	local aimx, aimz = ctx.tx, ctx.tz
+	local first, bd = nil, (s.range or 55) ^ 2
+	for _, e in ipairs(ctx.run.enemies) do
+		local d2 = (e.x - aimx) ^ 2 + (e.z - aimz) ^ 2
+		if d2 < bd then first, bd = e, d2 end
+	end
+	local flat = { sx, sz }
+	local chain = {}
+	if first then
+		chain = { first }
+		local seen, cur = { [first] = true }, first
+		local jr2 = R(ctx, s.jr or 20) ^ 2
+		for _ = 1, count(ctx, s, 8) - 1 do
+			local nxt, nd = nil, jr2
+			for _, e in ipairs(ctx.run.enemies) do
+				if not seen[e] then
+					local d2 = (e.x - cur.x) ^ 2 + (e.z - cur.z) ^ 2
+					if d2 < nd then nxt, nd = e, d2 end
+				end
+			end
+			if not nxt then break end
+			seen[nxt] = true
+			table.insert(chain, nxt)
+			cur = nxt
+		end
+		for _, e in ipairs(chain) do
+			flat[#flat + 1] = e.x
+			flat[#flat + 1] = e.z
+		end
+	else
+		flat[3], flat[4] = sx + ctx.dx * 34, sz + ctx.dz * 34
+	end
+	fx(ctx, "chain", { pts = flat, style = s.style or "lightning" })
+	for i, e in ipairs(chain) do
+		E.later(ctx.run, (i - 1) * 0.07, function()
+			hurt(ctx, e, (s.dmg or 2) * (0.95 ^ (i - 1)), s, sx, sz)
+		end)
+	end
+end
+
+-- moving wave / bird / dragon / spirits / glacier line
+X.wall = function(ctx, s)
+	local ox, oz = anchor(ctx, s, "c")
+	local ddx, ddz = dirOf(ctx, s)
+	local len = (s.len or 50) * (1 + (ctx.ws.rs - 1) * 0.2)
+	local w = R(ctx, s.w or 10)
+	local dur = s.dur or 1.5
+	local depth = s.depth or 7
+	fx(ctx, "wall", { x = ox, z = oz, dx = ddx, dz = ddz, len = len, w = w, dur = dur, style = s.style or "tsunami" })
+	local last = {}
+	local rehit = s.once and 999 or (s.rehit or 0.45)
+	task.spawn(function()
+		local t0 = os.clock()
+		while E.aliveRun(ctx.run) do
+			local now = os.clock()
+			local f = math.min(1, (now - t0) / dur)
+			local front = len * f
+			for _, e in ipairs(table.clone(ctx.run.enemies)) do
+				if not e.dead then
+					local ex, ez = e.x - ox, e.z - oz
+					local t = ex * ddx + ez * ddz
+					if t <= front + 2 and t >= front - depth then
+						local perp = math.abs(ex * ddz - ez * ddx)
+						if perp <= w + e.r and (last[e] == nil or now - last[e] > rehit) then
+							last[e] = now
+							local ps = s.push
+							hurt(ctx, e, s.dmg or 4, { crit = s.crit, stun = s.stun, slow = s.slow, sm = s.sm, burn = s.burn, ls = s.ls, push = nil, exec = s.exec }, ox, oz)
+							if ps and not e.dead then E.pushEnemy(ctx.run, e, ddx, ddz, ps) end
+						end
+					end
+				end
+			end
+			if f >= 1 then break end
+			task.wait(0.05)
+		end
+	end)
+end
+
+-- radial rays (sun rays, star burst, ground cracks)
+X.spokes = function(ctx, s)
+	local x, z = anchor(ctx, s)
+	local n = count(ctx, s, 8)
+	local len = R(ctx, s.len or 30)
+	local w = s.w or 3
+	local ang0 = math.rad(s.ang0 or 0)
+	fx(ctx, "spokes", { x = x, z = z, n = n, len = len, w = w, dur = s.dur or 0.6, ang0 = s.ang0 or 0, style = s.style or "ray", dx = ctx.dx, dz = ctx.dz })
+	local base = atan2(ctx.dz, ctx.dx)
+	for _, e in ipairs(table.clone(ctx.run.enemies)) do
+		local ex, ez = e.x - x, e.z - z
+		local dist = math.sqrt(ex * ex + ez * ez)
+		if dist <= len + e.r then
+			local th = atan2(ez, ex) - base - ang0
+			local margin = atan2(w * 1.2 + e.r, math.max(dist, 0.01))
+			local step = TAU / n
+			local k = math.floor(th / step + 0.5)
+			if math.abs(wrap(th - k * step)) <= margin then
+				hurt(ctx, e, s.dmg or 2, s, x, z)
+			end
+		end
+	end
+end
+
+-- heal / invulnerability
+X.heal = function(ctx, s)
+	if s.pct and s.pct > 0 then
+		local _, h = E.getChar(ctx.p)
+		if h and h.Health > 0 then h.Health = math.min(h.MaxHealth, h.Health + h.MaxHealth * s.pct) end
+	end
+	if s.inv then ctx.st.invUntil = math.max(ctx.st.invUntil or 0, os.clock() + s.inv) end
+	fx(ctx, "heal", { uid = ctx.p.UserId, style = s.style })
+end
+
+-- ------------------------------------------------------------ ENTRY POINT
+function U.cast(run, p, st, ws, hrp, px, pz, dx, dz, aim, recipe, wdef)
+	if not E then error("UltServer not initialised") end
+	local tx, tz = E.clampTarget(run, px, pz, aim, recipe.range or 46)
+	local ctx = {
+		run = run, p = p, st = st, ws = ws, wid = ws.wid, px = px, pz = pz, dx = dx, dz = dz, tx = tx, tz = tz,
+		recipe = recipe, healed = 0,
+	}
+	local now = os.clock()
+	st.lockAtk = math.max(st.lockAtk or 0, now + (recipe.lock or 0.9))
+	if recipe.inv then st.invUntil = math.max(st.invUntil or 0, now + recipe.inv) end
+	E.swingWeapon(st, wdef and wdef.type or "Swordsman", 0.6)
+	for _, s in ipairs(recipe.steps) do
+		local f = X[s.k]
+		if f then
+			E.later(run, s.t or 0, function() f(ctx, s) end)
+		end
+	end
+end
+
+return U
+]]></ProtectedString>
+</Properties>
+</Item>
 </Item>
 </Item>
 <Item class="StarterPlayer" referent="RBX17">
@@ -7737,6 +8796,9 @@ local Theme = require(RS:WaitForChild("Theme"))
 local WeaponModels = require(RS:WaitForChild("WeaponModels"))
 WeaponModels.startRainbow()
 local WeaponFX = require(RS:WaitForChild("WeaponFX"))
+-- [ULTS] unique weapon ultimates: recipes (shared) + VFX library (children of this script)
+local UltRecipes = require(RS:WaitForChild("UltRecipes"))
+local UltFX = require(script:WaitForChild("UltFX"))
 
 -- ============================================================ SMALL UI HELPERS
 local function new(class, props, parent)
@@ -8020,6 +9082,13 @@ local function refreshSlots()
 		local d = defs[key]
 		s.icon.Text = d.icon
 		s.name.Text = d.name
+		if key == "Z" and curWeapon then
+			local rc = UltRecipes.get(curWeapon.id, curWeapon.tier)
+			if rc then
+				s.icon.Text = rc.icon or d.icon
+				s.name.Text = curWeapon.ult or d.name
+			end
+		end
 		s.stroke.Color = s.ult and C3(255, 206, 90) or col
 		s.badge.BackgroundColor3 = s.ult and C3(255, 206, 90) or col
 	end
@@ -8921,6 +9990,12 @@ H.Meteor = function(tx, tz, fall, R)
 	end)
 end
 
+-- [ULTS] one event per ultimate step: UltFx(kind, weaponId, params)
+UltFX.init({ shake = shake, shakeAt = shakeAt, flash = screenFlash })
+H.UltFx = function(kind, wid, d)
+	UltFX.play(kind, wid, d)
+end
+
 ToClient.OnClientEvent:Connect(function(name, ...)
 	local f = H[name]
 	if f then
@@ -8932,6 +10007,2371 @@ end)
 print("[AbilityClient] ready")
 ]]></ProtectedString>
 </Properties>
+<Item class="ModuleScript" referent="RBX_ULT3">
+<Properties>
+<string name="Name">UltLib</string>
+<ProtectedString name="Source"><![CDATA[-- UltLib: shared VFX toolbox for the weapon ultimates (palette, parts, rings, bolts, spikes, runes, objects ...)
+-- Colours here are EXACT weapon palette colours (no Theme.tint), rainbow weapons animate through the hue wheel.
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
+local Config = require(RS:WaitForChild("Config"))
+
+local L = {}
+local C3 = Color3.fromRGB
+local V3, CF, ANG = Vector3.new, CFrame.new, CFrame.Angles
+local B, CY, BALL = Enum.PartType.Block, Enum.PartType.Cylinder, Enum.PartType.Ball
+local NEON, SMOOTH, METAL = Enum.Material.Neon, Enum.Material.SmoothPlastic, Enum.Material.Metal
+local PI, TAU = math.pi, math.pi * 2
+L.C3, L.V3, L.CF, L.ANG = C3, V3, CF, ANG
+L.B, L.CY, L.BALL, L.NEON, L.SMOOTH, L.METAL, L.PI, L.TAU = B, CY, BALL, NEON, SMOOTH, METAL, PI, TAU
+L.Debris = Debris
+
+local folder = workspace:FindFirstChild("UltFX")
+if not folder then
+	folder = Instance.new("Folder")
+	folder.Name = "UltFX"
+	folder.Parent = workspace
+end
+L.folder = folder
+
+-- hooks filled in by AbilityClient (camera shake / screen flash)
+L.hooks = {
+	shake = function() end,
+	shakeAt = function() end,
+	flash = function() end,
+}
+function L.init(h)
+	for k, v in pairs(h) do L.hooks[k] = v end
+end
+function L.shake(a, d) L.hooks.shake(a, d) end
+function L.shakeAt(x, z, a, d, r) L.hooks.shakeAt(x, z, a, d, r) end
+function L.flash(c, a, d) L.hooks.flash(c, a, d) end
+
+-- ============================================================ WEAPON / PALETTE
+local cur = nil
+function L.setWeapon(wid) cur = wid and Config.Weapons[wid] or nil end
+function L.weapon() return cur end
+function L.tier() return cur and cur.tier or 2 end
+-- intensity multiplier: rarer weapon = bigger and flashier effects
+function L.m() return 0.78 + 0.2 * (cur and cur.tier or 2) end
+
+local function hsv(off, s, v) return Color3.fromHSV((os.clock() * 0.35 + off) % 1, s or 0.75, v or 1) end
+function L.pal()
+	local a, b, c
+	local w = cur
+	if w and w.rainbow then
+		a, b, c = hsv(0, 0.75, 1), hsv(0.33, 0.8, 1), hsv(0.66, 0.35, 1)
+	elseif w then
+		a, b, c = w.c1, w.c2, w.c3
+	else
+		a, b, c = C3(255, 220, 140), C3(255, 160, 80), C3(255, 250, 230)
+	end
+	local _, _, bv = b:ToHSV()
+	local d = bv < 0.55 and a:Lerp(c, 0.5) or b -- bright accent
+	local k = b
+	local _, _, kv = k:ToHSV()
+	if kv > 0.35 then k = k:Lerp(C3(0, 0, 0), 0.7) end -- dark colour for voids
+	return { a = a, b = b, c = c, d = d, k = k, w = C3(255, 255, 255) }
+end
+
+-- gradient across the palette, t = 0..1
+function L.grad(t)
+	local w = cur
+	if w and w.rainbow then return Color3.fromHSV((t + os.clock() * 0.35) % 1, 0.75, 1) end
+	local p = L.pal()
+	if t < 0.5 then return p.a:Lerp(p.d, t * 2) end
+	return p.d:Lerp(p.c, (t - 0.5) * 2)
+end
+function L.hue(i, n) return Color3.fromHSV((i % n) / n, 0.78, 1) end
+
+function L.rand(a, b) return a + math.random() * (b - a) end
+function L.rot(dx, dz, a)
+	local c, s = math.cos(a), math.sin(a)
+	return dx * c - dz * s, dx * s + dz * c
+end
+
+function L.heroPos(uid)
+	local pl = Players:GetPlayerByUserId(uid)
+	local c = pl and pl.Character
+	local r = c and c:FindFirstChild("HumanoidRootPart")
+	return r and r.Position or nil
+end
+
+-- run fn(alpha, elapsed) every frame for dur seconds
+function L.anim(dur, fn, done)
+	task.spawn(function()
+		local t = 0
+		while t < dur do
+			local dt = RunService.Heartbeat:Wait()
+			t = t + dt
+			local ok = pcall(fn, math.min(1, t / dur), t)
+			if not ok then break end
+		end
+		if done then pcall(done) end
+	end)
+end
+
+function L.tw(o, t, props, style, dir)
+	local tween = TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props)
+	tween:Play()
+	return tween
+end
+
+-- run fn after t seconds with the right weapon palette selected
+function L.later(d, t, fn)
+	task.delay(t, function()
+		L.setWeapon(d.wid)
+		local ok, err = pcall(fn)
+		if not ok then warn("[UltFX] " .. tostring(err)) end
+	end)
+end
+
+-- ============================================================ PARTS
+function L.part(shape, size, cf, color, mat, trans)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Shape = shape or B
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color
+	p.Material = mat or NEON
+	p.Transparency = trans or 0
+	p.Parent = folder
+	return p
+end
+
+-- flat disc lying on the ground
+function L.disc(d, x, y, z, color, trans, thick, mat)
+	return L.part(CY, V3(thick or 0.2, d, d), CF(x, y, z) * ANG(0, 0, PI / 2), color, mat, trans)
+end
+
+function L.ball(d, x, y, z, color, trans, mat)
+	return L.part(BALL, V3(d, d, d), CF(x, y, z), color, mat, trans)
+end
+
+-- a glowing bar between two world points
+function L.seg(a, b, w, h, color, trans, mat)
+	local mid = (a + b) / 2
+	local dv = b - a
+	local len = dv.Magnitude
+	local fwd = len > 0.01 and dv.Unit or V3(0, 0, 1)
+	return L.part(B, V3(w, h, math.max(len, 0.05)), CFrame.lookAt(mid, mid + fwd), color, mat or NEON, trans or 0)
+end
+
+function L.fade(p, dur, extra)
+	local props = { Transparency = 1 }
+	if extra then for k, v in pairs(extra) do props[k] = v end end
+	L.tw(p, dur, props)
+	Debris:AddItem(p, dur + 0.15)
+end
+
+-- expanding glowing ball
+function L.flashBall(x, y, z, d0, d1, color, dur, trans0)
+	local p = L.ball(d0, x, y, z, color, trans0 or 0.2)
+	L.tw(p, dur, { Size = V3(d1, d1, d1), Transparency = 1 })
+	Debris:AddItem(p, dur + 0.15)
+	return p
+end
+
+-- expanding flat disc that fades
+function L.discFx(x, y, z, d0, d1, color, dur, trans0, thick)
+	local p = L.disc(d0, x, y, z, color, trans0 or 0.35, thick or 0.15)
+	L.tw(p, dur, { Size = V3(thick or 0.15, d1, d1), Transparency = 1 })
+	Debris:AddItem(p, dur + 0.15)
+	return p
+end
+
+-- ring outline (UIStroke on a SurfaceGui), grows d0 -> d1 and fades t0 -> t1
+function L.ring(x, y, z, d0, d1, color, dur, thick, t0, t1)
+	local p = L.part(B, V3(d0, 0.05, d0), CF(x, y, z), color, SMOOTH, 1)
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Top
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+	sg.CanvasSize = Vector2.new(256, 256)
+	sg.LightInfluence = 0
+	sg.Brightness = 1.6
+	sg.Parent = p
+	local f = Instance.new("Frame")
+	f.Size = UDim2.fromScale(1, 1)
+	f.BackgroundTransparency = 1
+	f.BorderSizePixel = 0
+	f.Parent = sg
+	local uc = Instance.new("UICorner")
+	uc.CornerRadius = UDim.new(0.5, 0)
+	uc.Parent = f
+	local us = Instance.new("UIStroke")
+	us.Color = color
+	us.Thickness = thick or 8
+	us.Transparency = t0 or 0.1
+	us.Parent = f
+	if d1 ~= d0 then L.tw(p, dur, { Size = V3(d1, 0.05, d1) }) end
+	L.tw(us, dur, { Transparency = t1 or 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	Debris:AddItem(p, dur + 0.15)
+	return p, us
+end
+
+function L.light(parent, color, range, bright, fadeDur)
+	local l = Instance.new("PointLight")
+	l.Color = color
+	l.Range = range
+	l.Brightness = bright
+	l.Parent = parent
+	if fadeDur then L.tw(l, fadeDur, { Brightness = 0 }) end
+	return l
+end
+
+-- one-shot particle burst
+function L.emit(x, y, z, c1, c2, count, smin, smax, size, life, o)
+	o = o or {}
+	local pos = V3(x, y, z)
+	local cf = CF(pos)
+	if o.dirX then
+		cf = CFrame.lookAt(pos, pos + V3(o.dirX, 0, o.dirZ)) * ANG(-PI / 2, 0, 0)
+	end
+	local p = L.part(B, V3(0.2, 0.2, 0.2), cf, c1, SMOOTH, 1)
+	local e = Instance.new("ParticleEmitter")
+	e.Enabled = false
+	e.Rate = 0
+	e.Color = ColorSequence.new(c1, c2 or c1)
+	e.LightEmission = o.light or 0.9
+	e.LightInfluence = 0
+	e.Lifetime = NumberRange.new(life * 0.6, life)
+	e.Speed = NumberRange.new(smin, smax)
+	local sp = o.spread or 180
+	e.SpreadAngle = Vector2.new(sp, sp)
+	e.Drag = o.drag or 3
+	if o.accel then e.Acceleration = V3(0, o.accel, 0) end
+	if o.spin then e.RotSpeed = NumberRange.new(-o.spin, o.spin) end
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, size), NumberSequenceKeypoint.new(1, 0) })
+	e.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(0.6, 0.25),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	e.Parent = p
+	e:Emit(count)
+	Debris:AddItem(p, life + 0.4)
+	return p
+end
+
+-- continuous emitter attached to a part (caller disables / destroys it)
+function L.stream(part, c1, c2, rate, size, life, speed, o)
+	o = o or {}
+	local e = Instance.new("ParticleEmitter")
+	e.Rate = rate
+	e.Color = ColorSequence.new(c1, c2 or c1)
+	e.LightEmission = o.light or 1
+	e.LightInfluence = 0
+	e.Lifetime = NumberRange.new(life * 0.6, life)
+	e.Speed = NumberRange.new(speed * 0.3, speed)
+	local sp = o.spread or 180
+	e.SpreadAngle = Vector2.new(sp, sp)
+	if o.accel then e.Acceleration = V3(0, o.accel, 0) end
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, size), NumberSequenceKeypoint.new(1, 0) })
+	e.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) })
+	e.Parent = part
+	return e
+end
+
+function L.trail(part, c0, c1, width, life, off)
+	local a0 = Instance.new("Attachment")
+	a0.Position = V3(-width / 2, 0, off or 0)
+	a0.Parent = part
+	local a1 = Instance.new("Attachment")
+	a1.Position = V3(width / 2, 0, off or 0)
+	a1.Parent = part
+	local t = Instance.new("Trail")
+	t.Attachment0 = a0
+	t.Attachment1 = a1
+	t.Lifetime = life
+	t.Color = ColorSequence.new(c0, c1)
+	t.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.15),
+		NumberSequenceKeypoint.new(0.6, 0.6),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	t.LightEmission = 0.8
+	t.LightInfluence = 0
+	t.MinLength = 0.04
+	t.FaceCamera = false
+	t.Parent = part
+	return t
+end
+
+-- lightning bolt between two points (zig-zag segments); returns the parts
+function L.bolt(a, b, w, color, core, dur, jit, segs)
+	segs = segs or 9
+	jit = jit or 2.5
+	local pts = { a }
+	local dv = b - a
+	local len = dv.Magnitude
+	local dir = len > 0.01 and dv.Unit or V3(0, -1, 0)
+	local side = dir:Cross(V3(0, 1, 0))
+	if side.Magnitude < 0.05 then side = V3(1, 0, 0) end
+	side = side.Unit
+	local up = dir:Cross(side)
+	for i = 1, segs - 1 do
+		local f = i / segs
+		local j = jit * math.sin(f * PI) + 0.4
+		pts[#pts + 1] = a + dv * f + side * L.rand(-j, j) + up * L.rand(-j, j) * 0.5
+	end
+	pts[#pts + 1] = b
+	local out = {}
+	for i = 1, #pts - 1 do
+		local o = L.seg(pts[i], pts[i + 1], w, w, color, 0.35, NEON)
+		local c = L.seg(pts[i], pts[i + 1], w * 0.38, w * 0.38, core or C3(255, 255, 255), 0, NEON)
+		L.fade(o, dur)
+		L.fade(c, dur * 0.9)
+		out[#out + 1] = o
+		out[#out + 1] = c
+	end
+	return out
+end
+
+-- ============================================================ SPIKES (crystal / thorn / ice / flame)
+-- stepped spike growing out of the ground at (x, z)
+function L.spike(x, z, w, h, color, core, o)
+	o = o or {}
+	local rise, hold = o.rise or 0.18, o.hold or 0.7
+	local mat = o.mat or NEON
+	local tr = o.trans or 0.12
+	local yaw = o.yaw or math.random() * PI
+	local lean = o.lean or 0
+	local base = CF(x, 0, z) * ANG(0, yaw, 0) * ANG(lean, 0, 0)
+	local parts = {}
+	local layers = { { 1, 0.5, 0 }, { 0.6, 0.32, 0.5 }, { 0.28, 0.22, 0.82 } }
+	for i, l in ipairs(layers) do
+		local ww, hh, y0 = w * l[1], h * l[2], h * l[3]
+		local p = L.part(B, V3(ww, 0.05, ww), base * CF(0, 0.05, 0), i == 1 and color or (i == 2 and color:Lerp(core, 0.4) or core), mat, tr)
+		L.tw(p, rise, { Size = V3(ww, hh, ww), CFrame = base * CF(0, y0 + hh / 2, 0) }, Enum.EasingStyle.Back)
+		parts[#parts + 1] = p
+	end
+	-- second cross section rotated 45 degrees => diamond-like silhouette
+	local p2 = L.part(B, V3(w * 0.7, 0.05, w * 0.7), base * CF(0, 0.05, 0) * ANG(0, PI / 4, 0), core, mat, tr + 0.2)
+	L.tw(p2, rise, { Size = V3(w * 0.7, h * 0.62, w * 0.7), CFrame = base * CF(0, h * 0.31, 0) * ANG(0, PI / 4, 0) }, Enum.EasingStyle.Back)
+	parts[#parts + 1] = p2
+	task.delay(rise + hold, function()
+		for _, p in ipairs(parts) do
+			L.tw(p, 0.35, { Transparency = 1 })
+			Debris:AddItem(p, 0.5)
+		end
+	end)
+	for _, p in ipairs(parts) do Debris:AddItem(p, rise + hold + 0.6) end
+	return parts
+end
+
+-- ============================================================ GROUP (rigid set of parts with local offsets)
+function L.group(cf)
+	local g = { items = {}, cf = cf or CF() }
+	function g.add(part, off)
+		table.insert(g.items, { part, off or CF() })
+		return part
+	end
+	function g.set(cf2)
+		if cf2 then g.cf = cf2 end
+		for _, it in ipairs(g.items) do it[1].CFrame = g.cf * it[2] end
+	end
+	function g.fade(dur)
+		for _, it in ipairs(g.items) do
+			L.tw(it[1], dur, { Transparency = 1 })
+			Debris:AddItem(it[1], dur + 0.2)
+		end
+	end
+	function g.destroy()
+		for _, it in ipairs(g.items) do it[1]:Destroy() end
+		g.items = {}
+	end
+	return g
+end
+
+-- ============================================================ SCREEN TINT
+local tintFrame
+local tintTok = 0
+local function getTint()
+	if tintFrame and tintFrame.Parent then return tintFrame end
+	local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "UltScreen"
+	sg.ResetOnSpawn = false
+	sg.IgnoreGuiInset = true
+	sg.DisplayOrder = 3
+	sg.Parent = pg
+	tintFrame = Instance.new("Frame")
+	tintFrame.Size = UDim2.fromScale(1, 1)
+	tintFrame.BackgroundTransparency = 1
+	tintFrame.BorderSizePixel = 0
+	tintFrame.Parent = sg
+	return tintFrame
+end
+-- fade the whole screen towards a colour (alpha 0..1 = strength), hold, fade back
+function L.tint(color, alpha, tin, hold, tout)
+	local f = getTint()
+	tintTok = tintTok + 1
+	local tok = tintTok
+	f.BackgroundColor3 = color
+	L.tw(f, tin, { BackgroundTransparency = 1 - alpha })
+	task.delay(tin + hold, function()
+		if tok ~= tintTok then return end
+		L.tw(f, tout, { BackgroundTransparency = 1 })
+	end)
+end
+
+-- ============================================================ RUNE CIRCLE (rotating magic circle on the ground)
+function L.rune(x, y, z, d, dur, spin, c1, c2)
+	local P = L.pal()
+	c1, c2 = c1 or P.a, c2 or P.c
+	local g1, g2 = L.group(CF(x, y, z)), L.group(CF(x, y, z))
+	for i = 1, 8 do
+		g1.add(L.part(B, V3(0.3, 0.05, d * 0.46), CF(), c1, NEON, 0.35), ANG(0, i * PI / 4, 0) * CF(0, 0, -d * 0.25))
+	end
+	for i = 1, 14 do
+		local a = i * TAU / 14
+		g1.add(L.part(B, V3(d * 0.05, 0.06, d * 0.09), CF(), i % 2 == 0 and c1 or c2, NEON, 0.1), ANG(0, a, 0) * CF(0, 0, -d * 0.4))
+	end
+	for k = 0, 5 do
+		local a1, a2 = k * PI / 3, ((k + 2) % 6) * PI / 3
+		local r = d * 0.3
+		local p1 = V3(math.cos(a1) * r, 0, math.sin(a1) * r)
+		local p2 = V3(math.cos(a2) * r, 0, math.sin(a2) * r)
+		local mid, dv = (p1 + p2) / 2, p2 - p1
+		g2.add(L.part(B, V3(0.3, 0.06, dv.Magnitude), CF(), c2, NEON, 0.15), CFrame.lookAt(mid, mid + dv))
+	end
+	L.ring(x, y, z, d, d, c1, dur, 7, 0.1, 0.5)
+	L.ring(x, y, z, d * 0.72, d * 0.72, c2, dur, 5, 0.15, 0.5)
+	L.ring(x, y, z, d * 0.4, d * 0.4, c1, dur, 4, 0.2, 0.55)
+	L.anim(dur, function(al, t)
+		g1.set(CF(x, y, z) * ANG(0, t * spin, 0))
+		g2.set(CF(x, y, z) * ANG(0, -t * spin * 1.4, 0))
+	end, function()
+		g1.fade(0.3)
+		g2.fade(0.3)
+	end)
+	return g1, g2
+end
+
+-- ============================================================ OBJECTS (swords, meteors, lances ... tip points to -Z)
+L.objs = {}
+
+-- invisible object (the impact effect alone is the attack)
+L.objs.none = function(g, s, P) return nil end
+
+L.objs.sword = function(g, s, P)
+	local carrier = g.add(L.part(B, V3(1.7 * s, 0.34 * s, 9 * s), CF(), P.w:Lerp(P.c, 0.35), METAL, 0), CF(0, 0, -5.2 * s))
+	g.add(L.part(B, V3(0.6 * s, 0.4 * s, 9.2 * s), CF(), P.a, NEON, 0), CF(0, 0, -5.2 * s))
+	g.add(L.part(B, V3(1.2 * s, 0.34 * s, 1.2 * s), CF(), P.w:Lerp(P.c, 0.35), METAL, 0), CF(0, 0, -10 * s) * ANG(0, PI / 4, 0))
+	g.add(L.part(B, V3(5.2 * s, 0.55 * s, 0.8 * s), CF(), P.d, METAL, 0), CF(0, 0, -0.4 * s))
+	g.add(L.part(B, V3(5.4 * s, 0.3 * s, 0.4 * s), CF(), P.c, NEON, 0.1), CF(0, 0.3 * s, -0.4 * s))
+	g.add(L.part(B, V3(0.7 * s, 0.55 * s, 2.4 * s), CF(), P.k:Lerp(P.a, 0.2), SMOOTH, 0), CF(0, 0, 1.4 * s))
+	g.add(L.ball(1.1 * s, 0, 0, 0, P.c, 0, NEON), CF(0, 0, 2.8 * s))
+	g.add(L.ball(8 * s, 0, 0, 0, P.a, 0.86, NEON), CF(0, 0, -5 * s))
+	return carrier
+end
+
+L.objs.lance = function(g, s, P)
+	local carrier = g.add(L.part(B, V3(0.7 * s, 0.7 * s, 12 * s), CF(), P.a, NEON, 0.05), CF(0, 0, -2 * s))
+	g.add(L.part(B, V3(0.3 * s, 0.3 * s, 12.4 * s), CF(), P.w, NEON, 0), CF(0, 0, -2 * s))
+	g.add(L.part(B, V3(2.2 * s, 0.7 * s, 4 * s), CF(), P.c, NEON, 0), CF(0, 0, -9 * s))
+	g.add(L.part(B, V3(1.4 * s, 0.7 * s, 1.4 * s), CF(), P.w, NEON, 0), CF(0, 0, -11.2 * s) * ANG(0, PI / 4, 0))
+	g.add(L.ball(4.6 * s, 0, 0, 0, P.a, 0.8, NEON), CF(0, 0, -8 * s))
+	return carrier
+end
+
+L.objs.arrow = function(g, s, P)
+	local carrier = g.add(L.part(B, V3(0.34 * s, 0.34 * s, 6 * s), CF(), P.w, NEON, 0), CF())
+	g.add(L.part(B, V3(1.1 * s, 0.3 * s, 1.1 * s), CF(), P.c, NEON, 0), CF(0, 0, -3.2 * s) * ANG(0, PI / 4, 0))
+	g.add(L.part(B, V3(0.2 * s, 0.2 * s, 1.5 * s), CF(), P.a, NEON, 0.1), CF(-0.5 * s, 0, 2.4 * s) * ANG(0, 0.35, 0))
+	g.add(L.part(B, V3(0.2 * s, 0.2 * s, 1.5 * s), CF(), P.a, NEON, 0.1), CF(0.5 * s, 0, 2.4 * s) * ANG(0, -0.35, 0))
+	g.add(L.ball(3 * s, 0, 0, 0, P.a, 0.78, NEON), CF(0, 0, -2 * s))
+	return carrier
+end
+
+L.objs.meteor = function(g, s, P)
+	local carrier = g.add(L.ball(5.4 * s, 0, 0, 0, P.k:Lerp(P.a, 0.15), 0, Enum.Material.Slate), CF())
+	g.add(L.ball(6.4 * s, 0, 0, 0, P.a, 0.25, NEON), CF())
+	g.add(L.ball(3.6 * s, 0, 0, 0, P.c, 0.05, NEON), CF(0, 0, -0.6 * s))
+	g.add(L.ball(11 * s, 0, 0, 0, P.d, 0.85, NEON), CF())
+	return carrier
+end
+
+L.objs.sun = function(g, s, P)
+	local carrier = g.add(L.ball(9 * s, 0, 0, 0, P.c, 0, NEON), CF())
+	g.add(L.ball(12 * s, 0, 0, 0, P.a, 0.35, NEON), CF())
+	g.add(L.ball(18 * s, 0, 0, 0, P.d, 0.8, NEON), CF())
+	for i = 1, 8 do
+		g.add(L.part(B, V3(0.9 * s, 0.9 * s, 7 * s), CF(), P.a, NEON, 0.2), ANG(0, i * PI / 4, 0) * CF(0, 0, -9 * s))
+	end
+	return carrier
+end
+
+L.objs.comet = function(g, s, P)
+	local carrier = g.add(L.ball(4 * s, 0, 0, 0, P.w, 0, NEON), CF())
+	g.add(L.ball(6 * s, 0, 0, 0, P.a, 0.4, NEON), CF())
+	g.add(L.part(B, V3(2.6 * s, 0.9 * s, 12 * s), CF(), P.d, NEON, 0.55), CF(0, 0, 7 * s))
+	g.add(L.part(B, V3(1.2 * s, 0.9 * s, 14 * s), CF(), P.c, NEON, 0.3), CF(0, 0, 8 * s))
+	return carrier
+end
+
+L.objs.crystal = function(g, s, P)
+	local carrier = g.add(L.part(B, V3(2.4 * s, 2.4 * s, 8 * s), CF(), P.a, NEON, 0.15), ANG(0, 0, PI / 4))
+	g.add(L.part(B, V3(2.4 * s, 2.4 * s, 8 * s), CF(), P.c, NEON, 0.35), CF())
+	g.add(L.part(B, V3(1 * s, 1 * s, 9 * s), CF(), P.w, NEON, 0), CF())
+	g.add(L.ball(7 * s, 0, 0, 0, P.d, 0.85, NEON), CF())
+	return carrier
+end
+
+L.objs.icicle = function(g, s, P)
+	local carrier = g.add(L.part(B, V3(1.6 * s, 1.6 * s, 9 * s), CF(), P.c, NEON, 0.2), CF(0, 0, -1 * s) * ANG(0, 0, PI / 4))
+	g.add(L.part(B, V3(1.2 * s, 1.2 * s, 5 * s), CF(), P.a, NEON, 0.1), CF(0, 0, -6 * s) * ANG(0, 0, PI / 4))
+	g.add(L.part(B, V3(0.5 * s, 0.5 * s, 10 * s), CF(), P.w, NEON, 0), CF(0, 0, -1 * s))
+	return carrier
+end
+
+L.objs.star = function(g, s, P)
+	local carrier = g.add(L.part(B, V3(10 * s, 0.7 * s, 1.4 * s), CF(), P.c, NEON, 0.05), CF())
+	g.add(L.part(B, V3(1.4 * s, 0.7 * s, 10 * s), CF(), P.c, NEON, 0.05), CF())
+	g.add(L.part(B, V3(7 * s, 0.6 * s, 1 * s), CF(), P.a, NEON, 0.1), ANG(0, PI / 4, 0))
+	g.add(L.part(B, V3(7 * s, 0.6 * s, 1 * s), CF(), P.a, NEON, 0.1), ANG(0, -PI / 4, 0))
+	g.add(L.ball(3 * s, 0, 0, 0, P.w, 0, NEON), CF())
+	g.add(L.ball(7 * s, 0, 0, 0, P.d, 0.8, NEON), CF())
+	return carrier
+end
+
+L.objs.ember = function(g, s, P)
+	local carrier = g.add(L.ball(2.2 * s, 0, 0, 0, P.c, 0, NEON), CF())
+	g.add(L.ball(3.6 * s, 0, 0, 0, P.a, 0.4, NEON), CF())
+	g.add(L.part(B, V3(1.4 * s, 1 * s, 6 * s), CF(), P.d, NEON, 0.5), CF(0, 0, 3 * s))
+	return carrier
+end
+
+L.objs.skull = function(g, s, P)
+	local bone = P.w:Lerp(P.c, 0.25)
+	local carrier = g.add(L.ball(3.4 * s, 0, 0, 0, bone, 0, NEON), CF())
+	g.add(L.part(B, V3(2 * s, 0.9 * s, 1.5 * s), CF(), bone, NEON, 0), CF(0, -0.9 * s, -1.2 * s))
+	g.add(L.ball(0.9 * s, 0, 0, 0, P.k, 0, SMOOTH), CF(-0.8 * s, 1.0 * s, -1.2 * s))
+	g.add(L.ball(0.9 * s, 0, 0, 0, P.k, 0, SMOOTH), CF(0.8 * s, 1.0 * s, -1.2 * s))
+	g.add(L.ball(7 * s, 0, 0, 0, P.a, 0.78, NEON), CF())
+	g.add(L.part(B, V3(2 * s, 0.8 * s, 7 * s), CF(), P.a, NEON, 0.55), CF(0, 0, 5 * s))
+	return carrier
+end
+
+L.objs.orb = function(g, s, P)
+	local carrier = g.add(L.ball(3.2 * s, 0, 0, 0, P.c, 0, NEON), CF())
+	g.add(L.ball(5 * s, 0, 0, 0, P.a, 0.45, NEON), CF())
+	g.add(L.ball(8 * s, 0, 0, 0, P.d, 0.85, NEON), CF())
+	g.add(L.part(CY, V3(0.2 * s, 7 * s, 7 * s), CF(), P.w, NEON, 0.35), ANG(0, 0, PI / 2))
+	return carrier
+end
+
+L.objs.scythe = function(g, s, P)
+	local carrier = g.add(L.part(B, V3(0.6 * s, 0.6 * s, 11 * s), CF(), P.k:Lerp(P.a, 0.25), SMOOTH, 0), CF())
+	for i = 1, 5 do
+		local f = i / 5
+		local off = CF(-f * 2.5 * s, 0, -5.5 * s - f * 1.5 * s) * ANG(0, 0.5 + f * 0.7, 0) * CF(0, 0, -1 * s)
+		g.add(L.part(B, V3(0.4 * s, 0.5 * s, 3 * s), CF(), P.w:Lerp(P.c, 0.3), METAL, 0), off)
+		g.add(L.part(B, V3(0.7 * s, 0.4 * s, 3 * s), CF(), P.a, NEON, 0.2), off)
+	end
+	g.add(L.ball(8 * s, 0, 0, 0, P.a, 0.85, NEON), CF(-1.5 * s, 0, -6 * s))
+	return carrier
+end
+
+L.objs.petal = function(g, s, P)
+	local carrier = g.add(L.part(B, V3(1.8 * s, 0.12 * s, 0.9 * s), CF(), P.a, NEON, 0.1), CF())
+	g.add(L.part(B, V3(1.2 * s, 0.14 * s, 0.5 * s), CF(), P.c, NEON, 0.2), CF(0, 0.02, 0))
+	return carrier
+end
+
+L.objs.blade = function(g, s, P)
+	local carrier = g.add(L.part(B, V3(0.9 * s, 0.3 * s, 5 * s), CF(), P.w:Lerp(P.c, 0.3), METAL, 0), CF(0, 0, -2 * s) * ANG(0, 0.25, 0))
+	g.add(L.part(B, V3(0.9 * s, 0.3 * s, 4 * s), CF(), P.w:Lerp(P.c, 0.3), METAL, 0), CF(-0.9 * s, 0, -5.4 * s) * ANG(0, 0.7, 0))
+	g.add(L.part(B, V3(0.4 * s, 0.34 * s, 8 * s), CF(), P.a, NEON, 0.15), CF(-0.2 * s, 0, -3.6 * s) * ANG(0, 0.4, 0))
+	g.add(L.ball(6 * s, 0, 0, 0, P.a, 0.85, NEON), CF(-0.5 * s, 0, -3.6 * s))
+	return carrier
+end
+
+-- builds a themed object into a fresh group; returns group, carrier part
+function L.makeObj(name, scale, trailW)
+	local P = L.pal()
+	local g = L.group()
+	local fn = L.objs[name] or L.objs.meteor
+	local carrier = fn(g, scale or 1, P)
+	if trailW and trailW > 0 and carrier then
+		L.trail(carrier, P.c, P.a, trailW, 0.4, 0)
+	end
+	return g, carrier
+end
+
+return L
+]]></ProtectedString>
+</Properties>
+</Item>
+<Item class="ModuleScript" referent="RBX_ULT4">
+<Properties>
+<string name="Name">UltImpact</string>
+<ProtectedString name="Source"><![CDATA[-- UltImpact: point effects for ultimates (impact styles, telegraphs, sky elements, zones, heal, screen effects)
+local L = require(script.Parent:WaitForChild("UltLib"))
+
+local C3, V3, CF, ANG = L.C3, L.V3, L.CF, L.ANG
+local B, CY, BALL, NEON, SMOOTH, PI, TAU = L.B, L.CY, L.BALL, L.NEON, L.SMOOTH, L.PI, L.TAU
+local Debris = L.Debris
+local rand = L.rand
+local atan2 = math.atan2 or math.atan
+
+local I = {} -- impact styles: I[style](x, z, R, m, d)
+local M = {} -- all handlers exposed to the dispatcher (hit, tele, sky, zone, heal, screen, muzzle)
+
+-- ------------------------------------------------------------ small helpers
+local function cracks(x, z, R, P, n)
+	for i = 1, n do
+		local a = i / n * TAU + rand(-0.2, 0.2)
+		local len = R * rand(0.8, 1.4)
+		local p0 = V3(x, 0.45, z)
+		local p1 = V3(x + math.cos(a) * len, 0.45, z + math.sin(a) * len)
+		local s1 = L.seg(p0, p1, 0.9, 0.08, P.k, 0.15, SMOOTH)
+		local s2 = L.seg(p0, p1, 0.36, 0.1, P.c, 0, NEON)
+		L.fade(s1, 1.1, { Size = V3(0.05, 0.08, s1.Size.Z) })
+		L.fade(s2, 0.8, { Size = V3(0.05, 0.1, s2.Size.Z) })
+	end
+end
+
+-- a part that flies from the centre to (ex, ey, ez), spins and fades
+local function fling(part, x, y, z, ex, ey, ez, dur, spin)
+	local rot = CF(ex, ey, ez) * ANG(rand(-spin, spin), rand(-spin, spin), rand(-spin, spin))
+	L.tw(part, dur, { CFrame = rot, Transparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	Debris:AddItem(part, dur + 0.2)
+end
+
+-- lens-flare star: crossing bars
+I.star = function(x, z, R, m)
+	local P = L.pal()
+	local len = R * 2.8
+	local base = rand(0, PI)
+	for k = 0, 3 do
+		local l = k < 2 and len or len * 0.6
+		local w = k < 2 and 0.9 or 0.55
+		local cf = CF(x, 1.6, z) * ANG(0, base + k * PI / 4, 0)
+		local bar = L.part(B, V3(w, 0.25, l), cf, k < 2 and P.c or P.a, NEON, 0.05)
+		L.tw(bar, 0.55, { Size = V3(0.05, 0.25, l * 1.15), Transparency = 1, CFrame = cf * ANG(0, 0.5, 0) })
+		Debris:AddItem(bar, 0.7)
+	end
+	L.flashBall(x, 1.6, z, R * 0.4, R * 1.7, P.w, 0.4, 0.15)
+	L.flashBall(x, 1.6, z, R * 0.8, R * 2.6, P.a, 0.55, 0.65)
+	L.ring(x, 0.7, z, R * 0.4, R * 2.4, P.c, 0.5, 9)
+	L.emit(x, 2, z, P.w, P.a, 16 * m, 18, 40, 0.9, 0.7)
+	L.shakeAt(x, z, 0.9 * m, 0.35)
+end
+
+I.slam = function(x, z, R, m)
+	local P = L.pal()
+	L.flashBall(x, 1.5, z, R * 0.4, R * 1.5, P.c, 0.28, 0.35)
+	L.ring(x, 0.6, z, R * 0.4, R * 2.3, P.a, 0.55, 12)
+	L.ring(x, 0.7, z, R * 0.2, R * 1.6, P.c, 0.38, 8)
+	L.discFx(x, 0.5, z, R * 1.2, R * 2.1, P.a, 0.6, 0.45)
+	cracks(x, z, R, P, 10)
+	L.emit(x, 1.5, z, P.d, P.k, math.floor(20 * m), 14, 38, 1.4, 0.75)
+	L.shakeAt(x, z, 1.1 * m, 0.4)
+end
+I.shock = I.slam
+
+I.pillar = function(x, z, R, m)
+	local P = L.pal()
+	local h = 64
+	local c1 = L.part(B, V3(R * 0.8, h, R * 0.8), CF(x, h / 2, z), P.a, NEON, 0.35)
+	L.tw(c1, 0.8, { Size = V3(0.2, h, 0.2), Transparency = 1 })
+	Debris:AddItem(c1, 0.95)
+	local c2 = L.part(B, V3(R * 0.35, h, R * 0.35), CF(x, h / 2, z), P.w, NEON, 0.05)
+	L.tw(c2, 0.6, { Size = V3(0.1, h, 0.1), Transparency = 1 })
+	Debris:AddItem(c2, 0.75)
+	for i = 1, 4 do
+		task.delay(i * 0.07, function()
+			local d = L.disc(R * 1.5, x, 1, z, i % 2 == 0 and P.c or P.a, 0.3, 0.2)
+			L.tw(d, 0.5, { CFrame = CF(x, 5 + i * 7, z) * ANG(0, 0, PI / 2), Size = V3(0.2, R * 0.6, R * 0.6), Transparency = 1 })
+			Debris:AddItem(d, 0.65)
+		end)
+	end
+	L.ring(x, 0.6, z, R * 0.5, R * 2.2, P.c, 0.55, 11)
+	L.ring(x, 0.7, z, R * 0.3, R * 1.4, P.w, 0.4, 7)
+	L.discFx(x, 0.5, z, R * 1.0, R * 1.8, P.a, 0.55, 0.4)
+	L.emit(x, 2, z, P.w, P.c, math.floor(22 * m), 6, 18, 1.0, 1.0, { spread = 25, accel = 12, drag = 1 })
+	L.light(c1, P.c, 60, 4, 0.7)
+	L.shakeAt(x, z, 1.0 * m, 0.4)
+end
+
+I.bolt = function(x, z, R, m, d)
+	local P = L.pal()
+	local small = R < 8 and not (d and d.big)
+	local top = V3(x + rand(-7, 7), 58, z + rand(-7, 7))
+	local ground = V3(x, 0.5, z)
+	L.bolt(top, ground, small and 2.4 or 3.2, P.a, P.w, small and 0.28 or 0.34, 6, small and 8 or 11)
+	if not small then
+		L.bolt(top, ground, 1.8, P.c, P.w, 0.26, 4, 9)
+		for i = 1, 3 do
+			local mid = top:Lerp(ground, rand(0.4, 0.8))
+			local tgt = V3(x + rand(-R, R), 0.5, z + rand(-R, R))
+			L.bolt(mid, tgt, 1.1, P.c, P.w, 0.22, 2, 6)
+		end
+		cracks(x, z, R * 0.7, P, 5)
+	end
+	L.flashBall(x, 1.5, z, R * 0.4, R * 1.5, P.c, 0.3, 0.2)
+	L.ring(x, 0.6, z, R * 0.4, R * 2.1, P.a, 0.45, 10)
+	L.discFx(x, 0.5, z, R * 0.8, R * 1.8, P.a, 0.5, 0.5)
+	L.emit(x, 2, z, P.w, P.a, math.floor((small and 8 or 14) * m), 18, 42, 0.6, 0.45)
+	L.shakeAt(x, z, (small and 0.45 or 0.8) * m, 0.25)
+	if R >= 12 or (d and d.big) then L.flash(P.c, 0.82, 0.25) end
+end
+I.thunder = I.bolt
+
+I.fire = function(x, z, R, m)
+	local P = L.pal()
+	L.flashBall(x, 2, z, R * 0.3, R * 1.9, P.a, 0.5, 0.12)
+	L.flashBall(x, 3, z, R * 0.2, R * 1.2, P.c, 0.36, 0.0)
+	L.flashBall(x, 2, z, R * 0.5, R * 2.5, P.d, 0.75, 0.72)
+	L.ring(x, 0.6, z, R * 0.4, R * 2.3, P.a, 0.55, 12)
+	local scorch = L.disc(R * 1.7, x, 0.4, z, P.k, 0.35, 0.1, SMOOTH)
+	L.fade(scorch, 1.8)
+	for i = 1, 6 do
+		local a = i / 6 * TAU
+		local f = L.ball(R * 0.4, x + math.cos(a) * R * 0.5, 1.5, z + math.sin(a) * R * 0.5, i % 2 == 0 and P.a or P.d, 0.2, NEON)
+		L.tw(f, 0.7, { CFrame = CF(x + math.cos(a) * R * 0.6, rand(7, 12), z + math.sin(a) * R * 0.6), Size = V3(0.3, 0.3, 0.3), Transparency = 1 })
+		Debris:AddItem(f, 0.9)
+	end
+	L.emit(x, 2, z, P.c, P.a, math.floor(26 * m), 12, 36, 1.3, 0.9, { accel = 6 })
+	L.light(scorch, P.a, 50, 3, 0.6)
+	L.shakeAt(x, z, 1.1 * m, 0.4)
+end
+
+I.void = function(x, z, R, m)
+	local P = L.pal()
+	L.ring(x, 0.6, z, R * 2.6, R * 0.3, P.a, 0.35, 10, 0.1, 0.4)
+	L.ring(x, 0.7, z, R * 1.8, R * 0.2, P.d, 0.3, 7)
+	local core = L.ball(R * 0.15, x, 2, z, P.k, 0, SMOOTH)
+	L.tw(core, 0.32, { Size = V3(R * 1.0, R * 1.0, R * 1.0) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	local halo = L.ball(R * 0.3, x, 2, z, P.a, 0.4, NEON)
+	L.tw(halo, 0.32, { Size = V3(R * 1.35, R * 1.35, R * 1.35) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	Debris:AddItem(core, 1.2)
+	Debris:AddItem(halo, 1.2)
+	task.delay(0.34, function()
+		L.tw(core, 0.5, { Size = V3(R * 2.1, R * 2.1, R * 2.1), Transparency = 1 })
+		L.tw(halo, 0.5, { Size = V3(R * 2.8, R * 2.8, R * 2.8), Transparency = 1 })
+		L.ring(x, 0.6, z, R * 0.5, R * 2.7, P.a, 0.55, 13)
+		L.ring(x, 0.7, z, R * 0.3, R * 1.8, P.d, 0.4, 8)
+		L.discFx(x, 0.5, z, R * 1.0, R * 2.2, P.k, 0.7, 0.2)
+		L.emit(x, 2, z, P.d, P.a, math.floor(26 * m), 14, 40, 1.2, 0.9)
+		L.shakeAt(x, z, 1.2 * m, 0.45)
+	end)
+end
+
+I.bloom = function(x, z, R, m)
+	local P = L.pal()
+	local n = math.floor(18 * m)
+	for i = 1, n do
+		local a = i / n * TAU + rand(-0.15, 0.15)
+		local col = (i % 3 == 0) and P.c or ((i % 3 == 1) and P.a or P.d)
+		local petal = L.part(B, V3(R * 0.2, 0.14, R * 0.1), CF(x, 1.2, z) * ANG(0, -a, 0), col, NEON, 0.1)
+		local rr = R * rand(0.7, 1.35)
+		fling(petal, x, 1.2, z, x + math.cos(a) * rr, rand(0.8, 5), z + math.sin(a) * rr, rand(0.7, 1.1), 3)
+	end
+	L.ring(x, 0.6, z, R * 0.4, R * 2.0, P.a, 0.55, 11)
+	L.discFx(x, 0.5, z, R * 1.0, R * 1.9, P.a, 0.6, 0.45)
+	L.flashBall(x, 1.5, z, R * 0.3, R * 1.3, P.c, 0.35, 0.3)
+	L.emit(x, 1.5, z, P.c, P.a, math.floor(20 * m), 8, 24, 1.0, 1.0, { accel = -6, spin = 120 })
+	L.shakeAt(x, z, 0.7 * m, 0.3)
+end
+
+I.water = function(x, z, R, m)
+	local P = L.pal()
+	for i = 0, 2 do
+		task.delay(i * 0.12, function()
+			L.ring(x, 0.55 + i * 0.05, z, R * 0.3, R * (1.8 + i * 0.4), i % 2 == 0 and P.a or P.c, 0.6, 12 - i * 2)
+			L.discFx(x, 0.5, z, R * 0.6, R * (1.7 + i * 0.4), P.a, 0.6, 0.55)
+		end)
+	end
+	L.flashBall(x, 2, z, R * 0.3, R * 1.4, P.c, 0.4, 0.35)
+	L.emit(x, 1, z, P.c, P.a, math.floor(30 * m), 22, 48, 1.2, 1.1, { spread = 70, accel = -90, drag = 0.5 })
+	L.emit(x, 1, z, P.w, P.c, math.floor(14 * m), 10, 26, 2.2, 0.8, { spread = 180, light = 0.4 })
+	L.shakeAt(x, z, 0.8 * m, 0.35)
+end
+
+I.ice = function(x, z, R, m)
+	local P = L.pal()
+	for k = 0, 2 do
+		local cf = CF(x, 1.2, z) * ANG(0, k * PI / 3, 0)
+		local bar = L.part(B, V3(1.0, 0.2, R * 2.3), cf, P.c, NEON, 0.1)
+		L.tw(bar, 0.9, { Transparency = 1, CFrame = cf * ANG(0, 0.35, 0) })
+		Debris:AddItem(bar, 1.0)
+		for s = -1, 1, 2 do
+			for j = 1, 2 do
+				local side = L.part(B, V3(0.6, 0.2, R * 0.5), cf * CF(s * R * 0.35 * j, 0, 0) * ANG(0, s * 0.9, 0), P.a, NEON, 0.2)
+				L.fade(side, 0.9)
+			end
+		end
+	end
+	local n = 10
+	for i = 1, n do
+		local a = i / n * TAU
+		task.delay(i / n * 0.2, function()
+			L.spike(x + math.cos(a) * R * 0.8, z + math.sin(a) * R * 0.8, R * 0.16, R * rand(0.45, 0.7), P.a, P.w, { trans = 0.25, hold = 0.6, lean = rand(-0.2, 0.2) })
+		end)
+	end
+	L.ring(x, 0.6, z, R * 0.4, R * 2.1, P.c, 0.6, 11)
+	L.discFx(x, 0.5, z, R * 1.0, R * 1.9, P.c, 0.7, 0.35)
+	L.emit(x, 2, z, P.w, P.c, math.floor(24 * m), 4, 16, 1.8, 1.4, { accel = 5, drag = 1, light = 0.5 })
+	L.shakeAt(x, z, 0.9 * m, 0.35)
+end
+
+I.prism = function(x, z, R, m)
+	for i = 0, 6 do
+		task.delay(i * 0.05, function()
+			local col = L.hue(i, 7)
+			L.ring(x, 0.55 + i * 0.03, z, R * 0.3, R * (1.2 + i * 0.22), col, 0.6, 9)
+			L.discFx(x, 0.5, z, R * 0.4, R * (1.0 + i * 0.2), col, 0.5, 0.55)
+		end)
+	end
+	local base = rand(0, PI)
+	for k = 0, 5 do
+		local col = L.hue(k, 6)
+		local cf = CF(x, 1.6, z) * ANG(0, base + k * PI / 6, 0)
+		local bar = L.part(B, V3(0.8, 0.22, R * 2.6), cf, col, NEON, 0.05)
+		L.tw(bar, 0.6, { Size = V3(0.05, 0.22, R * 3), Transparency = 1, CFrame = cf * ANG(0, 0.4, 0) })
+		Debris:AddItem(bar, 0.75)
+	end
+	L.flashBall(x, 1.8, z, R * 0.4, R * 1.8, C3(255, 255, 255), 0.4, 0.1)
+	L.emit(x, 2, z, L.hue(0, 7), L.hue(3, 7), math.floor(18 * m), 14, 36, 1.0, 0.8)
+	L.emit(x, 2, z, L.hue(2, 7), L.hue(5, 7), math.floor(18 * m), 14, 36, 1.0, 0.8)
+	L.shakeAt(x, z, 1.0 * m, 0.4)
+end
+
+I.blood = function(x, z, R, m)
+	local P = L.pal()
+	local red = P.a:Lerp(P.k, 0.3)
+	for i = 1, 6 do
+		local ox, oz = x + rand(-R, R) * 0.6, z + rand(-R, R) * 0.6
+		local dd = L.disc(R * rand(0.3, 0.9), ox, 0.45, oz, red, 0.2, 0.08, SMOOTH)
+		L.fade(dd, 1.8)
+	end
+	L.ring(x, 0.6, z, R * 0.4, R * 2.1, P.a, 0.55, 11)
+	L.flashBall(x, 1.6, z, R * 0.3, R * 1.4, P.a, 0.35, 0.2)
+	L.emit(x, 1.5, z, P.a, P.k, math.floor(30 * m), 16, 44, 1.2, 1.1, { spread = 80, accel = -80, drag = 0.6 })
+	for i = 1, 5 do
+		local a = i / 5 * TAU
+		L.spike(x + math.cos(a) * R * 0.5, z + math.sin(a) * R * 0.5, R * 0.1, R * 0.5, red, P.c, { hold = 0.4, trans = 0.1 })
+	end
+	L.shakeAt(x, z, 1.0 * m, 0.4)
+end
+
+I.cage = function(x, z, R, m)
+	local P = L.pal()
+	local n = 12
+	local h = R * 1.0
+	for i = 1, n do
+		local a = i / n * TAU
+		local sx, sz = x + math.cos(a) * R * 0.88, z + math.sin(a) * R * 0.88
+		local ux, uz = x - sx, z - sz
+		local yaw = atan2(-ux, -uz)
+		task.delay(i / n * 0.25, function()
+			L.spike(sx, sz, R * 0.13, h, P.a, P.w, { trans = 0.22, hold = 1.1, lean = -0.3, yaw = yaw })
+		end)
+	end
+	L.ring(x, 0.6, z, R * 2.2, R * 2.0, P.c, 0.5, 8)
+	task.delay(0.55, function()
+		L.ring(x, h * 0.7, z, R * 2.0, R * 0.35, P.c, 0.7, 10, 0.1, 0.5)
+	end)
+	task.delay(1.3, function()
+		L.flashBall(x, 2, z, R * 0.6, R * 2.2, P.w, 0.45, 0.2)
+		L.ring(x, 0.6, z, R * 0.4, R * 2.6, P.a, 0.6, 13)
+		L.emit(x, 3, z, P.w, P.c, math.floor(40 * m), 16, 44, 1.4, 1.1)
+		L.shakeAt(x, z, 1.3 * m, 0.45)
+	end)
+	L.discFx(x, 0.5, z, R * 1.0, R * 2.0, P.c, 1.2, 0.45)
+end
+
+I.arcane = function(x, z, R, m)
+	local P = L.pal()
+	L.rune(x, 0.5, z, R * 2.0, 0.9, 2.4, P.a, P.c)
+	L.flashBall(x, 2, z, R * 0.3, R * 1.6, P.c, 0.45, 0.25)
+	L.ring(x, 0.6, z, R * 0.4, R * 2.4, P.a, 0.6, 11)
+	L.emit(x, 2, z, P.c, P.a, math.floor(26 * m), 8, 22, 1.0, 1.0, { spread = 30, accel = 14, drag = 1 })
+	L.shakeAt(x, z, 1.0 * m, 0.4)
+end
+
+I.holy = function(x, z, R, m)
+	I.pillar(x, z, R * 0.9, m)
+	I.star(x, z, R, m)
+	local P = L.pal()
+	L.ring(x, 0.8, z, R * 0.2, R * 2.8, P.w, 0.7, 6)
+	L.emit(x, 3, z, P.w, P.c, math.floor(18 * m), 4, 12, 1.4, 1.5, { accel = 6, drag = 1, light = 0.6 })
+end
+
+-- ring(s) of spikes; d.variant: crystal | thorn | ice | flame | obsidian
+I.spikes = function(x, z, R, m, d)
+	local P = L.pal()
+	local v = d and d.variant or "crystal"
+	local cfg = {
+		crystal = { w = 0.15, h = 0.62, mat = NEON, tr = 0.15, c1 = P.a, c2 = P.w },
+		thorn = { w = 0.1, h = 0.8, mat = NEON, tr = 0.05, c1 = P.a:Lerp(P.k, 0.15), c2 = P.c },
+		ice = { w = 0.15, h = 0.7, mat = NEON, tr = 0.3, c1 = P.c, c2 = P.w },
+		flame = { w = 0.17, h = 0.8, mat = NEON, tr = 0.18, c1 = P.a, c2 = P.c },
+		obsidian = { w = 0.15, h = 0.7, mat = SMOOTH, tr = 0.0, c1 = P.k:Lerp(P.a, 0.25), c2 = P.a },
+	}
+	local c = cfg[v] or cfg.crystal
+	local function ringOf(rad, n, delay0, hmul)
+		for i = 1, n do
+			local a = i / n * TAU
+			task.delay(delay0 + i / n * 0.28, function()
+				local lean = v == "thorn" and rand(-0.35, 0.35) or rand(-0.12, 0.12)
+				L.spike(x + math.cos(a) * rad, z + math.sin(a) * rad, R * c.w, R * c.h * hmul * rand(0.8, 1.2), c.c1, c.c2, { mat = c.mat, trans = c.tr, hold = 0.75, lean = lean })
+				if v == "flame" then L.emit(x + math.cos(a) * rad, 3, z + math.sin(a) * rad, P.c, P.a, 3, 4, 12, 1.1, 0.6, { accel = 8 }) end
+			end)
+		end
+	end
+	ringOf(R * 0.92, math.max(10, math.floor(R * 1.3)), 0, 1)
+	ringOf(R * 0.58, math.max(7, math.floor(R * 0.8)), 0.1, 1.2)
+	ringOf(R * 0.25, 4, 0.2, 1.5)
+	task.delay(0.1, function() L.spike(x, z, R * 0.2, R * 1.0, c.c1, c.c2, { mat = c.mat, trans = c.tr, hold = 0.8 }) end)
+	L.ring(x, 0.6, z, R * 0.4, R * 2.1, c.c1, 0.55, 11)
+	L.discFx(x, 0.5, z, R * 1.1, R * 2.0, c.c1, 0.6, 0.45)
+	cracks(x, z, R, P, 8)
+	L.emit(x, 1.5, z, c.c2, c.c1, math.floor(22 * m), 12, 34, 1.2, 0.8)
+	L.shakeAt(x, z, 1.1 * m, 0.4)
+end
+
+-- ============================================================ HIT / DROP IMPACT DISPATCH
+local function playImpact(style, x, z, R, m, d)
+	local f = I[style] or I.slam
+	local ok, err = pcall(f, x, z, R, m, d)
+	if not ok then warn("[UltImpact] " .. tostring(style) .. ": " .. tostring(err)) end
+end
+M.playImpact = playImpact
+M.styles = I
+
+M.hit = function(d)
+	playImpact(d.style or "slam", d.x, d.z, d.r, L.m(), d)
+end
+
+-- ============================================================ TELEGRAPH
+M.tele = function(d)
+	local P = L.pal()
+	local x, z, R, dur = d.x, d.z, d.r or 10, d.dur or 1
+	local st = d.style or "circle"
+	if st == "line" then
+		local len, w = d.len or 50, d.w or 4
+		local o = V3(d.x, 0.4, d.z)
+		local dir = V3(d.dx, 0, d.dz)
+		local mid = o + dir * (len / 2)
+		local base = L.part(B, V3(w * 2, 0.06, len), CFrame.lookAt(mid, mid + dir), P.a, NEON, 0.82)
+		L.fade(base, dur + 0.15)
+		local fill = L.part(B, V3(w * 2, 0.08, 0.2), CFrame.lookAt(o + dir * 0.1, o + dir * 1.1), P.c, NEON, 0.55)
+		L.tw(fill, dur, { Size = V3(w * 2, 0.08, len), CFrame = CFrame.lookAt(mid, mid + dir) }, Enum.EasingStyle.Linear)
+		L.fade(fill, 0.2)
+		task.delay(dur, function() fill.Transparency = 0.2 end)
+		for s = -1, 1, 2 do
+			local side = o + CFrame.lookAt(o, o + dir).RightVector * s * w
+			local e = L.seg(side, side + dir * len, 0.35, 0.08, P.c, 0.1, NEON)
+			L.fade(e, dur + 0.2)
+		end
+		L.ring(x, 0.45, z, w * 3, w * 3, P.c, dur, 6, 0.1, 0.5)
+		return
+	end
+	if st == "rune" then
+		L.rune(x, 0.45, z, R * 2, dur + 0.1, 1.3, P.a, P.c)
+	elseif st == "star" then
+		L.ring(x, 0.45, z, R * 2, R * 2, P.a, dur, 8, 0.05, 0.4)
+		local g = L.group(CF(x, 0.5, z))
+		for k = 0, 4 do
+			local a1, a2 = k * TAU / 5, ((k + 2) % 5) * TAU / 5
+			local r = R * 0.95
+			local p1 = V3(math.cos(a1) * r, 0, math.sin(a1) * r)
+			local p2 = V3(math.cos(a2) * r, 0, math.sin(a2) * r)
+			g.add(L.part(B, V3(0.45, 0.06, (p2 - p1).Magnitude), CF(), P.c, NEON, 0.1), CFrame.lookAt((p1 + p2) / 2, (p1 + p2) / 2 + (p2 - p1)))
+			g.add(L.ball(1.4, 0, 0, 0, P.w, 0, NEON), CF(p1))
+		end
+		L.anim(dur + 0.1, function(al, t) g.set(CF(x, 0.5, z) * ANG(0, t * 0.8, 0)) end, function() g.fade(0.25) end)
+	else
+		L.ring(x, 0.45, z, R * 2, R * 2, P.a, dur, 10, 0.05, 0.3)
+		L.ring(x, 0.5, z, R * 1.2, R * 1.2, P.c, dur, 5, 0.2, 0.5)
+	end
+	local base = L.disc(R * 2, x, 0.38, z, P.a, 0.86, 0.05)
+	L.fade(base, dur + 0.15)
+	local fill = L.disc(0.5, x, 0.42, z, P.c, 0.6, 0.05)
+	L.tw(fill, dur, { Size = V3(0.05, R * 2, R * 2) }, Enum.EasingStyle.Linear)
+	L.fade(fill, 0.25)
+	task.delay(dur, function() fill.Transparency = 0.25 end)
+end
+
+-- ============================================================ HEAL / REBIRTH
+M.heal = function(d)
+	local P = L.pal()
+	local pos = L.heroPos(d.uid)
+	if not pos then return end
+	local x, z = pos.X, pos.Z
+	for i = 0, 3 do
+		task.delay(i * 0.12, function()
+			local dd = L.disc(8, x, 0.8, z, i % 2 == 0 and P.c or P.a, 0.3, 0.15)
+			L.tw(dd, 0.7, { CFrame = CF(x, 8 + i * 1.5, z) * ANG(0, 0, PI / 2), Size = V3(0.15, 3, 3), Transparency = 1 })
+			Debris:AddItem(dd, 0.85)
+		end)
+	end
+	L.ring(x, 0.7, z, 3, 16, P.c, 0.6, 9)
+	L.emit(x, 1, z, P.w, P.c, 26, 4, 14, 0.9, 1.4, { accel = 10, drag = 1, spread = 40 })
+	if d.style == "phoenix" then
+		for s = -1, 1, 2 do
+			local wing = L.part(B, V3(9, 0.3, 3), CF(x + s * 4.5, 4, z) * ANG(0, 0, s * 0.5), P.a, NEON, 0.2)
+			L.tw(wing, 0.8, { Size = V3(18, 0.3, 5), CFrame = CF(x + s * 9, 7, z) * ANG(0, 0, s * 0.9), Transparency = 1 })
+			Debris:AddItem(wing, 0.95)
+		end
+	end
+	L.shake(0.6, 0.3)
+end
+
+-- ============================================================ SCREEN
+local function pick(P, k)
+	return P[k or "c"] or P.c
+end
+M.screen = function(d)
+	local P = L.pal()
+	if d.flash then L.flash(pick(P, d.fc), d.flash, d.fd or 0.45) end
+	if d.shake then L.shake(d.shake, d.sd or 0.6) end
+	if d.dark then L.tint(pick(P, d.dc or "k"), d.dark, d.tin or 0.4, d.hold or 2, d.tout or 0.9) end
+end
+
+-- ============================================================ MUZZLE (magic circle in front of the shooter)
+M.muzzle = function(d)
+	local P = L.pal()
+	local pos = L.heroPos(d.uid)
+	if not pos then return end
+	local fx, fz = pos.X + d.dx * 4, pos.Z + d.dz * 4
+	L.rune(fx, 0.8, fz, 9, d.dur or 0.7, 3, P.a, P.c)
+	L.flashBall(fx, 2, fz, 2, 7, P.c, 0.4, 0.3)
+	L.emit(fx, 2, fz, P.w, P.a, 14, 10, 28, 0.7, 0.5, { dirX = d.dx, dirZ = d.dz, spread = 35 })
+end
+
+-- ============================================================ SKY ELEMENTS (persistent, last d.dur seconds)
+local S = {}
+
+S.sun = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur, d.r or 24
+	local s = r / 22
+	local g, carrier = L.makeObj("sun", s, 0)
+	for _, it in ipairs(g.items) do it[1].Transparency = math.min(0.9, it[1].Transparency + 0.25) end
+	L.light(carrier, P.c, 70, 3)
+	L.anim(dur, function(al, t)
+		local rise = math.min(1, t / 0.7)
+		g.set(CF(x, 14 + 16 * rise + math.sin(t * 2) * 0.8, z) * ANG(0, t * 0.8, 0))
+		if al > 0.88 then
+			for _, it in ipairs(g.items) do it[1].Transparency = math.min(1, it[1].Transparency + 0.12) end
+		end
+	end, function() g.destroy() end)
+	L.ring(x, 0.5, z, r * 2, r * 2, P.a, dur, 6, 0.4, 0.8)
+end
+
+S.moon = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur, d.r or 28
+	local y = 32
+	local moon = L.disc(r * 1.2, x, y, z, P.a, 0.45, 0.6)
+	local halo = L.disc(r * 2.0, x, y - 0.3, z, P.d, 0.82, 0.3)
+	local crater = {}
+	for i = 1, 5 do
+		local a = i * 1.7
+		local rr = r * 0.32 * (i % 3 + 1) / 3
+		crater[i] = L.disc(r * 0.16 * (1 + i % 2), x + math.cos(a) * rr, y + 0.4, z + math.sin(a) * rr, P.k, 0.55, 0.3, SMOOTH)
+	end
+	L.light(moon, P.a, 80, 2)
+	local ringP = L.ring(x, 0.5, z, r * 2.2, r * 2.2, P.a, dur, 7, 0.3, 0.8)
+	L.anim(dur, function(al, t)
+		local pulse = 1 + 0.04 * math.sin(t * 3)
+		halo.Size = V3(0.3, r * 2.0 * pulse, r * 2.0 * pulse)
+		if al > 0.88 then
+			local f = (al - 0.88) / 0.12
+			moon.Transparency = 0.45 + 0.55 * f
+			halo.Transparency = 0.82 + 0.18 * f
+			for _, c in ipairs(crater) do c.Transparency = 0.55 + 0.45 * f end
+		end
+	end, function()
+		moon:Destroy()
+		halo:Destroy()
+		for _, c in ipairs(crater) do c:Destroy() end
+	end)
+end
+
+S.eclipse = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur, d.r or 28
+	local y = 30
+	local core = L.ball(r * 0.9, x, y, z, P.k, 0.6, SMOOTH)
+	local glow = L.disc(r * 2.2, x, y - 0.5, z, P.a, 0.86, 0.2)
+	local g = L.group(CF(x, y, z))
+	for i = 1, 28 do
+		local a = i * TAU / 28
+		local len = r * (i % 2 == 0 and 0.75 or 0.45)
+		g.add(L.part(B, V3(0.9, 0.5, len), CF(), i % 2 == 0 and P.c or P.a, NEON, 0.2), ANG(0, a, 0) * CF(0, 0, -(r * 0.45 + len / 2)))
+	end
+	local ringP = L.ring(x, y, z, r * 1.05, r * 1.05, P.c, dur, 9, 0.05, 0.4)
+	local ring2 = L.ring(x, y, z, r * 1.5, r * 1.5, P.a, dur, 5, 0.2, 0.6)
+	L.light(core, P.a, 80, 2)
+	L.anim(dur, function(al, t)
+		g.set(CF(x, y, z) * ANG(0, t * 0.7, 0))
+		glow.Size = V3(0.2, r * 2.2 * (1 + 0.05 * math.sin(t * 4)), r * 2.2 * (1 + 0.05 * math.sin(t * 4)))
+		if al > 0.88 then
+			local f = (al - 0.88) / 0.12
+			core.Transparency = 0.6 + 0.4 * f
+			for _, it in ipairs(g.items) do it[1].Transparency = math.min(1, 0.2 + 0.8 * f) end
+		end
+	end, function()
+		core:Destroy()
+		glow:Destroy()
+		g.destroy()
+	end)
+end
+
+S.cloud = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur, d.r or 28
+	local y = 30
+	local g = L.group(CF(x, y, z))
+	local grey = P.k:Lerp(C3(70, 74, 96), 0.55)
+	for i = 1, 11 do
+		local a = i * 2.4
+		local rr = r * math.sqrt(i / 11) * 0.75
+		local dd = L.part(CY, V3(2 + (i % 3), r * (0.5 + 0.12 * (i % 4)), r * (0.5 + 0.12 * (i % 4))), CF(), grey, SMOOTH, 0.62)
+		g.add(dd, CF(math.cos(a) * rr, (i % 3) * 0.8, math.sin(a) * rr) * ANG(0, 0, PI / 2))
+	end
+	local rim = L.ring(x, y + 1, z, r * 1.7, r * 1.7, P.a, dur, 6, 0.4, 0.8)
+	local flashDisc = L.disc(r * 1.6, x, y + 0.5, z, P.c, 1, 0.3)
+	local nextFlash = 0.4
+	L.anim(dur, function(al, t)
+		g.set(CF(x, y, z) * ANG(0, t * 0.15, 0))
+		if t > nextFlash then
+			nextFlash = t + rand(0.25, 0.7)
+			flashDisc.Transparency = 0.55
+			L.tw(flashDisc, 0.25, { Transparency = 1 })
+			local bx, bz = x + rand(-r, r) * 0.6, z + rand(-r, r) * 0.6
+			L.bolt(V3(bx, y, bz), V3(bx + rand(-4, 4), 0.5, bz + rand(-4, 4)), 1.6, P.a, P.w, 0.18, 4, 8)
+		end
+	end, function()
+		g.fade(0.4)
+		flashDisc:Destroy()
+	end)
+end
+
+S.lantern = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur, d.r or 24
+	local y = 17
+	local g = L.group(CF(x, y, z))
+	g.add(L.part(B, V3(3.4, 4.4, 3.4), CF(), P.c, NEON, 0.15), CF())
+	g.add(L.part(B, V3(4.4, 0.7, 4.4), CF(), P.d, NEON, 0.1), CF(0, 2.5, 0))
+	g.add(L.part(B, V3(4.4, 0.7, 4.4), CF(), P.d, NEON, 0.1), CF(0, -2.5, 0))
+	g.add(L.ball(2.4, 0, 0, 0, P.w, 0, NEON), CF())
+	g.add(L.ball(12, 0, 0, 0, P.a, 0.85, NEON), CF())
+	local rays = L.group(CF(x, 0.55, z))
+	for i = 1, 12 do
+		rays.add(L.part(B, V3(0.55, 0.06, r * 0.95), CF(), i % 2 == 0 and P.c or P.a, NEON, 0.45), ANG(0, i * TAU / 12, 0) * CF(0, 0, -r * 0.5))
+	end
+	local orbs = {}
+	for i = 1, 5 do orbs[i] = L.ball(1.4, x, y, z, P.d, 0, NEON) end
+	L.ring(x, 0.5, z, r * 2, r * 2, P.a, dur, 7, 0.3, 0.8)
+	L.light(g.items[1][1], P.c, 70, 3)
+	L.anim(dur, function(al, t)
+		g.set(CF(x, y + math.sin(t * 2) * 0.8, z) * ANG(0, t * 0.9, 0))
+		rays.set(CF(x, 0.55, z) * ANG(0, -t * 0.5, 0))
+		for i, o in ipairs(orbs) do
+			local a = t * 1.8 + i * TAU / 5
+			o.CFrame = CF(x + math.cos(a) * 7, y + math.sin(a * 2) * 2, z + math.sin(a) * 7)
+		end
+	end, function()
+		g.fade(0.4)
+		rays.fade(0.4)
+		for _, o in ipairs(orbs) do L.fade(o, 0.4) end
+	end)
+end
+
+S.star = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur, d.r or 24
+	local y = 15
+	local core = L.ball(3, x, y, z, P.w, 0.1, NEON)
+	local shell = L.ball(5, x, y, z, P.a, 0.5, NEON)
+	local halo = L.ball(9, x, y, z, P.d, 0.85, NEON)
+	local ground = L.disc(r * 1.8, x, 0.45, z, P.a, 0.86, 0.1)
+	local rings = {}
+	for k = 1, 3 do
+		local g = L.group(CF(x, y, z))
+		for i = 1, 14 do
+			local a = i * TAU / 14
+			g.add(L.ball(1.2, 0, 0, 0, k % 2 == 0 and P.c or P.a, 0.1, NEON), CF(math.cos(a) * r * 0.42, 0, math.sin(a) * r * 0.42))
+		end
+		rings[k] = g
+	end
+	L.light(core, P.c, 90, 4)
+	L.anim(dur, function(al, t)
+		local grow = math.min(1, t / (dur * 0.7))
+		local sz = 3 + (r * 0.42) * grow
+		core.Size = V3(sz, sz, sz)
+		shell.Size = V3(sz * 1.5, sz * 1.5, sz * 1.5)
+		halo.Size = V3(sz * 2.8, sz * 2.8, sz * 2.8)
+		for k, g in ipairs(rings) do
+			g.set(CF(x, y, z) * ANG(t * (0.8 + k * 0.4), t * (1.0 + k * 0.3), k * 1.1))
+		end
+		if al > 0.9 then
+			local f = (al - 0.9) / 0.1
+			core.Transparency = 0.1 + 0.9 * f
+			shell.Transparency = 0.5 + 0.5 * f
+			halo.Transparency = 0.85 + 0.15 * f
+		end
+	end, function()
+		core:Destroy()
+		shell:Destroy()
+		halo:Destroy()
+		ground:Destroy()
+		for _, g in ipairs(rings) do g.destroy() end
+	end)
+end
+
+S.crown = function(d)
+	local P = L.pal()
+	local dur = d.dur
+	local uid = d.uid
+	local n = 10
+	local g = L.group(CF())
+	for i = 1, n do
+		local a = i * TAU / n
+		local tall = (i % 2 == 0) and 7 or 4.5
+		g.add(L.part(B, V3(1.3, tall, 1.3), CF(), i % 2 == 0 and P.a or P.d, NEON, 0.1), CF(math.cos(a) * 5.5, tall / 2, math.sin(a) * 5.5))
+		g.add(L.part(B, V3(1.3, tall, 1.3), CF(), P.c, NEON, 0.35), CF(math.cos(a) * 5.5, tall / 2, math.sin(a) * 5.5) * ANG(0, PI / 4, 0))
+		g.add(L.ball(1.6, 0, 0, 0, P.w, 0, NEON), CF(math.cos(a) * 5.5, tall + 0.4, math.sin(a) * 5.5))
+	end
+	g.add(L.part(CY, V3(0.6, 12.5, 12.5), CF(), P.a, NEON, 0.2), ANG(0, 0, PI / 2))
+	local last = L.heroPos(uid)
+	L.anim(dur, function(al, t)
+		local pos = L.heroPos(uid) or last
+		if not pos then return end
+		last = pos
+		local pulse = 1 + 0.08 * math.sin(t * 5)
+		g.set(CF(pos.X, 9 + math.sin(t * 3) * 0.6, pos.Z) * ANG(0, t * 1.5, 0) * CFrame.new(0, 0, 0))
+	end, function()
+		if last then
+			L.ring(last.X, 1, last.Z, 8, 36, P.a, 0.6, 11)
+			L.emit(last.X, 9, last.Z, P.c, P.a, 40, 20, 50, 1.4, 0.8)
+		end
+		g.fade(0.35)
+	end)
+end
+
+S.portal = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur, d.r or 24
+	local base = L.disc(r * 1.5, x, 0.4, z, P.k, 0.3, 0.1, SMOOTH)
+	local glow = L.disc(r * 1.9, x, 0.38, z, P.a, 0.85, 0.1)
+	L.rune(x, 0.5, z, r * 1.7, dur, 0.9, P.a, P.c)
+	local smoke = L.part(B, V3(r, 0.2, r), CF(x, 1, z), P.k, SMOOTH, 1)
+	local em = L.stream(smoke, P.k, P.a, 30, 4, 1.6, 10, { accel = 8, spread = 40, light = 0.3 })
+	L.anim(dur, function(al, t)
+		local s = r * 1.5 * (1 + 0.04 * math.sin(t * 4))
+		base.Size = V3(0.1, s, s)
+		if al > 0.9 then em.Enabled = false end
+	end, function()
+		L.fade(base, 0.4)
+		L.fade(glow, 0.4)
+		smoke:Destroy()
+	end)
+end
+
+S.galaxy = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur, d.r or 30
+	local floor = L.disc(r * 2.2, x, 0.35, z, P.k, 0.45, 0.1, SMOOTH)
+	local g = L.group(CF(x, 0.7, z))
+	local arms, per = 4, 15
+	for a = 0, arms - 1 do
+		for j = 1, per do
+			local f = j / per
+			local ang = a * TAU / arms + f * 2.6
+			local rr = r * f
+			local col = L.grad(f)
+			local s = 0.8 + (1 - f) * 1.4
+			g.add(L.ball(s, 0, 0, 0, col, 0.1, NEON), CF(math.cos(ang) * rr, math.sin(j) * 0.4, math.sin(ang) * rr))
+		end
+	end
+	g.add(L.ball(r * 0.18, 0, 0, 0, P.w, 0.1, NEON), CF(0, 0.5, 0))
+	g.add(L.ball(r * 0.34, 0, 0, 0, P.a, 0.7, NEON), CF(0, 0.5, 0))
+	L.anim(dur, function(al, t)
+		g.set(CF(x, 0.7, z) * ANG(0, t * 0.45, 0))
+		if al > 0.9 then
+			for _, it in ipairs(g.items) do it[1].Transparency = math.min(1, it[1].Transparency + 0.08) end
+			floor.Transparency = math.min(1, floor.Transparency + 0.05)
+		end
+	end, function()
+		g.destroy()
+		floor:Destroy()
+	end)
+end
+
+S.prismcore = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur, d.r or 30
+	local y = 17
+	local g = L.group(CF(x, y, z))
+	for k = 0, 2 do
+		g.add(L.part(B, V3(4, 4, 15), CF(), L.hue(k * 2, 6), NEON, 0.2), ANG(0, k * PI / 3, 0) * ANG(0, 0, PI / 4))
+	end
+	g.add(L.ball(6, 0, 0, 0, C3(255, 255, 255), 0.1, NEON), CF())
+	g.add(L.ball(15, 0, 0, 0, C3(255, 255, 255), 0.88, NEON), CF())
+	local discs = {}
+	for i = 0, 6 do
+		local dd = L.disc(r * (0.5 + i * 0.12), x, 0.4 + i * 0.02, z, L.hue(i, 7), 0.82, 0.08)
+		discs[i + 1] = dd
+	end
+	L.light(g.items[1][1], C3(255, 255, 255), 90, 4)
+	L.anim(dur, function(al, t)
+		g.set(CF(x, y + math.sin(t * 2.5) * 1.0, z) * ANG(t * 0.6, t * 1.6, t * 0.4))
+		for i, dd in ipairs(discs) do
+			dd.Color = L.hue(i - 1 + t * 2, 7)
+			local s = r * (0.5 + (i - 1) * 0.12) * (1 + 0.03 * math.sin(t * 4 + i))
+			dd.Size = V3(0.08, s, s)
+		end
+		if al > 0.9 then
+			for _, it in ipairs(g.items) do it[1].Transparency = math.min(1, it[1].Transparency + 0.1) end
+		end
+	end, function()
+		g.destroy()
+		for _, dd in ipairs(discs) do L.fade(dd, 0.4) end
+	end)
+end
+
+M.sky = function(d)
+	local f = S[d.style or "sun"]
+	if f then f(d) end
+end
+
+-- ============================================================ ZONES (lingering damage fields)
+local Zcfg = {}
+Zcfg.frost = function(x, z, r, P, m)
+	local ox, oz = x + rand(-r, r) * 0.8, z + rand(-r, r) * 0.8
+	L.spike(ox, oz, 1.1, rand(2.5, 5), P.c, P.w, { trans = 0.25, hold = 0.4, rise = 0.12 })
+	L.emit(ox, 1.5, oz, P.w, P.c, 3, 3, 10, 0.9, 1.1, { accel = 4, light = 0.5 })
+end
+Zcfg.fire = function(x, z, r, P, m)
+	local ox, oz = x + rand(-r, r) * 0.8, z + rand(-r, r) * 0.8
+	local f = L.ball(rand(2, 4), ox, 1, oz, P.a, 0.3, NEON)
+	L.tw(f, 0.6, { CFrame = CF(ox, rand(5, 9), oz), Size = V3(0.3, 0.3, 0.3), Transparency = 1 })
+	Debris:AddItem(f, 0.8)
+	L.emit(ox, 1.5, oz, P.c, P.a, 4, 4, 14, 1.0, 0.8, { accel = 8 })
+end
+Zcfg.thorns = function(x, z, r, P, m)
+	local ox, oz = x + rand(-r, r) * 0.8, z + rand(-r, r) * 0.8
+	L.spike(ox, oz, 0.8, rand(3, 6), P.a, P.c, { hold = 0.6, rise = 0.14, lean = rand(-0.4, 0.4) })
+end
+Zcfg.nature = function(x, z, r, P, m)
+	local ox, oz = x + rand(-r, r) * 0.8, z + rand(-r, r) * 0.8
+	local b = L.ball(rand(1, 2.2), ox, 0.8, oz, P.c, 0.3, NEON)
+	L.tw(b, 0.9, { CFrame = CF(ox, rand(4, 8), oz), Transparency = 1 })
+	Debris:AddItem(b, 1.0)
+	L.emit(ox, 1, oz, P.a, P.c, 3, 3, 8, 0.8, 1.0, { accel = 5, spin = 90 })
+end
+Zcfg.holy = function(x, z, r, P, m)
+	local ox, oz = x + rand(-r, r) * 0.8, z + rand(-r, r) * 0.8
+	local c = L.part(B, V3(0.9, 30, 0.9), CF(ox, 15, oz), P.w, NEON, 0.3)
+	L.tw(c, 0.55, { Size = V3(0.1, 30, 0.1), Transparency = 1 })
+	Debris:AddItem(c, 0.7)
+	L.ring(ox, 0.6, oz, 1, 5, P.c, 0.4, 6)
+end
+Zcfg.water = function(x, z, r, P, m)
+	local ox, oz = x + rand(-r, r) * 0.8, z + rand(-r, r) * 0.8
+	L.ring(ox, 0.6, oz, 1, rand(5, 9), P.c, 0.7, 7)
+	L.emit(ox, 1, oz, P.w, P.c, 3, 6, 16, 0.8, 0.8, { spread = 60, accel = -50 })
+end
+Zcfg.void = function(x, z, r, P, m)
+	local ox, oz = x + rand(-r, r) * 0.8, z + rand(-r, r) * 0.8
+	L.ring(ox, 0.6, oz, 7, 1, P.a, 0.5, 6, 0.3, 0.2)
+	local b = L.ball(rand(2, 3.5), ox, 1, oz, P.k, 0.25, SMOOTH)
+	L.tw(b, 0.7, { CFrame = CF(ox, rand(4, 8), oz), Transparency = 1 })
+	Debris:AddItem(b, 0.9)
+	L.emit(ox, 1.5, oz, P.d, P.a, 3, 4, 12, 0.9, 0.8, { accel = 8 })
+end
+Zcfg.storm = function(x, z, r, P, m)
+	local ox, oz = x + rand(-r, r) * 0.8, z + rand(-r, r) * 0.8
+	L.bolt(V3(ox + rand(-3, 3), 40, oz), V3(ox, 0.5, oz), 1.5, P.a, P.w, 0.18, 3, 8)
+	L.ring(ox, 0.6, oz, 1, 5, P.c, 0.3, 6)
+end
+Zcfg.night = function(x, z, r, P, m)
+	local ox, oz = x + rand(-r, r) * 0.8, z + rand(-r, r) * 0.8
+	local l = rand(3, 6)
+	local b1 = L.part(B, V3(l, 0.1, 0.5), CF(ox, 1, oz), P.c, NEON, 0.1)
+	local b2 = L.part(B, V3(0.5, 0.1, l), CF(ox, 1, oz), P.c, NEON, 0.1)
+	L.fade(b1, 0.8, { Size = V3(0.1, 0.1, 0.1) })
+	L.fade(b2, 0.8, { Size = V3(0.1, 0.1, 0.1) })
+end
+local zoneBase = { frost = "c", fire = "a", thorns = "a", nature = "a", holy = "c", water = "a", void = "k", storm = "a", night = "k" }
+
+M.zone = function(d)
+	local P = L.pal()
+	local x, z, dur, r = d.x, d.z, d.dur or 3, d.r or 14
+	local st = Zcfg[d.style or "fire"] and (d.style or "fire") or "fire"
+	local base = L.disc(r * 2, x, 0.36, z, P[zoneBase[st]], 0.8, 0.08, SMOOTH)
+	local edge = L.ring(x, 0.5, z, r * 2, r * 2, P.a, dur, 8, 0.15, 0.55)
+	local nextT = 0
+	local m = L.m()
+	local wid = d.wid
+	L.anim(dur, function(al, t)
+		if al > 0.85 then base.Transparency = math.min(1, 0.8 + (al - 0.85) / 0.15 * 0.2) end
+		if t >= nextT then
+			nextT = t + 0.2
+			L.setWeapon(wid)
+			local Pn = L.pal()
+			for _ = 1, 2 do Zcfg[st](x, z, r, Pn, m) end
+		end
+	end, function() base:Destroy() end)
+end
+
+return M
+]]></ProtectedString>
+</Properties>
+</Item>
+<Item class="ModuleScript" referent="RBX_ULT5">
+<Properties>
+<string name="Name">UltMotion</string>
+<ProtectedString name="Source"><![CDATA[-- UltMotion: moving / lasting ultimate effects (beams, novas, orbits, vortices, walls, dashes, chains, spokes, falling objects)
+local L = require(script.Parent:WaitForChild("UltLib"))
+local Imp = require(script.Parent:WaitForChild("UltImpact"))
+
+local C3, V3, CF, ANG = L.C3, L.V3, L.CF, L.ANG
+local B, CY, BALL, NEON, SMOOTH, PI, TAU = L.B, L.CY, L.BALL, L.NEON, L.SMOOTH, L.PI, L.TAU
+local Debris = L.Debris
+local rand = L.rand
+
+local M = {}
+
+local function pk(P, k) return P[k] or P.a end
+
+-- ============================================================ BEAM (static or rotating, 1..n arms)
+local BS = {
+	laser = { { 2.4, "a", 0.8 }, { 1.3, "c", 0.4 }, { 0.5, "w", 0.02 } },
+	holy = { { 3.0, "c", 0.84 }, { 1.6, "a", 0.45 }, { 0.65, "w", 0 } },
+	fire = { { 2.4, "a", 0.62 }, { 1.4, "d", 0.32 }, { 0.55, "c", 0.04 } },
+	ice = { { 2.2, "c", 0.6 }, { 1.2, "a", 0.3 }, { 0.5, "w", 0 } },
+	void = { { 2.6, "a", 0.68 }, { 1.5, "k", 0.02 }, { 0.5, "d", 0.1 } },
+	blood = { { 2.6, "a", 0.6 }, { 1.4, "k", 0.05 }, { 0.5, "c", 0.05 } },
+	nature = { { 2.4, "a", 0.7 }, { 1.3, "c", 0.35 }, { 0.5, "w", 0.05 } },
+	gale = { { 2.8, "c", 0.86 }, { 1.2, "a", 0.5 }, { 0.4, "w", 0.2 } },
+	lightning = { { 1.8, "a", 0.7 }, { 0.8, "c", 0.2 } },
+	prism = { { 2.6, "a", 0.7 }, { 1.4, "c", 0.35 }, { 0.5, "w", 0 } },
+}
+
+M.beam = function(d)
+	local P = L.pal()
+	local m = L.m()
+	local style = BS[d.style] and d.style or "laser"
+	local layers = BS[style]
+	local arms = d.arms or 1
+	local len, w, dur = d.len, d.w, d.dur
+	local ang0, sweep, spread = d.ang0 or 0, d.sweep or 0, d.spread or 0
+	local uid = d.uid
+	local origin0 = V3(d.x, 2.4, d.z)
+	local last = origin0
+	local armsData = {}
+	for a = 1, arms do
+		local parts = {}
+		for li, l in ipairs(layers) do
+			local col = pk(P, l[2])
+			if style == "prism" then
+				if li == 1 then col = L.hue(a - 1 + 0.5, arms) elseif li == 2 then col = L.hue(a - 1, arms) end
+			end
+			local pp = L.part(B, V3(w * l[1], 0.5 + 0.35 * l[1], len), CF(origin0), col, NEON, l[3])
+			parts[#parts + 1] = { p = pp, base = l[3], wm = l[1] }
+		end
+		local tip = L.ball(w * 1.6, d.x, 2.4, d.z, pk(P, "c"), 0.15, NEON)
+		local mover = {}
+		if style == "fire" or style == "ice" or style == "gale" or style == "void" or style == "blood" or style == "nature" then
+			for i = 1, math.max(6, math.floor(len / 6)) do
+				local part
+				if style == "fire" or style == "blood" then
+					part = L.ball(w * rand(1.2, 2.2), 0, 0, 0, i % 2 == 0 and P.d or P.c, 0.3, NEON)
+				elseif style == "ice" then
+					part = L.part(B, V3(w * 0.7, w * 0.7, w * 2.4), CF(), i % 2 == 0 and P.w or P.c, NEON, 0.2)
+				elseif style == "nature" then
+					part = L.part(B, V3(w * 0.9, 0.2, w * 0.5), CF(), i % 2 == 0 and P.c or P.d, NEON, 0.15)
+				elseif style == "gale" then
+					part = L.part(CY, V3(0.35, w * 3.2, w * 3.2), CF(), i % 2 == 0 and P.w or P.c, NEON, 0.5)
+				else
+					part = L.ball(w * rand(0.8, 1.6), 0, 0, 0, i % 2 == 0 and P.d or P.a, 0.3, NEON)
+				end
+				mover[#mover + 1] = { p = part, ph = i / 6 + rand(0, 0.1), off = rand(-0.5, 0.5), seed = rand(0, 6) }
+			end
+		end
+		local trail
+		if sweep ~= 0 then trail = L.trail(tip, P.c, P.a, w * 2.4, 0.5, 0) end
+		armsData[a] = { parts = parts, tip = tip, mover = mover }
+	end
+	local flareO = L.ball(w * 3.2, d.x, 2.4, d.z, P.c, 0.35, NEON)
+	local bolts = style == "lightning"
+	local nextBolt = 0
+	local nextSpark = 0
+	L.shake(0.45 * m, dur)
+	L.anim(dur, function(al, t)
+		L.setWeapon(d.wid)
+		local o = origin0
+		if d.follow then
+			local hp = L.heroPos(uid)
+			if hp then last = V3(hp.X, 2.4, hp.Z) end
+			o = last
+		end
+		local fadeIn = math.min(1, t / 0.14)
+		local fadeOut = al > 0.82 and math.max(0, (1 - al) / 0.18) or 1
+		local sc = fadeIn * fadeOut
+		flareO.CFrame = CF(o)
+		flareO.Size = V3(w * 3.2 * sc + 0.05, w * 3.2 * sc + 0.05, w * 3.2 * sc + 0.05)
+		for a = 1, arms do
+			local ang = math.rad(ang0) + (a - 1) * math.rad(spread) + math.rad(sweep) * al
+			local ddx, ddz = L.rot(d.dx, d.dz, ang)
+			local dir = V3(ddx, 0, ddz)
+			local cf0 = CFrame.lookAt(o, o + dir)
+			local ad = armsData[a]
+			for _, pr in ipairs(ad.parts) do
+				local ww = w * pr.wm * sc * (1 + 0.06 * math.sin(t * 40 + a))
+				pr.p.Size = V3(math.max(ww, 0.05), 0.5 + 0.35 * pr.wm * sc, len)
+				pr.p.CFrame = cf0 * CF(0, 0, -len / 2)
+				pr.p.Transparency = 1 - (1 - pr.base) * sc
+			end
+			local tipPos = o + dir * len
+			ad.tip.CFrame = CF(tipPos)
+			local ts = w * 1.8 * sc + 0.05
+			ad.tip.Size = V3(ts, ts, ts)
+			for _, mv in ipairs(ad.mover) do
+				local f = (mv.ph + t * (style == "gale" and 1.6 or 1.1)) % 1
+				local side = cf0.RightVector * (mv.off * w * (style == "gale" and 0.6 or 1.2)) + V3(0, math.sin(t * 9 + mv.seed) * 0.6, 0)
+				local pos = o + dir * (f * len) + side
+				if style == "gale" then
+					mv.p.CFrame = CFrame.lookAt(pos, pos + dir) * ANG(0, PI / 2, 0)
+					local s = (0.4 + f) * w * 3.2 * sc
+					mv.p.Size = V3(0.35, s, s)
+				elseif style == "ice" then
+					mv.p.CFrame = CFrame.lookAt(pos, pos + dir) * ANG(0, 0, f * 6)
+				else
+					mv.p.CFrame = CF(pos)
+					mv.p.Transparency = 0.25 + 0.5 * (1 - sc)
+				end
+			end
+			if bolts and t >= nextBolt then
+				-- crackling arcs jumping off the beam
+				local f1 = rand(0.1, 0.9)
+				local pa = o + dir * (len * f1)
+				local pb = pa + cf0.RightVector * rand(-w * 4, w * 4) + dir * rand(-6, 6)
+				L.bolt(pa, pb, 1.0, P.a, P.w, 0.12, 2, 5)
+			end
+			if t >= nextSpark and sc > 0.5 then
+				L.emit(tipPos.X, 2.4, tipPos.Z, P.w, P.a, 4, 10, 26, 0.7, 0.4)
+			end
+		end
+		if t >= nextBolt then nextBolt = t + 0.07 end
+		if t >= nextSpark then nextSpark = t + 0.12 end
+	end, function()
+		flareO:Destroy()
+		for a = 1, arms do
+			local ad = armsData[a]
+			for _, pr in ipairs(ad.parts) do pr.p:Destroy() end
+			for _, mv in ipairs(ad.mover) do mv.p:Destroy() end
+			ad.tip:Destroy()
+		end
+	end)
+end
+
+-- ============================================================ NOVA (expanding shockwave)
+M.nova = function(d)
+	local P = L.pal()
+	local m = L.m()
+	local x, z, r0, r, dur = d.x, d.z, d.r0 or 2, d.r, d.dur or 0.8
+	local st = d.style or "ring"
+	local rings = d.rings or 1
+	for k = 0, rings - 1 do
+		local delay = k * (d.stagger or 0.09)
+		local col1 = st == "prism" and L.hue(k, rings) or P.a
+		local col2 = st == "prism" and L.hue(k + 0.5, rings) or P.c
+		task.delay(delay, function()
+			L.setWeapon(d.wid)
+			L.ring(x, 0.55 + k * 0.03, z, r0 * 2, r * 2, col1, dur, 12, 0.05, 0.6)
+			L.ring(x, 0.65 + k * 0.03, z, r0 * 1.4, r * 1.7, col2, dur * 0.9, 7)
+			L.discFx(x, 0.45, z, r0 * 2, r * 2, col1, dur, 0.62)
+		end)
+	end
+	if st == "spikes" then
+		local K = math.max(3, math.floor(r / 5))
+		for k = 1, K do
+			local rk = r0 + (r - r0) * k / K
+			local nk = math.max(8, math.floor(TAU * rk / 4.5))
+			task.delay(dur * k / K, function()
+				L.setWeapon(d.wid)
+				local P2 = L.pal()
+				local v = d.variant or "crystal"
+				local c1 = (v == "flame" and P2.a) or (v == "ice" and P2.c) or (v == "obsidian" and P2.k:Lerp(P2.a, 0.25)) or P2.a
+				local c2 = (v == "flame" and P2.c) or P2.w
+				for i = 1, nk do
+					local a = i / nk * TAU + k * 0.4
+					L.spike(x + math.cos(a) * rk, z + math.sin(a) * rk, 1.5, rand(5, 9), c1, c2, { hold = 0.35, rise = 0.12, mat = v == "obsidian" and SMOOTH or NEON, trans = v == "ice" and 0.28 or 0.1 })
+				end
+				L.shakeAt(x, z, 0.5 * m, 0.2)
+			end)
+		end
+	else
+		local n = math.clamp(math.floor(r * 1.1), 14, 46)
+		for i = 1, n do
+			local a = i / n * TAU + rand(-0.05, 0.05)
+			local ux, uz = math.cos(a), math.sin(a)
+			local p0 = V3(x + ux * r0, 1.2, z + uz * r0)
+			local p1 = V3(x + ux * r, 1.2, z + uz * r)
+			local look = CFrame.lookAt(p0, p0 + V3(ux, 0, uz))
+			local part
+			if st == "fire" then
+				part = L.ball(rand(2.5, 4.5), 0, 0, 0, i % 2 == 0 and P.a or P.d, 0.25, NEON)
+				part.CFrame = look
+			elseif st == "frost" or st == "ice" then
+				part = L.part(B, V3(0.9, 0.9, 4), look, i % 2 == 0 and P.c or P.w, NEON, 0.15)
+			elseif st == "void" then
+				part = L.ball(rand(2, 3.4), 0, 0, 0, i % 2 == 0 and P.k or P.a, 0.1, i % 2 == 0 and SMOOTH or NEON)
+				part.CFrame = look
+			elseif st == "holy" then
+				part = L.part(B, V3(0.6, 0.4, 7), look, i % 2 == 0 and P.w or P.c, NEON, 0.1)
+			elseif st == "water" then
+				part = L.ball(rand(2, 3.6), 0, 0, 0, i % 2 == 0 and P.w or P.c, 0.2, NEON)
+				part.CFrame = look
+			elseif st == "prism" then
+				part = L.ball(rand(2, 3.4), 0, 0, 0, L.hue(i, n / 3), 0.1, NEON)
+				part.CFrame = look
+			elseif st == "shock" then
+				part = L.part(B, V3(4.5, 0.5, 0.5), look * ANG(0, PI / 2, 0), i % 2 == 0 and P.w or P.a, NEON, 0.05)
+			else
+				part = L.part(B, V3(1, 0.5, 3), look, i % 2 == 0 and P.c or P.a, NEON, 0.15)
+			end
+			part.CFrame = look
+			L.tw(part, dur, { CFrame = CFrame.lookAt(p1, p1 + V3(ux, 0, uz)) }, Enum.EasingStyle.Linear)
+			task.delay(dur * 0.85, function() L.fade(part, dur * 0.3) end)
+			Debris:AddItem(part, dur + 0.8)
+		end
+		if st == "fire" then
+			L.emit(x, 2, z, P.c, P.a, math.floor(30 * m), 18, 50, 1.4, 0.9)
+		end
+		if st == "shock" then
+			for i = 1, 6 do
+				local a = rand(0, TAU)
+				L.bolt(V3(x, 1.5, z), V3(x + math.cos(a) * r * 0.9, 1.5, z + math.sin(a) * r * 0.9), 1.4, P.a, P.w, 0.35, 3, 9)
+			end
+		end
+	end
+	L.flashBall(x, 2, z, r0 * 2 + 2, r * 0.6, P.w, 0.35, 0.3)
+	L.shakeAt(x, z, 1.0 * m, 0.45)
+	if (d.flash or r >= 30) then L.flash(P.c, 0.75, 0.35) end
+end
+
+-- ============================================================ ORBIT (objects circling the hero)
+M.orbit = function(d)
+	local P = L.pal()
+	local n, rad, dur, speed = d.n or 3, d.rad or 10, d.dur or 3, d.speed or 4
+	local uid = d.uid
+	local flat = (d.obj == "star" or d.obj == "orb" or d.obj == "crystal" or d.obj == "petal" or d.obj == "skull" or d.obj == "ember" or d.obj == "meteor")
+	local gs = {}
+	for i = 1, n do
+		local g, car = L.makeObj(d.obj or "orb", d.size or 0.8, 1.6)
+		gs[i] = g
+	end
+	local under = L.disc(rad * 2.2, 0, 0.42, 0, P.a, 0.86, 0.06)
+	local last = L.heroPos(uid)
+	local nextEm = 0
+	L.anim(dur, function(al, t)
+		L.setWeapon(d.wid)
+		local pos = L.heroPos(uid) or last
+		if not pos then return end
+		last = pos
+		under.CFrame = CF(pos.X, 0.42, pos.Z) * ANG(0, 0, PI / 2)
+		local fade = al > 0.9 and (1 - al) / 0.1 or 1
+		for i, g in ipairs(gs) do
+			local a = speed * t + (i - 1) * TAU / n
+			local p = V3(pos.X + math.cos(a) * rad, 2.6 + math.sin(t * 3 + i) * 0.5, pos.Z + math.sin(a) * rad)
+			if flat then
+				g.set(CF(p) * ANG(0, t * 5 + i, 0))
+			else
+				local sgn = speed >= 0 and 1 or -1
+				local tan = V3(-math.sin(a) * sgn, 0, math.cos(a) * sgn)
+				g.set(CFrame.lookAt(p, p + tan))
+			end
+			if t >= nextEm then L.emit(p.X, p.Y, p.Z, P.c, P.a, 2, 4, 12, 0.8, 0.4) end
+		end
+		if t >= nextEm then nextEm = t + 0.1 end
+	end, function()
+		for _, g in ipairs(gs) do g.fade(0.3) end
+		under:Destroy()
+		if last then L.ring(last.X, 0.8, last.Z, rad, rad * 2.2, P.c, 0.5, 8) end
+	end)
+end
+
+-- ============================================================ PULL (vortex that drags enemies in)
+local function spiral(d, cfg)
+	local P = L.pal()
+	local x, z, r, dur = d.x, d.z, d.r, d.dur
+	local g = L.group(CF(x, cfg.y or 1.2, z))
+	local items = {}
+	for arm = 0, cfg.arms - 1 do
+		for j = 1, cfg.n do
+			local f = j / cfg.n
+			local part = cfg.make(P, f, arm, j)
+			items[#items + 1] = { p = part, arm = arm, f = f, size = part.Size }
+		end
+	end
+	local base = cfg.base and cfg.base(P, x, z, r)
+	local core = cfg.core and cfg.core(P, x, z, r)
+	if cfg.ring then L.ring(x, 0.5, z, r * 2, r * 2, P.a, dur, 8, 0.15, 0.6) end
+	L.shake(0.35 * L.m(), dur)
+	L.anim(dur, function(al, t)
+		local fadeIn = math.min(1, t / 0.35)
+		local fadeOut = al > 0.88 and math.max(0, (1 - al) / 0.12) or 1
+		local sc = fadeIn * fadeOut
+		for _, it in ipairs(items) do
+			local f = (it.f - (cfg.inflow or 0) * t) % 1
+			local ang = it.arm * TAU / cfg.arms + f * cfg.twist + t * cfg.speed
+			local rr = r * (0.1 + 0.9 * f)
+			local y = (cfg.y or 1.2) + f * (cfg.rise or 0) + (cfg.bob and math.sin(t * 4 + it.arm + it.f * 9) * cfg.bob or 0)
+			local pos = V3(x + math.cos(ang) * rr, y, z + math.sin(ang) * rr)
+			local s = (cfg.shrink and (0.35 + 0.65 * f) or 1) * sc
+			it.p.Size = V3(math.max(it.size.X * s, 0.05), math.max(it.size.Y * s, 0.05), math.max(it.size.Z * s, 0.05))
+			if cfg.tangent then
+				local sgn = cfg.speed >= 0 and 1 or -1
+				local tan = V3(-math.sin(ang) * sgn, 0, math.cos(ang) * sgn)
+				it.p.CFrame = CFrame.lookAt(pos, pos + tan)
+			else
+				it.p.CFrame = CF(pos)
+			end
+		end
+		if core and core.update then core.update(t, sc) end
+		if base then base.Transparency = 1 - (1 - cfg.baseTrans) * sc end
+	end, function()
+		for _, it in ipairs(items) do it.p:Destroy() end
+		if base then base:Destroy() end
+		if core and core.destroy then core.destroy() end
+		L.ring(x, 0.7, z, r * 0.3, r * 1.6, P.c, 0.45, 9)
+	end)
+end
+
+local PULL = {}
+PULL.blackhole = {
+	arms = 3, n = 16, twist = 2.8, speed = -2.4, inflow = 0.35, shrink = true, tangent = true, y = 1.4, ring = true, baseTrans = 0.55, bob = 0.3,
+	make = function(P, f, arm, j)
+		local col = arm % 2 == 0 and L.grad(f) or P.k:Lerp(P.a, f * 0.5)
+		return L.part(B, V3(1.0, 0.5, 3.6), CF(), col, arm % 2 == 0 and NEON or SMOOTH, 0.12)
+	end,
+	base = function(P, x, z, r) return L.disc(r * 2.1, x, 0.38, z, P.k, 0.55, 0.08, SMOOTH) end,
+	core = function(P, x, z, r)
+		local c = L.ball(r * 0.34, x, 2, z, P.k, 0, SMOOTH)
+		local h = L.ball(r * 0.46, x, 2, z, P.a, 0.55, NEON)
+		return {
+			update = function(t, sc)
+				local s = r * 0.34 * sc * (1 + 0.06 * math.sin(t * 10))
+				c.Size = V3(s + 0.05, s + 0.05, s + 0.05)
+				local s2 = r * 0.5 * sc * (1 + 0.1 * math.sin(t * 7))
+				h.Size = V3(s2 + 0.05, s2 + 0.05, s2 + 0.05)
+			end,
+			destroy = function() c:Destroy() h:Destroy() end,
+		}
+	end,
+}
+PULL.galaxy = {
+	arms = 5, n = 14, twist = 3.4, speed = 1.3, inflow = 0.12, shrink = true, y = 1.5, ring = true, baseTrans = 0.7, bob = 0.5,
+	make = function(P, f, arm, j)
+		return L.ball(1.5, 0, 0, 0, L.grad((arm / 5 + f * 0.6) % 1), 0.05, NEON)
+	end,
+	base = function(P, x, z, r) return L.disc(r * 2.1, x, 0.38, z, P.k, 0.6, 0.08, SMOOTH) end,
+	core = function(P, x, z, r)
+		local c = L.ball(r * 0.22, x, 2, z, P.w, 0, NEON)
+		local h = L.ball(r * 0.45, x, 2, z, P.a, 0.7, NEON)
+		return {
+			update = function(t, sc)
+				local s = r * 0.22 * sc * (1 + 0.1 * math.sin(t * 8))
+				c.Size = V3(s + 0.05, s + 0.05, s + 0.05)
+				local s2 = r * 0.45 * sc
+				h.Size = V3(s2 + 0.05, s2 + 0.05, s2 + 0.05)
+			end,
+			destroy = function() c:Destroy() h:Destroy() end,
+		}
+	end,
+}
+PULL.whirlpool = {
+	arms = 3, n = 18, twist = 2.4, speed = 3.0, inflow = 0.25, shrink = true, tangent = true, y = 0.9, ring = true, baseTrans = 0.7,
+	make = function(P, f, arm, j)
+		return L.part(B, V3(1.8, 0.35, 4.2), CF(), (j % 2 == 0) and P.w or P.c, NEON, 0.3)
+	end,
+	base = function(P, x, z, r) return L.disc(r * 2.1, x, 0.4, z, P.a, 0.7, 0.08, NEON) end,
+	core = function(P, x, z, r)
+		local c = L.ball(r * 0.3, x, 0.6, z, P.k:Lerp(P.a, 0.3), 0.2, SMOOTH)
+		return {
+			update = function(t, sc)
+				local s = r * 0.3 * sc
+				c.Size = V3(s + 0.05, math.max(0.2, s * 0.25), s + 0.05)
+			end,
+			destroy = function() c:Destroy() end,
+		}
+	end,
+}
+PULL.tornado = {
+	arms = 4, n = 12, twist = 1.2, speed = 6.0, inflow = 0, shrink = false, tangent = true, y = 1.0, rise = 20, ring = true, baseTrans = 0.8, bob = 0.4,
+	make = function(P, f, arm, j)
+		return L.part(B, V3(1.4, 0.6, 4.5), CF(), (j % 2 == 0) and P.c or P.a, NEON, 0.25)
+	end,
+	base = function(P, x, z, r) return L.disc(r * 2.0, x, 0.38, z, P.a, 0.8, 0.08, NEON) end,
+}
+PULL.thorn = {
+	arms = 4, n = 10, twist = 1.6, speed = 2.6, inflow = 0.2, shrink = true, y = 2.2, ring = true, baseTrans = 0.75, bob = 0.6,
+	make = function(P, f, arm, j)
+		return L.part(B, V3(0.9, 4.2, 0.9), CF(), (j % 2 == 0) and P.a or P.c, NEON, 0.1)
+	end,
+	base = function(P, x, z, r) return L.disc(r * 2.0, x, 0.38, z, P.a, 0.78, 0.08, NEON) end,
+}
+PULL.fire = {
+	arms = 3, n = 14, twist = 2.0, speed = 4.2, inflow = 0.2, shrink = true, y = 1.2, rise = 14, ring = true, baseTrans = 0.7, bob = 0.5,
+	make = function(P, f, arm, j)
+		return L.ball(rand(2.2, 3.8), 0, 0, 0, (j % 3 == 0) and P.c or ((j % 3 == 1) and P.a or P.d), 0.25, NEON)
+	end,
+	base = function(P, x, z, r) return L.disc(r * 2.0, x, 0.38, z, P.a, 0.72, 0.08, NEON) end,
+	core = function(P, x, z, r)
+		local c = L.ball(r * 0.25, x, 3, z, P.c, 0.1, NEON)
+		return {
+			update = function(t, sc)
+				local s = r * 0.25 * sc * (1 + 0.15 * math.sin(t * 12))
+				c.Size = V3(s + 0.05, s + 0.05, s + 0.05)
+			end,
+			destroy = function() c:Destroy() end,
+		}
+	end,
+}
+PULL.arcane = PULL.blackhole
+
+M.pull = function(d)
+	local cfg = PULL[d.style or "blackhole"] or PULL.blackhole
+	spiral(d, cfg)
+end
+
+-- ============================================================ WALL (moving wave / bird / dragon / spirits / glacier)
+local function frontAt(d, f) return V3(d.x + d.dx * d.len * f, 0, d.z + d.dz * d.len * f) end
+
+local function wallRow(d, cfg)
+	local P = L.pal()
+	local w = d.w
+	local N = math.max(5, math.floor(w * 2 / cfg.spacing))
+	local g = L.group()
+	local items = {}
+	for i = 1, N do
+		local u = (i - 0.5) / N * 2 - 1
+		local parts = cfg.make(P, g, i, N, u)
+		items[#items + 1] = { u = u, i = i, parts = parts }
+	end
+	local carrier = L.part(B, V3(1, 1, 1), CF(), P.a, NEON, 1)
+	local em = cfg.stream and L.stream(carrier, cfg.stream[1](P), cfg.stream[2](P), cfg.stream[3], cfg.stream[4], cfg.stream[5], cfg.stream[6], cfg.stream[7])
+	local sprayT = 0
+	L.shake(0.5 * L.m(), d.dur)
+	L.anim(d.dur, function(al, t)
+		local f = al
+		local fp = frontAt(d, f)
+		local base = CFrame.lookAt(V3(fp.X, 0, fp.Z), V3(fp.X + d.dx, 0, fp.Z + d.dz))
+		for _, it in ipairs(items) do
+			cfg.update(it, t, w, P, g)
+		end
+		g.set(base)
+		carrier.CFrame = base * CF(0, cfg.h or 4, -2)
+		if al > 0.9 then em.Enabled = false end
+		if cfg.trail and t >= sprayT then
+			sprayT = t + 0.1
+			for k = 1, 3 do
+				local u = rand(-1, 1)
+				local pos = base * CF(u * w, 1, rand(0, 6))
+				L.emit(pos.Position.X, 1.5, pos.Position.Z, cfg.trail[1](P), cfg.trail[2](P), 2, 4, 12, 1.2, 0.7, { accel = cfg.trail[3] or 0, light = cfg.trail[4] })
+			end
+		end
+	end, function()
+		g.fade(0.35)
+		carrier:Destroy()
+		local e = frontAt(d, 1)
+		L.ring(e.X, 0.7, e.Z, w, w * 2.4, P.c, 0.5, 9)
+	end)
+end
+
+local WALL = {}
+WALL.tsunami = {
+	spacing = 3.2, h = 6, stream = { function(P) return P.w end, function(P) return P.c end, 40, 3, 1.1, 14, { spread = 120, accel = -20, light = 0.4 } },
+	trail = { function(P) return P.w end, function(P) return P.c end, -20, 0.4 },
+	make = function(P, g, i, N, u)
+		local hh = 8 + 3 * math.cos(u * 1.3)
+		local body = g.add(L.ball(hh, 0, 0, 0, i % 2 == 0 and P.a or P.d, 0.3, NEON), CF())
+		local crest = g.add(L.ball(hh * 0.62, 0, 0, 0, P.w, 0.12, NEON), CF())
+		local foam = g.add(L.part(B, V3(3.8, 0.5, 6), CF(), P.c, NEON, 0.45), CF())
+		return { body = body, crest = crest, foam = foam, hh = hh }
+	end,
+	update = function(it, t, w, P, g)
+		local bow = -(it.u ^ 2) * w * 0.55
+		local bob = math.sin(t * 6 + it.i * 0.9)
+		local k = 0
+		for _, item in ipairs(g.items) do
+			-- offsets are rewritten below
+		end
+		local pr = it.parts
+		for _, entry in ipairs(g.items) do
+			if entry[1] == pr.body then entry[2] = CF(it.u * w, pr.hh * 0.45 + bob * 0.6, bow) end
+			if entry[1] == pr.crest then entry[2] = CF(it.u * w, pr.hh * 0.9 + bob * 0.9, bow - 1.2) end
+			if entry[1] == pr.foam then entry[2] = CF(it.u * w, 0.6, bow + 2.2) end
+		end
+	end,
+}
+WALL.firewall = {
+	spacing = 3.4, h = 5, stream = { function(P) return P.c end, function(P) return P.a end, 60, 3, 0.9, 16, { spread = 90, accel = 14 } },
+	trail = { function(P) return P.c end, function(P) return P.a end, 12 },
+	make = function(P, g, i, N, u)
+		local hh = rand(6, 10)
+		local a = g.add(L.ball(hh, 0, 0, 0, i % 2 == 0 and P.a or P.d, 0.25, NEON), CF())
+		local b = g.add(L.ball(hh * 0.55, 0, 0, 0, P.c, 0.05, NEON), CF())
+		local fl = g.add(L.ball(hh * 0.4, 0, 0, 0, P.d, 0.3, NEON), CF())
+		return { a = a, b = b, fl = fl, hh = hh }
+	end,
+	update = function(it, t, w, P, g)
+		local pr = it.parts
+		local bow = -(it.u ^ 2) * w * 0.35
+		local fl = math.sin(t * 11 + it.i * 1.7)
+		for _, entry in ipairs(g.items) do
+			if entry[1] == pr.a then entry[2] = CF(it.u * w, pr.hh * 0.4, bow) end
+			if entry[1] == pr.b then entry[2] = CF(it.u * w, pr.hh * 0.3, bow - 0.5) end
+			if entry[1] == pr.fl then entry[2] = CF(it.u * w + fl * 0.8, pr.hh * 0.9 + fl, bow + 0.5) end
+		end
+	end,
+}
+WALL.spirits = {
+	spacing = 7, h = 5, stream = { function(P) return P.d end, function(P) return P.a end, 30, 2.4, 1.2, 10, { spread = 120, accel = 4 } },
+	make = function(P, g, i, N, u)
+		local bone = P.w:Lerp(P.c, 0.25)
+		local skull = g.add(L.ball(4.4, 0, 0, 0, bone, 0, NEON), CF())
+		local jaw = g.add(L.part(B, V3(2.6, 1.1, 1.8), CF(), bone, NEON, 0), CF())
+		local e1 = g.add(L.ball(1.2, 0, 0, 0, P.k, 0, SMOOTH), CF())
+		local e2 = g.add(L.ball(1.2, 0, 0, 0, P.k, 0, SMOOTH), CF())
+		local aura = g.add(L.ball(10, 0, 0, 0, P.a, 0.8, NEON), CF())
+		local tail = g.add(L.part(B, V3(3, 1, 12), CF(), P.a, NEON, 0.5), CF())
+		local tail2 = g.add(L.part(B, V3(1.6, 1, 16), CF(), P.d, NEON, 0.35), CF())
+		return { skull = skull, jaw = jaw, e1 = e1, e2 = e2, aura = aura, tail = tail, tail2 = tail2 }
+	end,
+	update = function(it, t, w, P, g)
+		local pr = it.parts
+		local bx = it.u * w + math.sin(t * 3 + it.i) * 2
+		local by = 5 + math.sin(t * 4 + it.i * 2) * 1.2
+		local bz = -(it.u ^ 2) * 3
+		for _, entry in ipairs(g.items) do
+			local p = entry[1]
+			if p == pr.skull then entry[2] = CF(bx, by, bz) end
+			if p == pr.jaw then entry[2] = CF(bx, by - 2.3, bz - 1.2) end
+			if p == pr.e1 then entry[2] = CF(bx - 1.1, by + 0.6, bz - 1.9) end
+			if p == pr.e2 then entry[2] = CF(bx + 1.1, by + 0.6, bz - 1.9) end
+			if p == pr.aura then entry[2] = CF(bx, by, bz) end
+			if p == pr.tail then entry[2] = CF(bx + math.sin(t * 5 + it.i) * 1.5, by - 0.5, bz + 8) end
+			if p == pr.tail2 then entry[2] = CF(bx - math.sin(t * 5 + it.i) * 1.5, by - 0.8, bz + 11) end
+		end
+	end,
+}
+
+local function phoenix(d)
+	local P = L.pal()
+	local m = L.m()
+	local span = d.w * 1.7
+	local g = L.group()
+	local wings = {}
+	local function feather(col, size, off, tr, ph, side, tip)
+		local p = L.part(B, size, CF(), col, NEON, tr)
+		g.add(p, off)
+		wings[#wings + 1] = { p = p, entry = g.items[#g.items], side = side, ox = off.X, oy = off.Y, oz = off.Z, ph = ph }
+		return p
+	end
+	-- body
+	g.add(L.ball(4.6, 0, 0, 0, P.a, 0.1, NEON), CF(0, 0, 0))
+	g.add(L.ball(3.8, 0, 0, 0, P.c, 0.05, NEON), CF(0, 0, 3))
+	g.add(L.ball(3.0, 0, 0, 0, P.d, 0.1, NEON), CF(0, 0, 5.5))
+	g.add(L.ball(3.1, 0, 0, 0, P.c, 0, NEON), CF(0, 0.5, -3.8))
+	g.add(L.part(B, V3(0.7, 0.6, 2.2), CF(), P.d, NEON, 0), CF(0, 0.3, -6))
+	g.add(L.ball(0.8, 0, 0, 0, P.k, 0, SMOOTH), CF(-0.9, 1.2, -4.9))
+	g.add(L.ball(0.8, 0, 0, 0, P.k, 0, SMOOTH), CF(0.9, 1.2, -4.9))
+	g.add(L.part(B, V3(0.5, 2.4, 0.5), CF(), P.c, NEON, 0), CF(0, 2.2, -3.9))
+	g.add(L.ball(span * 1.4, 0, 0, 0, P.a, 0.88, NEON), CF(0, 0, 1))
+	-- tail feathers
+	for k = -3, 3 do
+		local col = (k % 2 == 0) and P.a or P.d
+		g.add(L.part(B, V3(0.9, 0.3, 11 - math.abs(k)), CF(), col, NEON, 0.12), CF(k * 0.9, 0, 12 + math.abs(k)) * ANG(0, k * 0.1, 0))
+		g.add(L.part(B, V3(0.35, 0.34, 11.4 - math.abs(k)), CF(), P.c, NEON, 0.2), CF(k * 0.9, 0, 12 + math.abs(k)) * ANG(0, k * 0.1, 0))
+	end
+	-- wings (flapping)
+	local segs = 6
+	for side = -1, 1, 2 do
+		for k = 1, segs do
+			local f = k / segs
+			local col = f < 0.35 and P.c or (f < 0.7 and P.a or P.d)
+			local len = 7 + 4 * math.sin(f * PI)
+			feather(col, V3(span / segs * 1.25, 0.28, len), CF(side * (1.8 + f * span * 0.5), 0, 1.2 + f * 6), 0.1, k, side, k == segs)
+			feather(P.w, V3(span / segs * 0.6, 0.3, len * 0.9), CF(side * (1.8 + f * span * 0.5), 0.05, 1.0 + f * 6), 0.35, k, side, false)
+		end
+	end
+	local carrier = L.part(B, V3(1, 1, 1), CF(), P.a, NEON, 1)
+	local em = L.stream(carrier, P.c, P.a, 90, 2.6, 1.0, 12, { spread = 180, accel = 6 })
+	L.light(carrier, P.a, 60, 3)
+	L.shake(0.5 * m, d.dur)
+	local lastBurst = 0
+	L.anim(d.dur, function(al, t)
+		local fp = frontAt(d, al)
+		local y = 8 + math.sin(t * 5) * 0.6
+		local base = CFrame.lookAt(V3(fp.X, y, fp.Z), V3(fp.X + d.dx, y, fp.Z + d.dz))
+		local flap = math.sin(t * 9) * 0.5
+		-- rewrite wing offsets with flap rotation about the body axis (outer feathers flap more)
+		for _, wg in ipairs(wings) do
+			wg.entry[2] = ANG(0, 0, wg.side * (flap * (0.7 + wg.ph * 0.08) + 0.1)) * CF(wg.ox, wg.oy, wg.oz)
+		end
+		g.set(base)
+		carrier.CFrame = base
+		if t - lastBurst > 0.12 then
+			lastBurst = t
+			L.emit(fp.X, 6, fp.Z, P.c, P.a, 5, 6, 18, 1.4, 0.7, { accel = -6 })
+		end
+		if al > 0.9 then em.Enabled = false end
+	end, function()
+		g.fade(0.4)
+		carrier:Destroy()
+		local e = frontAt(d, 1)
+		L.ring(e.X, 0.7, e.Z, d.w, d.w * 2.6, P.c, 0.55, 10)
+		L.emit(e.X, 6, e.Z, P.c, P.a, 40, 16, 44, 1.6, 0.9)
+	end)
+end
+
+local function dragon(d)
+	local P = L.pal()
+	local m = L.m()
+	local N = 24
+	local spacing = 3.0
+	local segs = {}
+	for i = 0, N - 1 do
+		local s = i == 0 and 5.4 or (4.2 - 2.4 * (i / N))
+		local body = L.ball(s, 0, 0, 0, i % 2 == 0 and P.a or P.d, 0.08, NEON)
+		local glow = L.ball(s * 1.7, 0, 0, 0, P.a, 0.85, NEON)
+		local spine = L.part(B, V3(0.5, s * 0.9, 0.5), CF(), P.c, NEON, 0.05)
+		segs[i + 1] = { body = body, glow = glow, spine = spine, s = s }
+	end
+	local head = { L.part(B, V3(0.7, 0.7, 3.4), CF(), P.c, NEON, 0), L.part(B, V3(0.7, 0.7, 3.4), CF(), P.c, NEON, 0), L.ball(1.1, 0, 0, 0, P.w, 0, NEON), L.ball(1.1, 0, 0, 0, P.w, 0, NEON), L.part(B, V3(2.4, 1.2, 3), CF(), P.d, NEON, 0.05) }
+	local carrier = L.part(B, V3(1, 1, 1), CF(), P.a, NEON, 1)
+	local em = L.stream(carrier, P.c, P.a, 80, 2.4, 0.9, 10, { spread = 180, accel = 4 })
+	L.light(carrier, P.a, 60, 3)
+	L.shake(0.5 * m, d.dur)
+	local side = CFrame.lookAt(V3(0, 0, 0), V3(d.dx, 0, d.dz)).RightVector
+	L.anim(d.dur, function(al, t)
+		local front = d.len * al + 6
+		local prev
+		for i = 1, N do
+			local dist = front - (i - 1) * spacing
+			local sgm = segs[i]
+			if dist < 0 then
+				sgm.body.Transparency = 1
+				sgm.glow.Transparency = 1
+				sgm.spine.Transparency = 1
+			else
+				local amp = d.w * 0.5 * math.min(1, dist / 14)
+				local lat = amp * math.sin(dist * 0.16 - t * 6)
+				local y = 6.5 + 1.4 * math.sin(dist * 0.16 - t * 6 + 1) + (dist < 10 and (1 - dist / 10) * -4 or 0)
+				local p = V3(d.x + d.dx * dist, y, d.z + d.dz * dist) + side * lat
+				sgm.body.Transparency = 0.08
+				sgm.glow.Transparency = 0.85
+				sgm.spine.Transparency = 0.05
+				sgm.body.CFrame = CF(p)
+				sgm.glow.CFrame = CF(p)
+				sgm.spine.CFrame = CF(p + V3(0, sgm.s * 0.6, 0)) * ANG(0, t * 3 + i, 0)
+				if i == 1 then
+					carrier.CFrame = CF(p)
+					local nx = V3(d.x + d.dx * (dist + 1), y, d.z + d.dz * (dist + 1)) + side * (amp * math.sin((dist + 1) * 0.16 - t * 6))
+					local hcf = CFrame.lookAt(p, p + (p - nx).Unit * -1)
+					head[1].CFrame = hcf * CF(-1.2, 1.9, 1.2) * ANG(0.5, 0.4, 0)
+					head[2].CFrame = hcf * CF(1.2, 1.9, 1.2) * ANG(0.5, -0.4, 0)
+					head[3].CFrame = hcf * CF(-1.1, 0.8, -2.2)
+					head[4].CFrame = hcf * CF(1.1, 0.8, -2.2)
+					head[5].CFrame = hcf * CF(0, -0.8, -3.2)
+				end
+			end
+		end
+		if al > 0.9 then em.Enabled = false end
+	end, function()
+		for _, sgm in ipairs(segs) do
+			sgm.body:Destroy()
+			sgm.glow:Destroy()
+			sgm.spine:Destroy()
+		end
+		for _, h in ipairs(head) do h:Destroy() end
+		carrier:Destroy()
+		local e = frontAt(d, 1)
+		L.ring(e.X, 0.7, e.Z, d.w, d.w * 2.6, P.c, 0.55, 10)
+		L.emit(e.X, 6, e.Z, P.c, P.a, 36, 16, 44, 1.6, 0.9)
+	end)
+end
+
+local function glacier(d)
+	local P = L.pal()
+	local K = math.max(6, math.floor(d.len / 6))
+	L.shake(0.4 * L.m(), d.dur)
+	for i = 1, K do
+		local dist = d.len * i / K
+		task.delay(d.dur * i / K, function()
+			L.setWeapon(d.wid)
+			local P2 = L.pal()
+			local sx, sz = -d.dz, d.dx
+			for s = -1, 1, 2 do
+				local lat = s * d.w * rand(0.35, 0.9)
+				L.spike(d.x + d.dx * dist + sx * lat, d.z + d.dz * dist + sz * lat, 2.0, rand(6, 11), P2.c, P2.w, { trans = 0.25, hold = 0.5, rise = 0.12, lean = rand(-0.3, 0.3) })
+			end
+			L.spike(d.x + d.dx * dist, d.z + d.dz * dist, 2.6, rand(8, 13), P2.a, P2.w, { trans = 0.2, hold = 0.55, rise = 0.12 })
+			L.emit(d.x + d.dx * dist, 2, d.z + d.dz * dist, P2.w, P2.c, 6, 6, 18, 1.2, 0.7, { light = 0.5 })
+		end)
+	end
+	L.ring(d.x, 0.6, d.z, 6, 20, P.c, 0.5, 9)
+end
+
+M.wall = function(d)
+	local st = d.style or "tsunami"
+	if st == "phoenix" then return phoenix(d) end
+	if st == "dragon" then return dragon(d) end
+	if st == "glacier" then return glacier(d) end
+	wallRow(d, WALL[st] or WALL.tsunami)
+end
+
+-- ============================================================ DASH
+M.dash = function(d)
+	local P = L.pal()
+	local m = L.m()
+	local st = d.style or "blade"
+	local a = V3(d.x, 2.2, d.z)
+	local dir = V3(d.dx, 0, d.dz)
+	local b = a + dir * d.dist
+	L.ring(a.X, 0.8, a.Z, 2, 11, P.a, 0.35, 8)
+	L.emit(a.X, 1.4, a.Z, P.d, P.k, 12, 8, 22, 1.4, 0.5, { dirX = -d.dx, dirZ = -d.dz, spread = 55 })
+	local streak = L.seg(a + V3(0, -1.2, 0), b + V3(0, -1.2, 0), 3.4, 0.1, P.a, 0.45)
+	L.fade(streak, 0.55, { Size = V3(0.2, 0.1, streak.Size.Z) })
+	local streak2 = L.seg(a + V3(0, -1.1, 0), b + V3(0, -1.1, 0), 1.0, 0.12, P.w, 0.1)
+	L.fade(streak2, 0.4, { Size = V3(0.1, 0.12, streak2.Size.Z) })
+	if st == "lightning" then
+		L.bolt(a, b, 2.4, P.a, P.w, 0.4, 3.5, 12)
+		L.bolt(a + V3(0, 0.4, 0), b + V3(0, 0.4, 0), 1.4, P.c, P.w, 0.3, 2.5, 10)
+		for i = 1, 8 do
+			local f = i / 8
+			local p = a:Lerp(b, f)
+			L.ring(p.X, 0.9, p.Z, 1, 6, P.c, 0.3, 5)
+			L.bolt(p, p + V3(rand(-5, 5), -2, rand(-5, 5)), 0.9, P.a, P.w, 0.2, 1.5, 4)
+		end
+	end
+	for i = 1, 8 do
+		local f = i / 8
+		local pos = a:Lerp(b, f)
+		task.delay(f * d.dur, function()
+			L.setWeapon(d.wid)
+			local P2 = L.pal()
+			local col = (st == "void") and P2.k or P2.a
+			local gh = L.disc(3.6, pos.X, 2.0, pos.Z, col, 0.3, 0.2, st == "void" and SMOOTH or NEON)
+			L.tw(gh, 0.4, { Size = V3(0.1, 6.5, 6.5), Transparency = 1 })
+			Debris:AddItem(gh, 0.5)
+			L.ring(pos.X, 1.0, pos.Z, 2, 7, P2.c, 0.3, 5)
+			if st == "flame" then
+				L.emit(pos.X, 2, pos.Z, P2.c, P2.a, 6, 4, 14, 1.4, 0.7, { accel = 8 })
+			elseif st == "blade" then
+				local sl = L.part(B, V3(10, 0.25, 0.8), CFrame.lookAt(V3(pos.X, 2.6, pos.Z), V3(pos.X, 2.6, pos.Z) + dir) * ANG(0, PI / 2, 0) * ANG(0, 0, 0.4 * ((i % 2 == 0) and 1 or -1)), P2.c, NEON, 0.05)
+				L.tw(sl, 0.35, { Size = V3(16, 0.25, 0.1), Transparency = 1 })
+				Debris:AddItem(sl, 0.5)
+			elseif st == "void" then
+				L.ring(pos.X, 1.0, pos.Z, 7, 1, P2.a, 0.3, 5, 0.2, 0.3)
+				L.emit(pos.X, 2, pos.Z, P2.d, P2.a, 4, 6, 16, 1.2, 0.6)
+			else
+				L.emit(pos.X, 2.2, pos.Z, P2.c, P2.a, 3, 4, 12, 0.5, 0.3)
+			end
+		end)
+	end
+	local comet = L.part(B, V3(2.4, 0.4, 2.4), CFrame.lookAt(a, b), P.c, NEON, 0.1)
+	L.trail(comet, P.w, P.a, 3.4, 0.3, 0)
+	local em = L.stream(comet, P.c, P.a, 60, 0.9, 0.4, 8)
+	L.anim(d.dur, function(al)
+		local pos = a:Lerp(b, al)
+		comet.CFrame = CFrame.lookAt(pos, pos + dir)
+	end, function()
+		comet:Destroy()
+		L.ring(b.X, 0.8, b.Z, 3, 17, P.a, 0.4, 9)
+		L.flashBall(b.X, 2, b.Z, 2, 9, P.w, 0.25, 0.3)
+		L.shakeAt(b.X, b.Z, 0.9 * m, 0.3)
+	end)
+end
+
+-- ============================================================ CHAIN (lightning / constellation / frost / void links)
+M.chain = function(d)
+	local P = L.pal()
+	local pts = d.pts
+	local st = d.style or "lightning"
+	local n = #pts / 2
+	for i = 1, n - 1 do
+		local a = V3(pts[i * 2 - 1], 2.4, pts[i * 2])
+		local b = V3(pts[i * 2 + 1], 2.4, pts[i * 2 + 2])
+		task.delay((i - 1) * 0.07, function()
+			L.setWeapon(d.wid)
+			local P2 = L.pal()
+			if st == "star" then
+				local s1 = L.seg(a, b, 0.7, 0.2, P2.c, 0.1)
+				local s2 = L.seg(a, b, 0.25, 0.25, P2.w, 0)
+				L.fade(s1, 0.9)
+				L.fade(s2, 0.7)
+				Imp.styles.star(b.X, b.Z, 3.5, 0.8)
+			elseif st == "frost" then
+				L.bolt(a, b, 1.6, P2.c, P2.w, 0.4, 1.2, 6)
+				Imp.styles.ice(b.X, b.Z, 4, 0.7)
+			elseif st == "void" then
+				L.bolt(a, b, 2.0, P2.a, P2.k, 0.45, 3.5, 9)
+				L.emit(b.X, 2, b.Z, P2.d, P2.a, 8, 8, 22, 1.0, 0.6)
+				L.ring(b.X, 0.8, b.Z, 6, 1, P2.a, 0.35, 5, 0.2, 0.3)
+			else
+				L.bolt(a, b, 2.2, P2.a, P2.w, 0.4, 3.2, 9)
+				L.bolt(a, b, 1.2, P2.c, P2.w, 0.3, 2.2, 7)
+				L.ring(b.X, 0.8, b.Z, 1, 7, P2.c, 0.3, 6)
+				L.emit(b.X, 2.4, b.Z, P2.w, P2.a, 8, 10, 26, 0.6, 0.35)
+			end
+		end)
+	end
+	local f = V3(pts[1], 2.4, pts[2])
+	L.flashBall(f.X, 2.4, f.Z, 2, 7, P.w, 0.25, 0.2)
+	L.shake(0.5 * L.m(), 0.35)
+end
+
+-- ============================================================ SPOKES (radial rays)
+M.spokes = function(d)
+	local P = L.pal()
+	local n, len, w, dur = d.n, d.len, d.w or 3, d.dur or 0.6
+	local style = d.style or "ray"
+	for i = 1, n do
+		local ang = math.rad(d.ang0 or 0) + (i - 1) * TAU / n
+		local ddx, ddz = L.rot(d.dx, d.dz, ang)
+		local o = V3(d.x, 0.8, d.z)
+		local dir = V3(ddx, 0, ddz)
+		local mid = o + dir * (len / 2)
+		local cf = CFrame.lookAt(mid, mid + dir)
+		local cols = (style == "crack") and { P.k, P.c, P.a } or { P.a, P.c, P.w }
+		local widths = { w * 1.6, w * 0.9, w * 0.35 }
+		for li = 1, 3 do
+			local p = L.part(B, V3(0.05, 0.4, 0.5), CFrame.lookAt(o + dir * 0.3, o + dir * 1.3), cols[li], (style == "crack" and li == 1) and SMOOTH or NEON, li == 1 and 0.55 or (li == 2 and 0.2 or 0))
+			L.tw(p, dur * 0.35, { Size = V3(widths[li], 0.4, len), CFrame = cf }, Enum.EasingStyle.Quint)
+			task.delay(dur * 0.55, function() L.fade(p, dur * 0.45, { Size = V3(0.05, 0.4, len) }) end)
+			Debris:AddItem(p, dur + 0.5)
+		end
+		task.delay(dur * 0.3, function()
+			local tip = o + dir * len
+			L.flashBall(tip.X, 1.5, tip.Z, 1, w * 3, P.c, 0.3, 0.2)
+			L.emit(tip.X, 1.8, tip.Z, P.w, P.a, 6, 8, 22, 0.7, 0.5)
+		end)
+	end
+	L.flashBall(d.x, 2, d.z, 3, len * 0.5, P.w, 0.3, 0.25)
+	L.ring(d.x, 0.7, d.z, 3, len * 1.2, P.c, dur, 9)
+	L.shakeAt(d.x, d.z, 0.9 * L.m(), 0.4)
+end
+
+-- ============================================================ FALLING OBJECTS (rain / drop)
+local TILT = V3(-0.28, -1, 0.34).Unit
+local function fallers(d, drops, H, scale, fall, impactR, m, bigImpact)
+	local obj = d.obj or "meteor"
+	local maxT = 0
+	for _, dr in ipairs(drops) do
+		dr.state = 0
+		if dr.t0 > maxT then maxT = dr.t0 end
+	end
+	local trailW = (obj == "meteor" or obj == "comet" or obj == "sun" or obj == "ember" or obj == "lance" or obj == "arrow" or obj == "sword" or obj == "icicle" or obj == "skull") and (2.0 * scale) or 0
+	L.anim(maxT + fall + 0.15, function(al, t)
+		L.setWeapon(d.wid)
+		for _, dr in ipairs(drops) do
+			if dr.state == 0 and t >= dr.t0 then
+				dr.state = 1
+				dr.g = L.makeObj(obj, scale, math.min(trailW, 4))
+				if not bigImpact then
+					local P = L.pal()
+					L.ring(dr.x, 0.45, dr.z, impactR * 2, impactR * 1.4, P.a, fall, 4, 0.2, 0.6)
+				end
+			end
+			if dr.state == 1 then
+				local f = (t - dr.t0) / fall
+				if f >= 1 then
+					dr.state = 2
+					dr.g.destroy()
+					Imp.playImpact(d.impact or "fire", dr.x, dr.z, impactR, m, d)
+				else
+					local dist = H * (1 - f * f)
+					local pos = V3(dr.x, 0.6, dr.z) - TILT * dist
+					dr.g.set(CFrame.lookAt(pos, pos + TILT))
+				end
+			end
+		end
+	end, function()
+		for _, dr in ipairs(drops) do
+			if dr.state == 1 and dr.g then dr.g.destroy() end
+		end
+	end)
+end
+
+M.rain = function(d)
+	local pts = d.pts
+	local drops = {}
+	for i = 1, #pts / 3 do
+		drops[i] = { x = pts[i * 3 - 2], z = pts[i * 3 - 1], t0 = pts[i * 3] }
+	end
+	fallers(d, drops, 42, d.scale or 0.9, d.fall or 0.7, d.r or 5, L.m() * (d.im or 0.62), false)
+end
+
+M.drop = function(d)
+	local P = L.pal()
+	if d.tele ~= false then
+		Imp.tele({ x = d.x, z = d.z, r = d.r, dur = d.fall, style = d.teleStyle or "circle", wid = d.wid })
+	end
+	local drops = { { x = d.x, z = d.z, t0 = 0 } }
+	fallers(d, drops, 60, d.scale or 2.2, d.fall or 1, d.r or 12, L.m(), true)
+end
+
+return M
+]]></ProtectedString>
+</Properties>
+</Item>
+<Item class="ModuleScript" referent="RBX_ULT6">
+<Properties>
+<string name="Name">UltFX</string>
+<ProtectedString name="Source"><![CDATA[-- UltFX: client dispatcher for weapon ultimates. The server runs the timeline (damage + positions) and sends one
+-- "UltFx" event per step: UltFx(kind, weaponId, params). Every kind maps to a handler in UltImpact / UltMotion.
+local L = require(script.Parent:WaitForChild("UltLib"))
+local Imp = require(script.Parent:WaitForChild("UltImpact"))
+local Mo = require(script.Parent:WaitForChild("UltMotion"))
+
+local FX = {}
+
+function FX.init(hooks)
+	L.init(hooks)
+end
+
+local handlers = {
+	hit = Imp.hit, tele = Imp.tele, heal = Imp.heal, screen = Imp.screen, muzzle = Imp.muzzle, sky = Imp.sky, zone = Imp.zone,
+	beam = Mo.beam, nova = Mo.nova, orbit = Mo.orbit, pull = Mo.pull, wall = Mo.wall, dash = Mo.dash,
+	chain = Mo.chain, spokes = Mo.spokes, rain = Mo.rain, drop = Mo.drop,
+}
+FX.handlers = handlers
+
+function FX.play(kind, wid, d)
+	local f = handlers[kind]
+	if not f then return end
+	d = type(d) == "table" and d or {}
+	d.wid = wid
+	L.setWeapon(wid)
+	local ok, err = pcall(f, d)
+	if not ok then warn("[UltFX] " .. tostring(kind) .. ": " .. tostring(err)) end
+end
+
+return FX
+]]></ProtectedString>
+</Properties>
+</Item>
 </Item>
 <Item class="LocalScript" referent="RBX13">
 <Properties>
