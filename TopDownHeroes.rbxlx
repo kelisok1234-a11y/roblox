@@ -122,6 +122,7 @@ Config.Locations = {
 		id = "cave", name = "Gloomrock Cave", short = "CAVE",
 		desc = "A deep cave crawling with goblins (Lv.5-10). Boss: Goblin King.",
 		minLvl = 5, maxLvl = 10, xp = 1500, coins = 600,
+		requires = "forest", -- unlocked after clearing Whispering Forest on ALL difficulties
 		enemies = {
 			{ id = "Grunt", name = "Goblin Grunt", kind = "goblin", weight = 40, minWave = 1, minLvl = 5, maxLvl = 8,
 				hp = 70, dmg = 12, speed = 11, r = 1.6, atkCd = 0.9,
@@ -142,6 +143,27 @@ Config.Locations = {
 	},
 }
 Config.LocationOrder = { "forest", "cave" }
+
+-- progress: data.beaten[locId][difficultyName] = true once that difficulty was won.
+-- A location with `requires` opens only when the required location was beaten on EVERY difficulty.
+function Config.beatenCount(data, locId)
+	local b = data and data.beaten and data.beaten[locId]
+	local n = 0
+	if type(b) ~= "table" then return 0 end
+	for _, d in ipairs(Config.Difficulties) do
+		if b[d.name] then n = n + 1 end
+	end
+	return n
+end
+function Config.locationCleared(data, locId)
+	return Config.beatenCount(data, locId) >= #Config.Difficulties
+end
+function Config.locationUnlocked(data, locId)
+	local loc = Config.Locations[locId]
+	if not loc then return false end
+	if not loc.requires then return true end
+	return Config.locationCleared(data, loc.requires)
+end
 
 -- Lobby: 4 identical "gates". Step into a gate to open its panel: pick a location,
 -- difficulty, party size and who may join (everyone / friends only).
@@ -3742,6 +3764,7 @@ local function newData()
 	return {
 		level = 1, xp = 0, points = 0, coins = 0, vit = 0, swift = 0, wins = 0,
 		unlocked = { forest = 1, cave = 1 },
+		beaten = { forest = {}, cave = {} },
 		upg = { Swordsman = {}, Archer = {}, Mage = {} },
 		-- weapon inventory: id -> count.  equip: weapon type -> equipped weapon id
 		inv = { [Config.StarterWeapons.Swordsman] = 1, [Config.StarterWeapons.Archer] = 1, [Config.StarterWeapons.Mage] = 1 },
@@ -3760,6 +3783,19 @@ local function merge(dst, src)
 	end
 end
 
+-- make sure the `beaten` table exists; old saves count every difficulty below the unlocked one as beaten
+local function migrateData(d)
+	if type(d.beaten) ~= "table" then d.beaten = {} end
+	if type(d.unlocked) ~= "table" then d.unlocked = { forest = 1, cave = 1 } end
+	for _, id in ipairs(Config.LocationOrder) do
+		if type(d.beaten[id]) ~= "table" then d.beaten[id] = {} end
+		for i = 1, (d.unlocked[id] or 1) - 1 do
+			local df = Config.Difficulties[i]
+			if df then d.beaten[id][df.name] = true end
+		end
+	end
+end
+
 local function loadData(p)
 	local d = newData()
 	if STORE then
@@ -3770,6 +3806,7 @@ local function loadData(p)
 			merge(d, res)
 		end
 	end
+	migrateData(d)
 	return d
 end
 
@@ -3804,7 +3841,7 @@ local function pushData(p)
 	if not d then return end
 	local payload = {
 		level = d.level, xp = d.xp, need = Config.xpNeed(d.level), points = d.points, coins = d.coins,
-		class = classOf(p), weapon = weaponIdOf(p), inv = d.inv, equip = d.equip, opened = d.opened, upg = d.upg, vit = d.vit, swift = d.swift, unlocked = d.unlocked,
+		class = classOf(p), weapon = weaponIdOf(p), inv = d.inv, equip = d.equip, opened = d.opened, upg = d.upg, vit = d.vit, swift = d.swift, unlocked = d.unlocked, beaten = d.beaten,
 	}
 	p:SetAttribute("Data", HttpService:JSONEncode(payload))
 end
@@ -4140,6 +4177,7 @@ local function joinCheck(p, pt)
 	if table.find(pt.members, p) then return true end
 	if #pt.members >= pt.max then return false, "FULL" end
 	if pt.friendsOnly and not areFriends(p, pt.host) then return false, "FRIENDS ONLY" end
+	if not Config.locationUnlocked(D[p], pt.loc) then return false, "LOCKED" end
 	if pt.diff > ((D[p] and D[p].unlocked[pt.loc]) or 1) then return false, "LOCKED" end
 	return true
 end
@@ -4215,6 +4253,11 @@ local function createParty(p, gate, loc, diff, max, friendsOnly)
 	end
 	if gateParty(gate) then
 		toast(p, "This gate is already taken!", "ff6060", 2.5)
+		return
+	end
+	if not Config.locationUnlocked(D[p], loc) then
+		local req = Config.Locations[Config.Locations[loc].requires]
+		toast(p, "Locked! Clear " .. (req and req.name or "the previous location") .. " on ALL difficulties first.", "ff6060", 3)
 		return
 	end
 	diff = math.floor(diff)
@@ -4415,30 +4458,14 @@ local function pickSpawn(run)
 	return first[1], first[2]
 end
 
+-- Monsters walk straight through trees / rocks / props (only the arena border stops them),
+-- so scenery can never block, slow down or trap them.
 local function moveEnemy(run, e, dx, dz)
-	local nx, nz = e.x + dx, e.z + dz
 	local info = run.info
-	local collided = false
-	for _, o in ipairs(info.obstacles) do
-		local ddx, ddz = nx - o.x, nz - o.z
-		local minD = o.r + e.r * 0.7
-		local d2 = ddx * ddx + ddz * ddz
-		if d2 < minD * minD then
-			local d = math.sqrt(d2)
-			if d < 0.01 then d = 0.01 ddx = 1 end
-			nx = o.x + ddx / d * minD
-			nz = o.z + ddz / d * minD
-			-- slide around the obstacle
-			local len = math.sqrt(dx * dx + dz * dz)
-			nx = nx + (-ddz / d) * (e.side or 1) * len * 0.8
-			nz = nz + (ddx / d) * (e.side or 1) * len * 0.8
-			collided = true
-		end
-	end
 	local lim = info.half - e.r - 1
-	e.x = math.clamp(nx, info.ox - lim, info.ox + lim)
-	e.z = math.clamp(nz, -lim, lim)
-	return collided
+	e.x = math.clamp(e.x + dx, info.ox - lim, info.ox + lim)
+	e.z = math.clamp(e.z + dz, -lim, lim)
+	return false
 end
 
 local function areaDamage(run, x, z, r, dmg)
@@ -5013,8 +5040,16 @@ finishRun = function(run, won)
 	for _, p in ipairs(run.players) do
 		local d = D[p]
 		if d then
-			local xp, coins, unlockedName = 0, 0, nil
+			local xp, coins, unlockedName, newLocName = 0, 0, nil, nil
 			if won then
+				local before = {}
+				for _, id in ipairs(Config.LocationOrder) do before[id] = Config.locationUnlocked(d, id) end
+				d.beaten = d.beaten or {}
+				d.beaten[cfg.id] = d.beaten[cfg.id] or {}
+				d.beaten[cfg.id][dc.name] = true
+				for _, id in ipairs(Config.LocationOrder) do
+					if not before[id] and Config.locationUnlocked(d, id) then newLocName = Config.Locations[id].name end
+				end
 				xp = math.floor(cfg.xp * dc.reward)
 				coins = math.floor(cfg.coins * dc.reward)
 				d.coins = d.coins + coins
@@ -5027,7 +5062,7 @@ finishRun = function(run, won)
 			end
 			local g = run.gain[p]
 			ToClient:FireClient(p, "Result", {
-				won = won, xp = xp + g.xp, coins = coins + g.coins, kills = g.kills, unlocked = unlockedName,
+				won = won, xp = xp + g.xp, coins = coins + g.coins, kills = g.kills, unlocked = unlockedName, newLocation = newLocName,
 				level = d.level, loc = cfg.name, diff = dc.name,
 			})
 			pushData(p)
@@ -6791,6 +6826,7 @@ function M.lobby(folder)
 	label(folder, 0, 8, -23, "TOP-DOWN HEROES", C3(255, 235, 140), 440, 60, 40)
 	label(folder, 0, 8, -16.5, "Pick a gate  ->  choose a location  ->  survive the waves!", C3(255, 255, 255), 560, 30, 16)
 	label(folder, 0, 8, -29.5, "THE FOUR GATES", C3(255, 255, 255), 300, 26, 18)
+	label(folder, 0, 8, -12, "Clear the Forest on ALL difficulties to unlock the Cave", C3(255, 190, 110), 560, 26, 14)
 
 	-- ================= THE FOUR GATES =================
 	for _, zn in ipairs(Config.Lobby.zones) do
@@ -6962,6 +6998,363 @@ local function boundaryWalls(folder, ox, half)
 	block(folder, 6, 40, half * 2, c, ox + half + 3, 20, 0, 0, nil, 1, true)
 end
 
+-- ===================================================== EXTRA SCENERY (arenas)
+-- Everything below is decoration. Players are blocked by the small colliders, monsters ignore them completely.
+local function embers(p, c1, c2, rate, spd)
+	local pe = Instance.new("ParticleEmitter")
+	pe.Rate = rate or 10
+	pe.Lifetime = NumberRange.new(0.8, 1.6)
+	pe.Speed = NumberRange.new(2, spd or 5)
+	pe.EmissionDirection = Enum.NormalId.Right
+	pe.SpreadAngle = Vector2.new(30, 30)
+	pe.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.45), NumberSequenceKeypoint.new(1, 0) })
+	pe.Transparency = NumberSequence.new(0, 1)
+	pe.Color = ColorSequence.new(c1, c2)
+	pe.LightEmission = 1
+	pe.Parent = p
+end
+
+-- a big invisible box that emits slow drifting particles over the whole arena (mist, fireflies, dust)
+local function ambient(folder, ox, half, y, sizeY, o)
+	local a = part(folder, BLK, Vector3.new(half * 2, sizeY, half * 2), CFrame.new(ox, y, 0), C3(255, 255, 255), nil, 1, false)
+	local pe = Instance.new("ParticleEmitter")
+	pe.Rate = o.rate
+	pe.Lifetime = NumberRange.new(o.life[1], o.life[2])
+	pe.Speed = NumberRange.new(o.speed[1], o.speed[2])
+	pe.SpreadAngle = Vector2.new(180, 180)
+	pe.Shape = Enum.ParticleEmitterShape.Box
+	pe.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+	pe.Size = o.size
+	pe.Transparency = o.transparency
+	pe.Color = o.color
+	pe.LightEmission = o.emission or 0
+	pe.LightInfluence = o.influence or 0
+	if o.accel then pe.Acceleration = o.accel end
+	pe.Parent = a
+end
+
+local function softSeq(maxT)
+	return NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.3, maxT), NumberSequenceKeypoint.new(0.7, maxT), NumberSequenceKeypoint.new(1, 1) })
+end
+local function puffSeq(a, b)
+	return NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, a), NumberSequenceKeypoint.new(1, b or 0) })
+end
+
+local function campfire(folder, x, z)
+	disc(folder, 6.5, C3(0, 0, 0), x + 0.3, 0.07, z + 0.4, nil, 0.65, 0.05)
+	disc(folder, 5.2, C3(40, 34, 30), x, 0.1, z, MAT.Ground, 0, 0.06)
+	for i = 0, 7 do
+		local a = i * math.pi / 4
+		disc(folder, 1.2, C3(116, 112, 120), x + math.cos(a) * 2.0, 0.5, z + math.sin(a) * 2.0, MAT.Slate, 0, 0.8)
+	end
+	block(folder, 0.6, 0.5, 3.6, C3(92, 62, 36), x, 0.55, z, 0.6, MAT.Wood, 0, false)
+	block(folder, 0.6, 0.5, 3.6, C3(80, 54, 32), x, 0.75, z, -0.6, MAT.Wood, 0, false)
+	disc(folder, 2.4, C3(255, 110, 30), x, 0.95, z, MAT.Neon, 0.1, 0.3)
+	local f = disc(folder, 1.3, C3(255, 225, 110), x, 1.2, z, MAT.Neon, 0.05, 0.3)
+	disc(folder, 13, C3(255, 150, 50), x, 0.14, z, MAT.Neon, 0.93, 0.05)
+	embers(f, C3(255, 200, 80), C3(255, 70, 30), 16, 6)
+	addLight(f, C3(255, 150, 60), 30, 1.5)
+	collider(folder, 4.2, x, z, 3)
+end
+
+local function pond(folder, x, z, r, water, rim, glowing, rng)
+	disc(folder, r * 2.5, C3(0, 0, 0), x + 0.3, 0.07, z + 0.4, nil, 0.7, 0.05)
+	disc(folder, r * 2.3, rim, x, 0.14, z, MAT.Slate, 0, 0.12)
+	disc(folder, r * 2.0, water:Lerp(C3(0, 0, 0), 0.4), x, 0.22, z, MAT.Glass, 0.05, 0.1)
+	disc(folder, r * 1.7, water, x, 0.27, z, MAT.Glass, 0.1, 0.1)
+	disc(folder, r * 1.0, water:Lerp(C3(255, 255, 255), 0.3), x - r * 0.15, 0.31, z - r * 0.1, MAT.Glass, 0.25, 0.1)
+	disc(folder, r * 0.35, C3(255, 255, 255), x - r * 0.35, 0.34, z - r * 0.3, MAT.Neon, 0.7, 0.05)
+	-- stones on the rim
+	for i = 0, 11 do
+		local a = i * math.pi / 6 + rng:NextNumber(-0.2, 0.2)
+		disc(folder, rng:NextNumber(0.9, 1.6), C3(118, 116, 124), x + math.cos(a) * r * 1.13, 0.4, z + math.sin(a) * r * 1.13, MAT.Slate, 0, 0.7)
+	end
+	if glowing then
+		local g = disc(folder, r * 1.5, water, x, 0.36, z, MAT.Neon, 0.82, 0.05)
+		addLight(g, water, 30, 1.2)
+		for i = 1, 4 do
+			disc(folder, 0.8, water:Lerp(C3(255, 255, 255), 0.5), x + rng:NextNumber(-r, r) * 0.6, 0.4, z + rng:NextNumber(-r, r) * 0.6, MAT.Neon, 0.2, 0.1)
+		end
+	else
+		for i = 1, 6 do -- lily pads
+			local a = rng:NextNumber(0, math.pi * 2)
+			local d = rng:NextNumber(0.2, 0.8) * r
+			disc(folder, rng:NextNumber(1.0, 1.7), C3(56, 130, 62), x + math.cos(a) * d, 0.36, z + math.sin(a) * d, MAT.Grass, 0, 0.06)
+			if i % 3 == 0 then disc(folder, 0.5, C3(255, 170, 200), x + math.cos(a) * d, 0.42, z + math.sin(a) * d, nil, 0, 0.06) end
+		end
+		for i = 0, 8 do -- reeds
+			local a = i * 0.7 + rng:NextNumber(-0.2, 0.2)
+			block(folder, 0.18, 2.4, 0.18, C3(92, 140, 60), x + math.cos(a) * r * 1.22, 1.2, z + math.sin(a) * r * 1.22, 0, MAT.Grass, 0, false)
+			disc(folder, 0.45, C3(110, 70, 40), x + math.cos(a) * r * 1.22, 2.5, z + math.sin(a) * r * 1.22, nil, 0, 0.5)
+		end
+	end
+end
+
+local function ruinPillar(folder, x, z, h, base)
+	disc(folder, 3.6, C3(0, 0, 0), x + 0.4, 0.07, z + 0.5, nil, 0.65, 0.05)
+	disc(folder, 3.2, base:Lerp(C3(0, 0, 0), 0.25), x, 0.3, z, MAT.Slate, 0, 0.6)
+	disc(folder, 2.4, base, x, 0.3 + h / 2, z, MAT.Slate, 0, h)
+	disc(folder, 2.7, base:Lerp(C3(255, 255, 255), 0.15), x - 0.1, 0.3 + h, z - 0.1, MAT.Slate, 0, 0.4)
+	block(folder, 0.25, 0.1, 1.6, C3(30, 30, 36), x + 0.6, 0.3 + h + 0.25, z + 0.2, 0.8, nil, 0, false)
+	collider(folder, 2.4, x, z, 7)
+end
+
+local function ruinCircle(folder, x, z, r, rng)
+	disc(folder, r * 2.5, C3(0, 0, 0), x + 0.4, 0.07, z + 0.5, nil, 0.7, 0.05)
+	disc(folder, r * 2.3, C3(84, 84, 92), x, 0.18, z, MAT.Cobblestone, 0, 0.2)
+	disc(folder, r * 1.9, C3(58, 58, 68), x, 0.24, z, MAT.Slate, 0, 0.1)
+	disc(folder, r * 1.55, C3(110, 230, 200), x, 0.3, z, MAT.Neon, 0.82, 0.06)
+	for i = 0, 15 do
+		local a = i * math.pi / 8
+		block(folder, 0.4, 0.1, 1.5, C3(120, 240, 210), x + math.cos(a) * r * 0.95, 0.36, z + math.sin(a) * r * 0.95, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0.05, false)
+	end
+	local c = disc(folder, r * 0.7, C3(140, 255, 225), x, 0.4, z, MAT.Neon, 0.35, 0.1)
+	disc(folder, r * 0.3, C3(255, 255, 255), x, 0.46, z, MAT.Neon, 0.1, 0.1)
+	addLight(c, C3(110, 240, 210), 32, 1.3)
+	embers(c, C3(150, 255, 230), C3(255, 255, 255), 8, 4)
+	for i = 0, 5 do
+		local a = i * math.pi / 3 + 0.3
+		local px, pz = x + math.cos(a) * r * 1.2, z + math.sin(a) * r * 1.2
+		if i == 2 then -- a fallen pillar
+			block(folder, 2.2, 2.2, 7, C3(104, 102, 112), px, 1.1, pz, a, MAT.Slate, 0, false)
+			collider(folder, 2.6, px, pz, 3)
+		else
+			ruinPillar(folder, px, pz, rng:NextNumber(4, 7.5), C3(112, 110, 122))
+		end
+	end
+end
+
+local function tombstone(folder, x, z, rot)
+	block(folder, 2.2, 0.3, 1.2, C3(62, 62, 70), x, 0.2, z, rot, MAT.Slate, 0, false)
+	block(folder, 1.6, 2.0, 0.55, C3(120, 120, 130), x, 1.1, z, rot, MAT.Slate, 0, false)
+	block(folder, 0.2, 0.12, 1.0, C3(40, 40, 46), x, 2.15, z, rot, nil, 0, false)
+	block(folder, 0.8, 0.12, 0.2, C3(40, 40, 46), x, 2.15, z, rot, nil, 0, false)
+	collider(folder, 1.8, x, z, 3)
+end
+
+local function deadTree(folder, x, z, r, rng)
+	disc(folder, r * 2.2, C3(0, 0, 0), x + r * 0.25, 0.07, z + r * 0.3, nil, 0.65, 0.05)
+	disc(folder, 2.2, C3(48, 38, 32), x, 0.4, z, MAT.Wood, 0, 0.8)
+	disc(folder, 1.6, C3(66, 50, 40), x, 2.4, z, MAT.Wood, 0, 4.4)
+	for i = 0, 4 do
+		local a = i * 1.26 + rng:NextNumber(-0.25, 0.25)
+		local len = r * rng:NextNumber(1.1, 1.6)
+		block(folder, 0.5, 0.5, len, C3(52, 40, 32), x + math.cos(a) * len * 0.45, 4.4 + (i % 2) * 0.5, z + math.sin(a) * len * 0.45, math.atan2(math.cos(a), math.sin(a)), MAT.Wood, 0, false)
+		block(folder, 0.28, 0.28, len * 0.55, C3(48, 36, 30), x + math.cos(a) * len * 0.95 + math.cos(a + 0.7) * len * 0.2, 4.7 + (i % 2) * 0.5, z + math.sin(a) * len * 0.95 + math.sin(a + 0.7) * len * 0.2, math.atan2(math.cos(a + 0.7), math.sin(a + 0.7)), MAT.Wood, 0, false)
+	end
+	collider(folder, 1.8, x, z, 8)
+end
+
+local function graveyard(folder, cx, cz, rng)
+	disc(folder, 24, C3(52, 44, 40), cx, 0.1, cz, MAT.Ground, 0, 0.06)
+	disc(folder, 17, C3(42, 36, 34), cx, 0.12, cz, MAT.Ground, 0, 0.06)
+	for ix = -1, 1 do
+		for iz = -1, 1 do
+			if not (ix == 0 and iz == 0) then
+				local gx = cx + ix * 6.2 + rng:NextNumber(-0.8, 0.8)
+				local gz = cz + iz * 5.6 + rng:NextNumber(-0.8, 0.8)
+				disc(folder, 2.8, C3(58, 46, 38), gx, 0.16, gz + 1.9, MAT.Ground, 0, 0.1)
+				tombstone(folder, gx, gz, rng:NextNumber(-0.18, 0.18))
+			end
+		end
+	end
+	deadTree(folder, cx, cz, 3.6, rng)
+	local w = disc(folder, 1.2, C3(120, 255, 150), cx + 2.6, 2.4, cz + 2.4, MAT.Neon, 0.4, 0.2)
+	addLight(w, C3(120, 255, 150), 26, 1.2)
+	embers(w, C3(140, 255, 170), C3(60, 200, 110), 6, 3)
+end
+
+local function fence(folder, x, z, rot, n, rng)
+	local cf = CFrame.new(x, 0, z) * CFrame.Angles(0, rot, 0) * CFrame.new(-n * 1.5, 0, 0)
+	local wood, woodD = C3(104, 74, 44), C3(86, 60, 36)
+	for i = 0, n do
+		if not (i > 0 and i < n and rng:NextNumber() < 0.15) then
+			part(folder, BLK, Vector3.new(0.55, 2.4 + rng:NextNumber(-0.3, 0.3), 0.55), cf * CFrame.new(i * 3, 1.2, 0), wood, MAT.Wood, 0, false)
+		end
+	end
+	for i = 0, n - 1 do
+		if rng:NextNumber() > 0.2 then
+			part(folder, BLK, Vector3.new(3.1, 0.3, 0.3), cf * CFrame.new(i * 3 + 1.5, 1.8, 0.05), woodD, MAT.Wood, 0, false)
+		end
+		if rng:NextNumber() > 0.35 then
+			part(folder, BLK, Vector3.new(3.1, 0.3, 0.3), cf * CFrame.new(i * 3 + 1.5, 1.0, -0.05) * CFrame.Angles(0, rng:NextNumber(-0.08, 0.08), 0), woodD, MAT.Wood, 0, false)
+		end
+	end
+end
+
+local function lavaPool(folder, x, z, r)
+	disc(folder, r * 2.7, C3(0, 0, 0), x + 0.3, 0.07, z + 0.4, nil, 0.7, 0.05)
+	disc(folder, r * 2.4, C3(32, 26, 34), x, 0.2, z, MAT.Basalt, 0, 0.3)
+	disc(folder, r * 1.95, C3(255, 90, 20), x, 0.36, z, MAT.Neon, 0, 0.1)
+	disc(folder, r * 1.45, C3(255, 150, 40), x - r * 0.1, 0.4, z + r * 0.05, MAT.Neon, 0.05, 0.1)
+	disc(folder, r * 0.85, C3(255, 220, 90), x + r * 0.1, 0.44, z - r * 0.1, MAT.Neon, 0.1, 0.1)
+	disc(folder, r * 0.5, C3(36, 28, 32), x + r * 0.7, 0.47, z + r * 0.4, MAT.Basalt, 0, 0.1)
+	disc(folder, r * 0.35, C3(36, 28, 32), x - r * 0.6, 0.47, z - r * 0.5, MAT.Basalt, 0, 0.1)
+	local g = disc(folder, 1, C3(255, 120, 30), x, 0.7, z, nil, 1, 0.1)
+	embers(g, C3(255, 200, 80), C3(255, 60, 20), 14, 8)
+	addLight(g, C3(255, 110, 30), 36, 1.6)
+	collider(folder, r * 2.1, x, z, 4)
+end
+
+local function bones(folder, x, z, rng)
+	local cf = CFrame.new(x, 0, z) * CFrame.Angles(0, rng:NextNumber(0, math.pi * 2), 0)
+	local b = C3(225, 218, 195)
+	part(folder, BLK, Vector3.new(0.35, 0.3, 4.4), cf * CFrame.new(0, 0.25, 0), b, nil, 0, false)
+	for i = -2, 2 do
+		part(folder, BLK, Vector3.new(2.8, 0.2, 0.22), cf * CFrame.new(0, 0.3, i * 0.7) * CFrame.Angles(0, (i % 2) * 0.12, 0), b, nil, 0, false)
+	end
+	part(folder, CYL, Vector3.new(0.5, 1.3, 1.3), cf * CFrame.new(0, 0.3, -2.9) * CFrame.Angles(0, 0, math.pi / 2), b, nil, 0, false)
+	part(folder, CYL, Vector3.new(0.55, 0.3, 0.3), cf * CFrame.new(-0.28, 0.4, -3.3) * CFrame.Angles(0, 0, math.pi / 2), C3(20, 20, 20), nil, 0, false)
+	part(folder, CYL, Vector3.new(0.55, 0.3, 0.3), cf * CFrame.new(0.28, 0.4, -3.3) * CFrame.Angles(0, 0, math.pi / 2), C3(20, 20, 20), nil, 0, false)
+end
+
+local function tent(folder, x, z, rot, col)
+	local cf = CFrame.new(x, 0, z) * CFrame.Angles(0, rot, 0)
+	disc(folder, 9, C3(0, 0, 0), x + 0.4, 0.07, z + 0.5, nil, 0.65, 0.05)
+	part(folder, BLK, Vector3.new(6.2, 0.2, 7.2), cf * CFrame.new(0, 0.15, 0), C3(46, 38, 32), MAT.Fabric, 0, false)
+	part(folder, BLK, Vector3.new(4.2, 0.25, 7.4), cf * CFrame.new(-1.35, 1.6, 0) * CFrame.Angles(0, 0, math.rad(50)), col, MAT.Fabric, 0, false)
+	part(folder, BLK, Vector3.new(4.2, 0.25, 7.4), cf * CFrame.new(1.35, 1.6, 0) * CFrame.Angles(0, 0, math.rad(-50)), col:Lerp(C3(0, 0, 0), 0.18), MAT.Fabric, 0, false)
+	part(folder, BLK, Vector3.new(0.35, 0.35, 8.0), cf * CFrame.new(0, 3.2, 0), C3(86, 60, 38), MAT.Wood, 0, false)
+	part(folder, BLK, Vector3.new(0.3, 0.1, 3), cf * CFrame.new(-0.4, 3.0, 0) * CFrame.Angles(0, 0, math.rad(50)), C3(230, 210, 150), MAT.Fabric, 0, false)
+	collider(folder, 6, x, z, 4)
+end
+
+local function goblinCamp(folder, cx, cz, rng)
+	disc(folder, 30, C3(46, 42, 52), cx, 0.1, cz, MAT.Ground, 0, 0.06)
+	disc(folder, 22, C3(38, 34, 44), cx, 0.12, cz, MAT.Ground, 0, 0.06)
+	campfire(folder, cx, cz)
+	local cols = { C3(120, 60, 50), C3(70, 100, 60), C3(110, 90, 50) }
+	for i = 0, 2 do
+		local a = math.pi / 2 + i * math.pi * 2 / 3
+		local tx, tz = cx + math.cos(a) * 9, cz + math.sin(a) * 9
+		tent(folder, tx, tz, math.atan2(cx - tx, cz - tz) + math.pi / 2, cols[i + 1])
+	end
+	-- treasure pile
+	local ta = math.rad(-35)
+	local px, pz = cx + math.cos(ta) * 6.5, cz + math.sin(ta) * 6.5
+	disc(folder, 5, C3(40, 34, 30), px, 0.14, pz, MAT.Slate, 0, 0.1)
+	for i = 1, 16 do
+		local a, d = rng:NextNumber(0, math.pi * 2), rng:NextNumber(0, 1.8)
+		disc(folder, rng:NextNumber(0.7, 1.1), C3(255, 205, 40), px + math.cos(a) * d, 0.3 + i * 0.05, pz + math.sin(a) * d, MAT.Metal, 0, 0.12)
+	end
+	local gl = disc(folder, 1.0, C3(255, 230, 120), px, 1.1, pz, MAT.Neon, 0.2, 0.1)
+	addLight(gl, C3(255, 214, 90), 20, 1.0)
+	collider(folder, 3.6, px, pz, 2)
+	-- sacks
+	local sa = math.rad(150)
+	for i = 0, 2 do
+		local sx, sz = cx + math.cos(sa + i * 0.35) * 6.5, cz + math.sin(sa + i * 0.35) * 6.5
+		disc(folder, 1.9, C3(150, 120, 80), sx, 0.7, sz, MAT.Fabric, 0, 1.4)
+		disc(folder, 0.8, C3(110, 84, 54), sx, 1.45, sz, MAT.Fabric, 0, 0.2)
+	end
+	-- banner + stakes
+	block(folder, 0.5, 8, 0.5, C3(70, 50, 34), cx + 11, 4, cz - 1, 0, MAT.Wood, 0, false)
+	block(folder, 4, 0.2, 6, C3(150, 36, 40), cx + 11, 7, cz + 1.6, 0, MAT.Fabric, 0, false)
+	block(folder, 1.6, 0.25, 1.6, C3(240, 220, 120), cx + 11, 7.1, cz + 1.6, 0.78, MAT.Neon, 0.1, false)
+	for i = 0, 17 do
+		local a = i * math.pi / 9
+		if math.abs(math.sin(a)) > 0.3 or math.cos(a) < 0 then
+			block(folder, 0.5, 3.2, 0.5, C3(94, 66, 40), cx + math.cos(a) * 14.2, 1.6, cz + math.sin(a) * 14.2, a, MAT.Wood, 0, false)
+			block(folder, 0.5, 0.5, 0.5, C3(70, 50, 34), cx + math.cos(a) * 14.2, 3.3, cz + math.sin(a) * 14.2, a + 0.78, MAT.Wood, 0, false)
+		end
+	end
+end
+
+local function mineArch(folder, x, z, rot)
+	local cf = CFrame.new(x, 0, z) * CFrame.Angles(0, rot, 0)
+	local wood = C3(104, 74, 44)
+	disc(folder, 10, C3(0, 0, 0), x + 0.4, 0.07, z + 0.4, nil, 0.8, 0.05)
+	for _, s in ipairs({ -3.6, 3.6 }) do
+		part(folder, BLK, Vector3.new(0.9, 6.4, 0.9), cf * CFrame.new(s, 3.2, 0), wood, MAT.Wood, 0, false)
+		part(folder, BLK, Vector3.new(1.6, 0.4, 1.6), cf * CFrame.new(s, 0.25, 0), C3(60, 56, 66), MAT.Slate, 0, false)
+		local w = cf * CFrame.new(s, 0, 0)
+		collider(folder, 1.3, w.X, w.Z, 6)
+	end
+	part(folder, BLK, Vector3.new(9.4, 0.9, 1.1), cf * CFrame.new(0, 6.6, 0), wood:Lerp(C3(0, 0, 0), 0.15), MAT.Wood, 0, false)
+	part(folder, BLK, Vector3.new(2.2, 0.3, 0.3), cf * CFrame.new(-2.6, 5.6, 0.6) * CFrame.Angles(0, 0, math.rad(-45)), wood, MAT.Wood, 0, false)
+	part(folder, BLK, Vector3.new(2.2, 0.3, 0.3), cf * CFrame.new(2.6, 5.6, 0.6) * CFrame.Angles(0, 0, math.rad(45)), wood, MAT.Wood, 0, false)
+	local lt = part(folder, CYL, Vector3.new(0.9, 0.9, 0.9), cf * CFrame.new(0, 5.6, -0.9) * CFrame.Angles(0, 0, math.pi / 2), C3(255, 190, 90), MAT.Neon, 0.1, false)
+	addLight(lt, C3(255, 180, 80), 24, 1.1)
+end
+
+local function mineCart(folder, x, z, rot)
+	local cf = CFrame.new(x, 0, z) * CFrame.Angles(0, rot, 0)
+	part(folder, BLK, Vector3.new(3.4, 0.5, 5), cf * CFrame.new(0, 0.9, 0), C3(86, 70, 62), MAT.Metal, 0, false)
+	part(folder, BLK, Vector3.new(0.4, 1.3, 5), cf * CFrame.new(-1.5, 1.4, 0), C3(104, 84, 72), MAT.Metal, 0, false)
+	part(folder, BLK, Vector3.new(0.4, 1.3, 5), cf * CFrame.new(1.5, 1.4, 0), C3(104, 84, 72), MAT.Metal, 0, false)
+	part(folder, BLK, Vector3.new(2.6, 1.3, 0.4), cf * CFrame.new(0, 1.4, -2.3), C3(104, 84, 72), MAT.Metal, 0, false)
+	part(folder, BLK, Vector3.new(2.6, 1.3, 0.4), cf * CFrame.new(0, 1.4, 2.3), C3(104, 84, 72), MAT.Metal, 0, false)
+	for i = 1, 7 do
+		part(folder, CYL, Vector3.new(0.7, 0.9, 0.9), cf * CFrame.new((i % 3 - 1) * 0.8, 1.35, (i % 2 - 0.5) * 2.4 + (i - 4) * 0.2) * CFrame.Angles(0, 0, math.pi / 2), C3(255, 205, 50), MAT.Neon, 0.15, false)
+	end
+end
+
+local function forestAmbience(folder, ox, half)
+	ambient(folder, ox, half, 1.2, 2, { rate = 7, life = { 9, 13 }, speed = { 0.4, 1.2 }, size = puffSeq(16, 20), transparency = softSeq(0.9), color = ColorSequence.new(C3(220, 235, 225)), influence = 1 })
+	ambient(folder, ox, half, 4, 6, { rate = 16, life = { 5, 8 }, speed = { 0.4, 1.5 }, size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 0.5), NumberSequenceKeypoint.new(1, 0) }), transparency = NumberSequence.new(0.1), color = ColorSequence.new(C3(255, 240, 150), C3(170, 255, 170)), emission = 1 })
+	-- drifting leaves
+	ambient(folder, ox, half, 12, 2, { rate = 5, life = { 8, 12 }, speed = { 1, 3 }, size = NumberSequence.new(0.7), transparency = NumberSequence.new(0.1, 0.6), color = ColorSequence.new(C3(110, 170, 70), C3(210, 160, 60)), accel = Vector3.new(1.2, -1.4, 0.8), influence = 1 })
+end
+
+local function caveAmbience(folder, ox, half)
+	ambient(folder, ox, half, 1.2, 2, { rate = 7, life = { 9, 13 }, speed = { 0.4, 1.2 }, size = puffSeq(16, 20), transparency = softSeq(0.9), color = ColorSequence.new(C3(150, 140, 200)), influence = 0.5 })
+	ambient(folder, ox, half, 4, 6, { rate = 14, life = { 5, 8 }, speed = { 0.3, 1.2 }, size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 0.45), NumberSequenceKeypoint.new(1, 0) }), transparency = NumberSequence.new(0.1), color = ColorSequence.new(C3(110, 190, 255), C3(200, 120, 255)), emission = 1 })
+	-- falling dust and sparks from the ceiling
+	ambient(folder, ox, half, 14, 2, { rate = 6, life = { 6, 9 }, speed = { 0.2, 0.8 }, size = NumberSequence.new(0.35), transparency = NumberSequence.new(0.3, 0.8), color = ColorSequence.new(C3(190, 180, 170)), accel = Vector3.new(0, -2.2, 0) })
+end
+
+local function decorateForest(folder, ox, rng, info, place, half)
+	local x, z = place(11, 5)
+	if x then pond(folder, x, z, 9, C3(52, 130, 168), C3(100, 84, 60), false, rng) end
+	x, z = place(11, 4)
+	if x then ruinCircle(folder, x, z, 9, rng) end
+	x, z = place(12, 4)
+	if x then graveyard(folder, x, z, rng) end
+	for _ = 1, 3 do
+		x, z = place(4, 4)
+		if x then campfire(folder, x, z) end
+	end
+	for _ = 1, 7 do
+		x, z = place(2.8, 3)
+		if x then deadTree(folder, x, z, 3.2, rng) end
+	end
+	for _ = 1, 5 do
+		local n = rng:NextInteger(3, 5)
+		x, z = place(n * 1.6, 2)
+		if x then fence(folder, x, z, rng:NextNumber(0, math.pi), n, rng) end
+	end
+	for _ = 1, 16 do mushroom(folder, ox + rng:NextNumber(-half, half), rng:NextNumber(-half, half), true) end
+	forestAmbience(folder, ox, half)
+end
+
+local function decorateCave(folder, ox, rng, info, place, half)
+	for _ = 1, 3 do
+		local x, z = place(8, 4)
+		if x then lavaPool(folder, x, z, 6.5) end
+	end
+	local x, z = place(9, 4)
+	if x then pond(folder, x, z, 7, C3(40, 170, 210), C3(40, 40, 54), true, rng) end
+	x, z = place(15, 5)
+	if x then goblinCamp(folder, x, z, rng) end
+	for _ = 1, 6 do
+		x, z = place(3.2, 3)
+		if x then ruinPillar(folder, x, z, rng:NextNumber(4, 8), C3(92, 88, 104)) end
+	end
+	for _ = 1, 4 do
+		x, z = place(5, 3)
+		if x then mineArch(folder, x, z, rng:NextNumber(0, math.pi)) end
+	end
+	for _ = 1, 6 do
+		x, z = place(3, 2)
+		if x then bones(folder, x, z, rng) end
+	end
+	-- carts standing on the mine tracks
+	mineCart(folder, ox - 62, 0, math.pi / 2)
+	mineCart(folder, ox + 62, -30, math.pi / 2 + 0.05)
+	mineCart(folder, ox - 62, 60, math.pi / 2 - 0.04)
+	caveAmbience(folder, ox, half)
+end
+
 local function buildForest(folder, ox, rng, info)
 	local half = info.half
 	part(folder, BLK, Vector3.new(half * 2 + 160, 1, half * 2 + 160), CFrame.new(ox, -0.5, 0), C3(34, 76, 40), MAT.Grass, 0, true)
@@ -6987,6 +7380,7 @@ local function buildForest(folder, ox, rng, info)
 		px, pz = nx, nz
 	end
 	local place = newPlacer(rng, info.obstacles, ox, half, 62)
+	decorateForest(folder, ox, rng, info, place, half)
 	for i = 1, 40 do
 		local r = rng:NextNumber(3.6, 6)
 		local x, z = place(r, 4)
@@ -7110,6 +7504,7 @@ local function buildCave(folder, ox, rng, info)
 		end
 	end
 	local place = newPlacer(rng, info.obstacles, ox, half, 62)
+	decorateCave(folder, ox, rng, info, place, half)
 	for i = 1, 22 do
 		local r = rng:NextNumber(2.2, 4.4)
 		local x, z = place(r, 4)
@@ -7163,7 +7558,15 @@ function M.arena(locId, ox, folder, seed)
 		buildCave(folder, ox, rng, info)
 	end
 	-- spawn marker
-	disc(folder, 14, C3(255, 255, 255), ox, 0.2, 62, MAT.Neon, 0.9, 0.05)
+	local gold = C3(255, 214, 90)
+	disc(folder, 15, C3(40, 36, 52), ox, 0.19, 62, MAT.Slate, 0.15, 0.05)
+	disc(folder, 14, gold, ox, 0.2, 62, MAT.Neon, 0.85, 0.05)
+	disc(folder, 10, C3(40, 36, 52), ox, 0.21, 62, MAT.Slate, 0.1, 0.05)
+	disc(folder, 9, gold, ox, 0.22, 62, MAT.Neon, 0.9, 0.05)
+	for i = 0, 7 do
+		local a = i * math.pi / 4
+		block(folder, 0.4, 0.08, 1.8, gold, ox + math.cos(a) * 6, 0.26, 62 + math.sin(a) * 6, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0.1, false)
+	end
 	return info
 end
 
@@ -8192,7 +8595,7 @@ task.spawn(function()
 end)
 
 -- ============================================================ DATA
-local data = { level = 1, xp = 0, need = 100, points = 0, coins = 0, upg = {}, vit = 0, swift = 0, unlocked = {} }
+local data = { level = 1, xp = 0, need = 100, points = 0, coins = 0, upg = {}, vit = 0, swift = 0, unlocked = {}, beaten = {} }
 local onData -- forward
 
 local function readData()
@@ -8203,6 +8606,7 @@ local function readData()
 			data = t
 			data.upg = data.upg or {}
 			data.unlocked = data.unlocked or {}
+			data.beaten = data.beaten or {}
 			if onData then onData() end
 		end
 	end
@@ -8605,6 +9009,7 @@ local function renderPortal()
 
 	-- ---------- free gate: create a party
 	portal.sub.Text = "Pick a location, difficulty, party size and who may join."
+	if not Config.locationUnlocked(data, sel.loc) then sel.loc = Config.LocationOrder[1] end
 	local loc = Config.Locations[sel.loc]
 	local unlocked = data.unlocked[sel.loc] or 1
 	if sel.diff > unlocked then sel.diff = unlocked end
@@ -8616,13 +9021,33 @@ local function renderPortal()
 	for i, id in ipairs(Config.LocationOrder) do
 		local l = Config.Locations[id]
 		local on = sel.loc == id
-		local b = mkButton(rl, string.upper(l.name) .. "\nLv." .. l.minLvl .. "-" .. l.maxLvl, UDim2.new((i - 1) / nloc, 2, 0, 0), UDim2.new(1 / nloc, -4, 1, 0),
-			on and (LOC_COLORS[id] or C3(66, 90, 132)) or C3(28, 28, 33), function()
+		local open = Config.locationUnlocked(data, id)
+		local req = l.requires and Config.Locations[l.requires]
+		local btxt = string.upper(l.name) .. "\nLv." .. l.minLvl .. "-" .. l.maxLvl
+		if not open then btxt = "LOCKED\n" .. string.upper(l.name) end
+		local b = mkButton(rl, btxt, UDim2.new((i - 1) / nloc, 2, 0, 0), UDim2.new(1 / nloc, -4, 1, 0),
+			(not open) and C3(24, 24, 28) or (on and (LOC_COLORS[id] or C3(66, 90, 132)) or C3(28, 28, 33)), function()
+				if not open then
+					showToast("Clear " .. (req and req.name or "the previous location") .. " on ALL difficulties to unlock this location!", "ff6060", 3)
+					return
+				end
 				sel.loc = id
 				renderPortal()
 			end)
 		b.TextSize = 13
+		if not open then b.TextSize = 12 end
 		if on then markSelected(b) end
+	end
+	-- progress hint for the next locked location
+	for _, id in ipairs(Config.LocationOrder) do
+		local l = Config.Locations[id]
+		if l.requires and not Config.locationUnlocked(data, id) then
+			local req = Config.Locations[l.requires]
+			local rh = row(portal.content, 20)
+			mkLabel(rh, l.name .. " unlocks after clearing " .. req.name .. " on every difficulty:  " .. Config.beatenCount(data, l.requires) .. " / " .. #Config.Difficulties,
+				UDim2.fromOffset(2, 0), UDim2.fromScale(1, 1), 12, C3(255, 190, 110), nil, Enum.Font.GothamBold)
+			break
+		end
 	end
 	local pvr = row(portal.content, 118)
 	buildPreview(pvr, sel.loc, 118)
@@ -9669,6 +10094,7 @@ H.Result = function(r)
 	resStroke.Color = resTitle.TextColor3
 	local txt = r.loc .. "  [" .. r.diff .. "]\n\nKills: " .. r.kills .. "\nXP earned: +" .. r.xp .. "\nCoins earned: +" .. r.coins .. "\nYour level: " .. r.level
 	if r.unlocked then txt = txt .. "\n\nNEW DIFFICULTY UNLOCKED: " .. string.upper(r.unlocked) .. "!" end
+	if r.newLocation then txt = txt .. "\n\nNEW LOCATION UNLOCKED: " .. string.upper(r.newLocation) .. "!" end
 	if not r.won then txt = txt .. "\n\nAll heroes fell. Try again!" end
 	resBody.Text = txt
 end
