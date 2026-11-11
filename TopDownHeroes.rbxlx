@@ -147,15 +147,17 @@ Config.LocationOrder = { "forest", "cave" }
 -- difficulty, party size and who may join (everyone / friends only).
 Config.GateMaxPlayers = 4
 Config.Lobby = {
-	spawn = Vector3.new(0, 4, 32),
-	half = 100,
+	-- compact lobby: gates in one row at the top, shop pads in one row at the bottom,
+	-- fountain + spawn in the middle -> everything is a few seconds of walking apart
+	spawn = Vector3.new(0, 4, 19),
+	half = 60,
 	zones = {
-		{ id = "gate1", kind = "gate", n = 1, x = -72, z = -60, r = 11 },
-		{ id = "gate2", kind = "gate", n = 2, x = -24, z = -60, r = 11 },
-		{ id = "gate3", kind = "gate", n = 3, x = 24, z = -60, r = 11 },
-		{ id = "gate4", kind = "gate", n = 4, x = 72, z = -60, r = 11 },
-		{ id = "upgrade", kind = "upgrade", x = 0, z = 72, r = 13 },
-		{ id = "chest", kind = "chest", x = -52, z = 64, r = 12 },
+		{ id = "gate1", kind = "gate", n = 1, x = -39, z = -39, r = 9 },
+		{ id = "gate2", kind = "gate", n = 2, x = -13, z = -39, r = 9 },
+		{ id = "gate3", kind = "gate", n = 3, x = 13, z = -39, r = 9 },
+		{ id = "gate4", kind = "gate", n = 4, x = 39, z = -39, r = 9 },
+		{ id = "upgrade", kind = "upgrade", x = 0, z = 42, r = 10 },
+		{ id = "chest", kind = "chest", x = -32, z = 42, r = 10 },
 	},
 }
 
@@ -6592,6 +6594,22 @@ function M.lobby(folder)
 	local rng = Random.new(42)
 	local H = Config.Lobby.half
 	local gates = {}
+	local SP = Config.Lobby.spawn
+	local FS = 0.7 -- fountain scale (compact lobby)
+
+	-- everything that must stay clear of decoration (flowers / bushes)
+	local function blocked(x, z, pad)
+		pad = pad or 0
+		for _, zn in ipairs(Config.Lobby.zones) do
+			local dx, dz = x - zn.x, z - zn.z
+			if dx * dx + dz * dz < (zn.r + 6 + pad) ^ 2 then return true end
+		end
+		if x * x + z * z < (17 + pad) ^ 2 then return true end -- fountain
+		local sx, sz = x - SP.X, z - SP.Z
+		if sx * sx + sz * sz < (11 + pad) ^ 2 then return true end -- spawn rune
+		if math.abs(x) < 9 + pad then return true end -- main avenue
+		return false
+	end
 
 	-- outer grass with a darker rim
 	part(folder, BLK, Vector3.new(520, 1, 520), CFrame.new(0, -0.5, 0), C3(84, 140, 70), MAT.Grass, 0, true)
@@ -6603,9 +6621,10 @@ function M.lobby(folder)
 	end
 
 	-- stone plaza (checker)
-	local tile = 20
-	for ix = -5, 4 do
-		for iz = -5, 4 do
+	local tile = 15
+	local n2 = math.floor(H / tile + 0.5)
+	for ix = -n2, n2 - 1 do
+		for iz = -n2, n2 - 1 do
 			local even = (ix + iz) % 2 == 0
 			part(folder, BLK, Vector3.new(tile - 0.3, 0.2, tile - 0.3),
 				CFrame.new(ix * tile + tile / 2, 0.1, iz * tile + tile / 2),
@@ -6627,7 +6646,8 @@ function M.lobby(folder)
 	wall(H * 2 + 6, 3, 0, H + 1.5)
 	wall(3, H * 2, -H - 1.5, 0)
 	wall(3, H * 2, H + 1.5, 0)
-	for i = -9, 9 do
+	local nc = math.floor(H / 10.5)
+	for i = -nc, nc do
 		local o = i * 10.5
 		block(folder, 3.4, 1.8, 3.4, C3(150, 112, 82), o, 8.2, -H - 1.5, 0, MAT.Cobblestone, 0, false)
 		block(folder, 3.4, 1.8, 3.4, C3(150, 112, 82), o, 8.2, H + 1.5, 0, MAT.Cobblestone, 0, false)
@@ -6636,12 +6656,12 @@ function M.lobby(folder)
 	end
 	-- corner towers
 	for _, c in ipairs({ { -H - 3, -H - 3 }, { H + 3, -H - 3 }, { -H - 3, H + 3 }, { H + 3, H + 3 } }) do
-		disc(folder, 13, C3(136, 100, 76), c[1], 5.5, c[2], MAT.Brick, 0, 11)
-		disc(folder, 15, C3(170, 130, 95), c[1], 11.2, c[2], MAT.Cobblestone, 0, 1.2)
-		disc(folder, 9, C3(90, 62, 50), c[1], 11.9, c[2], MAT.Slate, 0, 0.3)
+		disc(folder, 12, C3(136, 100, 76), c[1], 5.5, c[2], MAT.Brick, 0, 11)
+		disc(folder, 14, C3(170, 130, 95), c[1], 11.2, c[2], MAT.Cobblestone, 0, 1.2)
+		disc(folder, 8.5, C3(90, 62, 50), c[1], 11.9, c[2], MAT.Slate, 0, 0.3)
 		local f = disc(folder, 3, C3(255, 160, 60), c[1], 12.2, c[2], MAT.Neon, 0.2, 0.5)
 		addLight(f, C3(255, 170, 80), 30, 1.5)
-		collider(folder, 13, c[1], c[2], 12)
+		collider(folder, 12, c[1], c[2], 12)
 	end
 
 	-- outside forest decoration
@@ -6653,37 +6673,42 @@ function M.lobby(folder)
 		tree(folder, x, z, rng:NextNumber(4, 7), rng:NextInteger(1, 3))
 	end
 
-	-- main avenue (spawn -> fountain -> gates street) and gate street
+	-- roads: main avenue (north <-> south), gate street (north row), service street (south row)
 	local avenue = C3(190, 158, 112)
+	local edge = C3(120, 90, 62)
+	local gateZ, shopZ = -39, 42
 	block(folder, 14, 0.06, H * 2 - 8, avenue, 0, 0.23, 0, 0, MAT.Cobblestone, 0, false)
-	block(folder, 15.5, 0.05, H * 2 - 8, C3(120, 90, 62), 0, 0.22, 0, 0, MAT.Slate, 0, false)
-	block(folder, H * 2 - 8, 0.06, 12, avenue, 0, 0.23, -60, 0, MAT.Cobblestone, 0, false)
-	block(folder, H * 2 - 8, 0.05, 13.5, C3(120, 90, 62), 0, 0.22, -60, 0, MAT.Slate, 0, false)
-	-- red carpet to the gates
-	block(folder, 5, 0.04, 80, C3(170, 40, 50), 0, 0.3, -20, 0, MAT.Fabric, 0, false)
-	block(folder, 5.8, 0.03, 80.8, C3(230, 190, 80), 0, 0.28, -20, 0, MAT.Fabric, 0, false)
+	block(folder, 15.5, 0.05, H * 2 - 8, edge, 0, 0.22, 0, 0, MAT.Slate, 0, false)
+	block(folder, H * 2 - 8, 0.06, 12, avenue, 0, 0.23, gateZ, 0, MAT.Cobblestone, 0, false)
+	block(folder, H * 2 - 8, 0.05, 13.5, edge, 0, 0.22, gateZ, 0, MAT.Slate, 0, false)
+	block(folder, H * 2 - 8, 0.06, 10, avenue, 0, 0.23, shopZ, 0, MAT.Cobblestone, 0, false)
+	block(folder, H * 2 - 8, 0.05, 11.5, edge, 0, 0.22, shopZ, 0, MAT.Slate, 0, false)
+	-- red carpet: spawn -> fountain -> gates
+	local carpetLen = SP.Z - gateZ
+	block(folder, 5, 0.04, carpetLen, C3(170, 40, 50), 0, 0.3, (SP.Z + gateZ) / 2, 0, MAT.Fabric, 0, false)
+	block(folder, 5.8, 0.03, carpetLen + 0.8, C3(230, 190, 80), 0, 0.28, (SP.Z + gateZ) / 2, 0, MAT.Fabric, 0, false)
 
-	-- fountain (bigger, with outer ring of light)
-	disc(folder, 30, C3(120, 118, 128), 0, 0.5, 0, MAT.Slate, 0, 1)
-	for i = 0, 23 do
-		local a = i * math.pi / 12
-		glowDisc(folder, 1.1, i % 2 == 0 and C3(120, 220, 255) or C3(255, 230, 150), math.cos(a) * 14.2, 1.1, math.sin(a) * 14.2, 0.1)
+	-- fountain (compact, with ring of light)
+	disc(folder, 30 * FS, C3(120, 118, 128), 0, 0.5, 0, MAT.Slate, 0, 1)
+	for i = 0, 15 do
+		local a = i * math.pi / 8
+		glowDisc(folder, 1.0, i % 2 == 0 and C3(120, 220, 255) or C3(255, 230, 150), math.cos(a) * 14.2 * FS, 1.1, math.sin(a) * 14.2 * FS, 0.1)
 	end
-	disc(folder, 24, C3(176, 176, 186), 0, 0.7, 0, MAT.Marble, 0, 1.2)
-	collider(folder, 24, 0, 0, 5)
-	disc(folder, 20.5, C3(70, 160, 230), 0, 1.0, 0, MAT.Glass, 0.15, 1.0)
-	disc(folder, 17, C3(120, 215, 255), 0, 1.35, 0, MAT.Neon, 0.75, 0.1)
-	disc(folder, 13, C3(150, 235, 255), 0, 1.4, 0, MAT.Neon, 0.8, 0.1)
-	disc(folder, 8.5, C3(200, 200, 210), 0, 1.7, 0, MAT.Marble, 0, 1.4)
-	disc(folder, 6.5, C3(70, 160, 230), 0, 2.45, 0, MAT.Glass, 0.15, 0.2)
-	disc(folder, 3, C3(235, 245, 255), 0, 2.6, 0, MAT.Marble, 0, 0.3)
+	disc(folder, 24 * FS, C3(176, 176, 186), 0, 0.7, 0, MAT.Marble, 0, 1.2)
+	collider(folder, 24 * FS, 0, 0, 5)
+	disc(folder, 20.5 * FS, C3(70, 160, 230), 0, 1.0, 0, MAT.Glass, 0.15, 1.0)
+	disc(folder, 17 * FS, C3(120, 215, 255), 0, 1.35, 0, MAT.Neon, 0.75, 0.1)
+	disc(folder, 13 * FS, C3(150, 235, 255), 0, 1.4, 0, MAT.Neon, 0.8, 0.1)
+	disc(folder, 8.5 * FS, C3(200, 200, 210), 0, 1.7, 0, MAT.Marble, 0, 1.4)
+	disc(folder, 6.5 * FS, C3(70, 160, 230), 0, 2.45, 0, MAT.Glass, 0.15, 0.2)
+	disc(folder, 3 * FS, C3(235, 245, 255), 0, 2.6, 0, MAT.Marble, 0, 0.3)
 	local spout = disc(folder, 1.4, C3(190, 240, 255), 0, 3.0, 0, MAT.Neon, 0.2, 0.3)
-	addLight(spout, C3(150, 220, 255), 40, 1.4)
+	addLight(spout, C3(150, 220, 255), 36, 1.4)
 	local pe = Instance.new("ParticleEmitter")
-	pe.Rate = 60
+	pe.Rate = 50
 	pe.EmissionDirection = Enum.NormalId.Right
-	pe.Lifetime = NumberRange.new(1, 1.6)
-	pe.Speed = NumberRange.new(10, 14)
+	pe.Lifetime = NumberRange.new(1, 1.5)
+	pe.Speed = NumberRange.new(9, 12)
 	pe.SpreadAngle = Vector2.new(25, 25)
 	pe.Acceleration = Vector3.new(0, -22, 0)
 	pe.Size = NumberSequence.new(0.5, 0.1)
@@ -6691,59 +6716,64 @@ function M.lobby(folder)
 	pe.Color = ColorSequence.new(C3(170, 230, 255))
 	pe.LightEmission = 0.6
 	pe.Parent = spout
+	-- flower ring around the fountain
+	for i = 0, 19 do
+		local a = i * math.pi / 10 + 0.15
+		flower(folder, math.cos(a) * 13.6, math.sin(a) * 13.6, rng)
+	end
 
 	-- spawn runes
-	disc(folder, 20, C3(40, 36, 60), 0, 0.31, 32, MAT.Slate, 0, 0.06)
-	glowDisc(folder, 18, C3(255, 214, 90), 0, 0.34, 32, 0.8)
-	glowDisc(folder, 13, C3(40, 36, 60), 0, 0.36, 32, 0)
-	glowDisc(folder, 12, C3(255, 214, 90), 0, 0.38, 32, 0.85)
+	disc(folder, 14, C3(40, 36, 60), SP.X, 0.31, SP.Z, MAT.Slate, 0, 0.06)
+	glowDisc(folder, 12.6, C3(255, 214, 90), SP.X, 0.34, SP.Z, 0.8)
+	glowDisc(folder, 9.2, C3(40, 36, 60), SP.X, 0.36, SP.Z, 0)
+	glowDisc(folder, 8.4, C3(255, 214, 90), SP.X, 0.38, SP.Z, 0.85)
 	for i = 0, 7 do
 		local a = i * math.pi / 4
-		block(folder, 0.6, 0.1, 2.6, C3(255, 214, 90), math.cos(a) * 7.6, 0.45, 32 + math.sin(a) * 7.6, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0.1, false)
+		block(folder, 0.5, 0.1, 2.0, C3(255, 214, 90), SP.X + math.cos(a) * 5.4, 0.45, SP.Z + math.sin(a) * 5.4, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0.1, false)
 	end
 
 	-- lamps / torches
-	for _, p in ipairs({ { -40, -20 }, { 40, -20 }, { -40, 40 }, { 40, 40 }, { -85, -85 }, { 85, -85 }, { -85, 85 }, { 85, 85 }, { -20, 12 }, { 20, 12 } }) do
+	for _, p in ipairs({ { -20, -22 }, { 20, -22 }, { -18, 10 }, { 18, 10 }, { -52, -22 }, { 52, -22 }, { -54, 12 }, { 54, 12 }, { -54, 54 }, { 54, 54 }, { -54, -54 }, { 54, -54 } }) do
 		lamp(folder, p[1], p[2])
 	end
-	for _, p in ipairs({ { -8, -88 }, { 8, -88 }, { -8, 88 }, { 8, 88 }, { -88, -30 }, { 88, -30 }, { -88, 30 }, { 88, 30 } }) do
+	for _, p in ipairs({ { -6, -56 }, { 6, -56 }, { -16, 56 }, { 16, 56 }, { -57, -4 }, { 57, -4 }, { -57, 28 }, { 57, 28 } }) do
 		torch(folder, p[1], p[2])
 	end
 
 	-- hedges & benches & banners
-	hedge(folder, -50, 2, 2, 24)
-	hedge(folder, 50, 2, 2, 24)
-	hedge(folder, -50, 40, 2, 12)
-	hedge(folder, 50, 40, 2, 12)
-	bench(folder, -44, 2, math.pi / 2)
-	bench(folder, 44, 2, -math.pi / 2)
-	bench(folder, -30, -22, 0)
-	bench(folder, 30, -22, math.pi)
-	bench(folder, -12, 50, 0)
-	bench(folder, 12, 50, 0)
+	hedge(folder, -26, -4, 2, 18)
+	hedge(folder, 26, -4, 2, 18)
+	hedge(folder, -26, 24, 2, 10)
+	hedge(folder, 26, 24, 2, 10)
+	bench(folder, -22, -4, math.pi / 2)
+	bench(folder, 22, -4, -math.pi / 2)
+	bench(folder, -22, 24, math.pi / 2)
+	bench(folder, 22, 24, -math.pi / 2)
+	bench(folder, -22, -26, 0)
+	bench(folder, 22, -26, math.pi)
 	for i = -3, 3 do
 		if i ~= 0 then
-			banner(folder, i * 25, -H + 5, GATE_COLORS[(math.abs(i) % 4) + 1], 0)
+			banner(folder, i * 17, -H + 3, GATE_COLORS[(math.abs(i) % 4) + 1], 0)
 		end
 	end
 
-	-- flowers & bushes
-	for i = 1, 200 do
+	-- flowers & bushes (kept off roads, pads and the fountain)
+	for i = 1, 150 do
 		local x, z = rng:NextNumber(-H + 4, H - 4), rng:NextNumber(-H + 4, H - 4)
-		if (math.abs(x) > 56 or math.abs(z) > 82) and (math.abs(x) > 9) and not (z < -48 and z > -72) then
-			if i % 3 == 0 then bush(folder, x, z, rng:NextNumber(1.5, 2.4)) else flower(folder, x, z, rng) end
+		if not blocked(x, z) and math.abs(z - gateZ) > 9 and math.abs(z - shopZ) > 9 then
+			if i % 3 == 0 then bush(folder, x, z, rng:NextNumber(1.5, 2.2)) else flower(folder, x, z, rng) end
 		end
 	end
-	for i = 1, 6 do
-		bush(folder, -92 + i * 3, -93, 2.2)
-		bush(folder, 92 - i * 3, -93, 2.2)
+	for i = 1, 5 do
+		bush(folder, -H + 4 + i * 3, -H + 3, 2.2)
+		bush(folder, H - 4 - i * 3, -H + 3, 2.2)
 	end
 
 	-- fireflies drifting over the whole plaza
 	do
-		local a = part(folder, BLK, Vector3.new(190, 6, 190), CFrame.new(0, 4, 0), C3(255, 255, 255), nil, 1, false)
+		local a = part(folder, BLK, Vector3.new(H * 2 - 6, 6, H * 2 - 6), CFrame.new(0, 4, 0), C3(255, 255, 255), nil, 1, false)
 		local ff = Instance.new("ParticleEmitter")
-		ff.Rate = 28
+		ff.Rate = 22
 		ff.Lifetime = NumberRange.new(5, 8)
 		ff.Speed = NumberRange.new(0.5, 1.8)
 		ff.SpreadAngle = Vector2.new(180, 180)
@@ -6757,13 +6787,12 @@ function M.lobby(folder)
 		ff.Parent = a
 	end
 
-	-- title
-	label(folder, 0, 8, 22, "TOP-DOWN HEROES", C3(255, 235, 140), 520, 70, 46)
-	label(folder, 0, 8, 12, "Pick a gate  ->  choose a location  ->  survive the waves!", C3(255, 255, 255), 640, 36, 20)
-	label(folder, 0, 8, -40, "THE FOUR GATES", C3(255, 255, 255), 360, 30, 20)
+	-- title (between the fountain and the gates)
+	label(folder, 0, 8, -23, "TOP-DOWN HEROES", C3(255, 235, 140), 440, 60, 40)
+	label(folder, 0, 8, -16.5, "Pick a gate  ->  choose a location  ->  survive the waves!", C3(255, 255, 255), 560, 30, 16)
+	label(folder, 0, 8, -29.5, "THE FOUR GATES", C3(255, 255, 255), 300, 26, 18)
 
 	-- ================= THE FOUR GATES =================
-	local wlabels = { forest = "Forest", cave = "Cave" }
 	for _, zn in ipairs(Config.Lobby.zones) do
 		if zn.kind == "gate" then
 			local col = GATE_COLORS[zn.n]
@@ -6779,7 +6808,7 @@ function M.lobby(folder)
 			-- rune dashes
 			for i = 0, 15 do
 				local a = i * math.pi / 8
-				block(folder, 0.5, 0.12, 1.5, col, zn.x + math.cos(a) * zn.r * 0.78, 0.8, zn.z + math.sin(a) * zn.r * 0.78, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
+				block(folder, 0.5, 0.12, 1.4, col, zn.x + math.cos(a) * zn.r * 0.78, 0.8, zn.z + math.sin(a) * zn.r * 0.78, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
 			end
 			-- pillars around
 			for i = 0, 5 do
@@ -6801,10 +6830,10 @@ function M.lobby(folder)
 			pe2.EmissionDirection = Enum.NormalId.Right
 			pe2.Parent = em
 			addLight(em, col, 26, 1.3)
-			-- labels
-			label(folder, zn.x, 7, zn.z - 1.5, tostring(zn.n), col, 120, 90, 80)
-			label(folder, zn.x, 7, zn.z - zn.r - 4.5, "GATE " .. zn.n, col, 300, 40, 30)
-			local sub = liveLabel(folder, zn.x, 7, zn.z - zn.r - 1.2, "FREE - step in to host a run", C3(255, 255, 255), 340, 40, 15)
+			-- labels (narrower so neighbouring gates never overlap)
+			label(folder, zn.x, 7, zn.z - 1.5, tostring(zn.n), col, 100, 80, 70)
+			label(folder, zn.x, 7, zn.z - zn.r - 4.2, "GATE " .. zn.n, col, 200, 34, 26)
+			local sub = liveLabel(folder, zn.x, 7, zn.z - zn.r - 1.2, "FREE - step in to host a run", C3(255, 255, 255), 230, 38, 13)
 			gates[zn.id] = { sub = sub, glow = glow, color = col, n = zn.n }
 		end
 	end
@@ -6820,7 +6849,7 @@ function M.lobby(folder)
 	disc(folder, uz.r * 1.3, C3(255, 214, 40), uz.x, 0.62, uz.z, MAT.Neon, 0.82, 0.1)
 	for i = 0, 15 do
 		local a = i * math.pi / 8
-		block(folder, 0.5, 0.15, 1.5, C3(255, 214, 40), uz.x + math.cos(a) * uz.r * 0.8, 0.75, uz.z + math.sin(a) * uz.r * 0.8, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
+		block(folder, 0.5, 0.15, 1.4, C3(255, 214, 40), uz.x + math.cos(a) * uz.r * 0.8, 0.75, uz.z + math.sin(a) * uz.r * 0.8, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
 	end
 	-- anvil
 	block(folder, 5, 1.2, 3, C3(60, 60, 68), uz.x, 1.4, uz.z, 0, MAT.Metal, 0, false)
@@ -6829,12 +6858,12 @@ function M.lobby(folder)
 	disc(folder, 1.5, C3(255, 120, 30), uz.x - 1, 2.7, uz.z, MAT.Neon, 0.2, 0.2)
 	for i = 0, 5 do
 		local a = i * 1.0
-		local coin = disc(folder, 1.3, C3(255, 205, 40), uz.x + math.cos(a) * 8, 0.9 + (i % 3) * 0.2, uz.z + math.sin(a) * 6, MAT.Neon, 0.1, 0.2)
+		local coin = disc(folder, 1.3, C3(255, 205, 40), uz.x + math.cos(a) * 6.8, 0.9 + (i % 3) * 0.2, uz.z + math.sin(a) * 5.4, MAT.Neon, 0.1, 0.2)
 		if i == 0 then addLight(coin, C3(255, 214, 40), 20, 1.2) end
 	end
 	collider(folder, 5, uz.x, uz.z, 4)
-	label(folder, uz.x, 7, uz.z - uz.r - 4, "UPGRADES", C3(255, 214, 40), 380, 48, 34)
-	label(folder, uz.x, 7, uz.z - uz.r - 0.8, "Spend skill points & coins", C3(255, 255, 255), 380, 28, 16)
+	label(folder, uz.x, 7, uz.z - uz.r - 4, "UPGRADES", C3(255, 214, 40), 260, 40, 30)
+	label(folder, uz.x, 7, uz.z - uz.r - 0.8, "Spend skill points & coins", C3(255, 255, 255), 300, 26, 15)
 
 	-- ================= WEAPON CHEST STATION (orange) =================
 	local cz_
@@ -6850,7 +6879,7 @@ function M.lobby(folder)
 		disc(folder, cz_.r * 0.9, GOLD, cz_.x, 0.66, cz_.z, MAT.Neon, 0.8, 0.1)
 		for i = 0, 15 do
 			local a = i * math.pi / 8
-			block(folder, 0.5, 0.15, 1.5, ORANGE, cz_.x + math.cos(a) * cz_.r * 0.82, 0.75, cz_.z + math.sin(a) * cz_.r * 0.82, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
+			block(folder, 0.5, 0.15, 1.4, ORANGE, cz_.x + math.cos(a) * cz_.r * 0.82, 0.75, cz_.z + math.sin(a) * cz_.r * 0.82, math.atan2(math.cos(a), math.sin(a)), MAT.Neon, 0, false)
 		end
 		-- the chest (seen from above: lid, golden bands, lock)
 		local wood, woodDark = C3(142, 88, 44), C3(98, 60, 30)
@@ -6884,16 +6913,16 @@ function M.lobby(folder)
 		addLight(glowp, ORANGE, 30, 1.6)
 		for i = 0, 6 do
 			local a = i * 0.9
-			local coin = disc(folder, 1.3, C3(255, 205, 40), cz_.x + math.cos(a) * 9, 0.9 + (i % 3) * 0.2, cz_.z + math.sin(a) * 8, MAT.Neon, 0.1, 0.2)
+			local coin = disc(folder, 1.3, C3(255, 205, 40), cz_.x + math.cos(a) * 7.4, 0.9 + (i % 3) * 0.2, cz_.z + math.sin(a) * 6.6, MAT.Neon, 0.1, 0.2)
 			if i == 0 then addLight(coin, C3(255, 214, 40), 16, 1) end
 		end
 		collider(folder, 8, cz_.x, cz_.z, 5)
-		label(folder, cz_.x, 8, cz_.z - cz_.r - 4, "СУНДУКИ С ОРУЖИЕМ", ORANGE, 460, 48, 34)
-		label(folder, cz_.x, 8, cz_.z - cz_.r - 0.8, "Посохи  -  Мечи  -  Луки   |   за монеты", C3(255, 255, 255), 460, 28, 16)
+		label(folder, cz_.x, 8, cz_.z - cz_.r - 4, "СУНДУКИ С ОРУЖИЕМ", ORANGE, 340, 40, 26)
+		label(folder, cz_.x, 8, cz_.z - cz_.r - 0.8, "Посохи - Мечи - Луки  |  за монеты", C3(255, 255, 255), 340, 26, 14)
 	end
 
 	-- crates
-	for _, p in ipairs({ { -88, 60 }, { -84, 66 }, { 88, 60 }, { 85, 67 }, { 90, -20 }, { -90, -20 } }) do
+	for _, p in ipairs({ { -54, 50 }, { -50, 55 }, { 54, 50 }, { 51, 56 }, { 55, -22 }, { -55, -22 } }) do
 		block(folder, 5, 4, 5, C3(150, 108, 60), p[1], 2.2, p[2], rng:NextNumber(0, 1), MAT.WoodPlanks, 0, true)
 		block(folder, 5.2, 0.4, 1, C3(100, 70, 40), p[1], 4.3, p[2], 0, MAT.Wood, 0, false)
 	end
@@ -7160,7 +7189,7 @@ local api
 local testRun = nil
 local C3 = Color3.fromRGB
 
-local ZONE = { id = "testportal", kind = "testportal", x = 52, z = 64, r = 11 }
+local ZONE = { id = "testportal", kind = "testportal", x = 32, z = 42, r = 9 }
 local SLOT = 40 -- far away arena slot (ox = 3000 + 40 * 400)
 local HALF = 80
 
