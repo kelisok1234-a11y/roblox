@@ -1577,6 +1577,964 @@ return WM
 ]]></ProtectedString>
 </Properties>
 </Item>
+<Item class="ModuleScript" referent="RBX_WFX1">
+<Properties>
+<string name="Name">WeaponFX</string>
+<ProtectedString name="Source"><![CDATA[-- WeaponFX (ReplicatedStorage.WeaponFX)
+-- Premium attack VFX for swords / bows / staves.
+--
+-- Design rules (so the screen never turns into particle soup):
+--   * every effect is built from a few crisp, readable layers - rarity makes the shapes sharper, bigger and
+--     more distinctive, NOT noisier;
+--   * every element has ONE signature motif that is the same on every weapon type:
+--         nature = petals    frost = ice crystals    fire = flame tongues + embers   shock = forked lightning
+--         void   = implosion holy  = light rays      prism = hue-shifting bands
+--   * almost no ParticleEmitters - geometry + one scheduler loop (cheap, deterministic, easy to read);
+--   * hard caps on part counts per effect.
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+local Theme = require(RS:WaitForChild("Theme"))
+
+local FX = {}
+
+local NEON = Enum.Material.Neon
+local SMOOTH = Enum.Material.SmoothPlastic
+local B, CY, BALL = Enum.PartType.Block, Enum.PartType.Cylinder, Enum.PartType.Ball
+local C3 = Color3.fromRGB
+local PI, TAU = math.pi, math.pi * 2
+local rand, sin, cos, clamp, floor = math.random, math.sin, math.cos, math.clamp, math.floor
+
+local folder = workspace:FindFirstChild("WeaponFX")
+if not folder then
+	folder = Instance.new("Folder")
+	folder.Name = "WeaponFX"
+	folder.Parent = workspace
+end
+
+-- ============================================================ palette
+local ELEM = {
+	none = { C3(190, 214, 240), C3(110, 140, 185), C3(244, 250, 255) },
+	nature = { C3(90, 222, 112), C3(38, 140, 70), C3(218, 255, 200) },
+	frost = { C3(118, 210, 255), C3(58, 128, 222), C3(236, 250, 255) },
+	fire = { C3(255, 124, 40), C3(190, 36, 18), C3(255, 232, 156) },
+	shock = { C3(150, 132, 255), C3(255, 226, 84), C3(250, 250, 255) },
+	void = { C3(176, 84, 255), C3(44, 14, 78), C3(236, 192, 255) },
+	holy = { C3(255, 206, 72), C3(255, 244, 200), C3(255, 252, 236) },
+}
+local STEEL_TAIL = C3(92, 112, 150)
+
+local function hue(off, s, v)
+	return Color3.fromHSV((os.clock() * 0.35 + off) % 1, s or 0.75, v or 1)
+end
+
+-- palette of the weapon in use (or of an explicit element, used for status procs)
+local function pal(TH, el)
+	if el and (not TH or TH.elem ~= el) then
+		local e = ELEM[el] or ELEM.none
+		return { main = e[1], acc = e[2], glow = e[3], elem = el, tier = TH and TH.tier or 3, rainbow = false }
+	end
+	if not TH then
+		local e = ELEM.none
+		return { main = e[1], acc = e[2], glow = e[3], elem = "none", tier = 1, rainbow = false }
+	end
+	local elem = TH.elem
+	if TH.rainbow then elem = "prism" end
+	local p = { main = Theme.main(TH), acc = Theme.accent(TH), glow = Theme.glow(TH), elem = elem, tier = TH.tier, rainbow = TH.rainbow }
+	if elem == "none" then
+		-- plain steel swords / bows: cool white-blue, never the brown of the handle colour
+		p.acc = p.main:Lerp(STEEL_TAIL, 0.55)
+		p.glow = C3(244, 250, 255)
+	end
+	return p
+end
+
+-- ============================================================ primitives
+local function V(x, y, z) return Vector3.new(math.max(x, 0.05), math.max(y, 0.05), math.max(z, 0.05)) end
+
+local function part(shape, size, cf, color, mat, tr)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Shape = shape
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color
+	p.Material = mat or NEON
+	p.Transparency = tr or 0
+	p.Parent = folder
+	return p
+end
+
+local function tw(o, t, props, style, dir)
+	TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props):Play()
+end
+
+-- one Heartbeat loop drives every animated effect (fn(alpha, seconds); done() always runs)
+local active = {}
+local conn = nil
+local function ensureLoop()
+	if conn then return end
+	conn = RunService.Heartbeat:Connect(function(dt)
+		for i = #active, 1, -1 do
+			local a = active[i]
+			a.t = a.t + dt
+			local finished = a.t >= a.dur
+			if a.t >= 0 then
+				local ok = pcall(a.fn, math.min(1, a.t / a.dur), a.t)
+				if not ok then finished = true end
+			end
+			if finished then
+				table.remove(active, i)
+				if a.done then pcall(a.done) end
+			end
+		end
+	end)
+end
+local function run(dur, fn, done, delay)
+	ensureLoop()
+	table.insert(active, { t = -(delay or 0), dur = dur, fn = fn, done = done })
+end
+
+local function disc(d, x, y, z, color, tr, mat, thick)
+	return part(CY, V(thick or 0.2, d, d), CFrame.new(x, y, z) * CFrame.Angles(0, 0, PI / 2), color, mat or NEON, tr)
+end
+
+-- crisp outlined ring lying on the ground (works for expanding AND shrinking rings)
+local function ring(x, y, z, d0, d1, color, dur, thick, tr0, tr1)
+	local p = part(B, V(d0, 0.05, d0), CFrame.new(x, y, z), color, SMOOTH, 1)
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Top
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+	sg.CanvasSize = Vector2.new(256, 256)
+	sg.LightInfluence = 0
+	sg.Brightness = 1.5
+	sg.Parent = p
+	local f = Instance.new("Frame")
+	f.Size = UDim2.fromScale(1, 1)
+	f.BackgroundTransparency = 1
+	f.BorderSizePixel = 0
+	f.Parent = sg
+	local uc = Instance.new("UICorner")
+	uc.CornerRadius = UDim.new(0.5, 0)
+	uc.Parent = f
+	local us = Instance.new("UIStroke")
+	us.Color = color
+	us.Thickness = thick or 7
+	us.Transparency = tr0 or 0.1
+	us.Parent = f
+	tw(p, dur, { Size = V(d1, 0.05, d1) })
+	tw(us, dur, { Transparency = tr1 or 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	Debris:AddItem(p, dur + 0.1)
+	return p
+end
+
+local function pillar(x, z, w, h, color, dur, tr0)
+	local p = part(B, V(w, h, w), CFrame.new(x, h / 2, z), color, NEON, tr0 or 0.4)
+	tw(p, dur, { Size = V(0.1, h, 0.1), Transparency = 1 })
+	Debris:AddItem(p, dur + 0.1)
+end
+
+-- tapered shard that flies along `dir` (unit Vector3) while shrinking and fading
+local function shard(pos, dir, len, w, color, o)
+	o = o or {}
+	local dur = o.dur or 0.35
+	local travel = o.travel or len
+	local h = o.h or 0.16
+	local e = o.endLen or 0.25
+	local p = part(B, V(w, h, len), CFrame.lookAt(pos + dir * len * 0.5, pos + dir * (len * 0.5 + 1)), color, o.mat or NEON, o.tr or 0.05)
+	local c1 = pos + dir * (travel + len * e * 0.5)
+	tw(p, dur, {
+		CFrame = CFrame.lookAt(c1, c1 + dir),
+		Size = V(w * (o.endW or 0.3), h, len * e),
+		Transparency = 1,
+	}, o.style)
+	Debris:AddItem(p, dur + 0.1)
+	return p
+end
+
+-- petal / leaf: a little diamond that drifts and spins away
+local function petal(pos, dir, s, color, dur, travel, spin)
+	local a0 = rand() * PI
+	local p = part(B, V(s, 0.1, s), CFrame.new(pos) * CFrame.Angles(0, PI / 4 + a0, 0), color, NEON, 0.05)
+	local c1 = pos + dir * travel + Vector3.new(0, 1.0, 0)
+	tw(p, dur, {
+		CFrame = CFrame.new(c1) * CFrame.Angles(0, PI / 4 + a0 + (spin or 2), 0),
+		Size = V(s * 0.25, 0.1, s * 0.25),
+		Transparency = 1,
+	})
+	Debris:AddItem(p, dur + 0.1)
+end
+
+-- 4-point glint
+local function flare(x, y, z, size, color, core, dur, rot)
+	local cf = CFrame.new(x, y, z) * CFrame.Angles(0, rot or rand() * PI, 0)
+	local cf2 = cf * CFrame.Angles(0, PI / 4, 0)
+	local list = {
+		part(B, V(size * 0.5, 0.1, size * 0.09), cf, color, NEON, 0.1),
+		part(B, V(size * 0.09, 0.1, size * 0.5), cf, color, NEON, 0.1),
+		part(B, V(size * 0.3, 0.1, size * 0.05), cf2, core, NEON, 0.25),
+		part(B, V(size * 0.05, 0.1, size * 0.3), cf2, core, NEON, 0.25),
+	}
+	tw(list[1], dur, { Size = V(size, 0.1, size * 0.02), Transparency = 1 })
+	tw(list[2], dur, { Size = V(size * 0.02, 0.1, size), Transparency = 1 })
+	tw(list[3], dur, { Size = V(size * 0.6, 0.1, size * 0.01), Transparency = 1 })
+	tw(list[4], dur, { Size = V(size * 0.01, 0.1, size * 0.6), Transparency = 1 })
+	local o = part(BALL, V(size * 0.2, size * 0.2, size * 0.2), cf, core, NEON, 0)
+	tw(o, dur, { Size = V(size * 0.5, size * 0.5, size * 0.5), Transparency = 1 })
+	for _, p in ipairs(list) do Debris:AddItem(p, dur + 0.1) end
+	Debris:AddItem(o, dur + 0.1)
+end
+
+-- forked lightning between two world points (flat in the XZ plane)
+local function bolt(a, b, col, core, w, segs, jag, life)
+	local d = b - a
+	local len = d.Magnitude
+	if len < 0.2 then return end
+	local fwd = d.Unit
+	local side = Vector3.new(-fwd.Z, 0, fwd.X)
+	local pts = { a }
+	for i = 1, segs - 1 do
+		local f = i / segs
+		local off = (rand() - 0.5) * 2 * jag * (1 - math.abs(f - 0.5) * 0.7)
+		table.insert(pts, a + d * f + side * off)
+	end
+	table.insert(pts, b)
+	local list = {}
+	for i = 1, #pts - 1 do
+		local p0, p1 = pts[i], pts[i + 1]
+		local l = (p1 - p0).Magnitude
+		if l > 0.02 then
+			local cf = CFrame.lookAt((p0 + p1) / 2, p1)
+			table.insert(list, part(B, V(w * 2.6, 0.12, l + w * 0.6), cf, col, NEON, 0.5))
+			table.insert(list, part(B, V(w, 0.16, l + w * 0.4), cf, core, NEON, 0))
+		end
+	end
+	for _, p in ipairs(list) do
+		tw(p, life, { Transparency = 1 }, Enum.EasingStyle.Linear)
+		Debris:AddItem(p, life + 0.1)
+	end
+end
+
+local function trail(part0, c0, c1, width, life, zoff, o)
+	o = o or {}
+	local a0 = Instance.new("Attachment")
+	a0.Position = Vector3.new(-width / 2, 0, zoff or 0)
+	a0.Parent = part0
+	local a1 = Instance.new("Attachment")
+	a1.Position = Vector3.new(width / 2, 0, zoff or 0)
+	a1.Parent = part0
+	local t = Instance.new("Trail")
+	t.Attachment0 = a0
+	t.Attachment1 = a1
+	t.Lifetime = life
+	t.Color = o.seq or ColorSequence.new(c0, c1)
+	t.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, o.tr0 or 0.1),
+		NumberSequenceKeypoint.new(0.55, 0.55),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	t.WidthScale = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) })
+	t.LightEmission = o.le or 0.85
+	t.LightInfluence = 0
+	t.MinLength = 0.04
+	t.FaceCamera = false
+	t.Parent = part0
+	return t
+end
+
+local function rainbowSeq()
+	local o = os.clock() * 0.35
+	return ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromHSV(o % 1, 0.7, 1)),
+		ColorSequenceKeypoint.new(0.33, Color3.fromHSV((o + 0.25) % 1, 0.7, 1)),
+		ColorSequenceKeypoint.new(0.66, Color3.fromHSV((o + 0.5) % 1, 0.7, 1)),
+		ColorSequenceKeypoint.new(1, Color3.fromHSV((o + 0.75) % 1, 0.7, 1)),
+	})
+end
+
+local function light(p, color, range, br)
+	local l = Instance.new("PointLight")
+	l.Color = color
+	l.Range = range
+	l.Brightness = br
+	l.Shadows = false
+	l.Parent = p
+	return l
+end
+
+-- ============================================================ element accents
+-- ONE signature motif per element, reused by impacts, hits and status procs.
+--   R = size of the area it covers, o.small = reduced count (hits / arrows), o.dx/o.dz = direction (optional)
+local function spread(n, a0)
+	local out = {}
+	for k = 0, n - 1 do
+		local a = (a0 or rand() * TAU) + k * TAU / n
+		out[k + 1] = { a = a, dir = Vector3.new(cos(a), 0, sin(a)) }
+	end
+	return out
+end
+
+local function accent(el, x, y, z, R, P, o)
+	o = o or {}
+	local t = P.tier
+	local n = o.small and clamp(2 + floor(t / 2), 3, 5) or clamp(4 + t, 6, 11)
+	local origin = Vector3.new(x, y, z)
+	local dirs = spread(n)
+	if el == "nature" then
+		for i, d in ipairs(dirs) do
+			petal(origin + d.dir * R * 0.2, d.dir, 0.6 + R * 0.08, P.main:Lerp(P.glow, (i % 3) / 3), 0.55, R * (0.8 + rand() * 0.5), 1.5 + rand() * 1.5)
+		end
+	elseif el == "frost" then
+		for i, d in ipairs(dirs) do
+			local big = i % 2 == 0
+			shard(origin + d.dir * R * 0.12, d.dir, R * (big and 0.7 or 0.45), big and 0.34 or 0.22, P.glow, { travel = R * 0.55, dur = 0.42, endLen = 0.6, tr = 0.0 })
+		end
+		if not o.small and R >= 4 then
+			-- lingering frost patch
+			local d = disc(R * 1.5, x, 0.3, z, P.glow, 0.8, NEON, 0.08)
+			tw(d, 1.1, { Transparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			Debris:AddItem(d, 1.2)
+		end
+	elseif el == "fire" then
+		for i, d in ipairs(dirs) do
+			shard(origin + d.dir * R * 0.15, d.dir, R * 0.55, 0.55, i % 2 == 0 and P.main or P.glow, { travel = R * 0.7, dur = 0.34, endLen = 0.3, tr = 0.1, endW = 0.15 })
+		end
+		for i = 1, floor(n / 2) do
+			local d = dirs[i].dir
+			shard(origin, (d + Vector3.new(0, 0, 0)).Unit, 0.55, 0.38, P.glow, { travel = R * (1.1 + rand() * 0.6), dur = 0.5, endLen = 1, endW = 0.3, h = 0.3 })
+		end
+	elseif el == "shock" then
+		-- forked lightning is the most part-hungry motif, so it gets fewer, shorter bolts
+		local nb = o.small and 2 or clamp(2 + floor(t / 2), 3, 5)
+		for i = 1, nb do
+			local d = dirs[i * 2 - 1] or dirs[i]
+			local len = R * (0.8 + rand() * 0.45)
+			bolt(origin + d.dir * R * 0.1, origin + d.dir * len, P.main, P.glow, 0.17, o.small and 3 or 4, R * 0.14, 0.17)
+		end
+	elseif el == "void" then
+		local core = disc(R * 0.9, x, y - 0.4, z, C3(8, 3, 16), 0.05, SMOOTH, 0.12)
+		tw(core, 0.4, { Size = V(0.12, 0.2, 0.2), Transparency = 0.6 }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+		Debris:AddItem(core, 0.5)
+		for _, d in ipairs(dirs) do
+			shard(origin + d.dir * R * 1.5, -d.dir, R * 0.55, 0.26, P.main, { travel = R * 1.05, dur = 0.38, endLen = 0.35, tr = 0.05, style = Enum.EasingStyle.Quad })
+		end
+	elseif el == "holy" then
+		for _, d in ipairs(dirs) do
+			shard(origin + d.dir * R * 0.2, d.dir, R * 0.95, 0.18, P.glow, { travel = R * 0.3, dur = 0.3, endLen = 0.4, tr = 0.1, endW = 0.2 })
+		end
+		flare(x, y + 0.6, z, R * 1.5, P.main, P.glow, 0.28, 0)
+		if not o.small then pillar(x, z, 1.2 + R * 0.12, 26, P.glow, 0.45, 0.45) end
+	elseif el == "prism" then
+		for i, d in ipairs(dirs) do
+			shard(origin + d.dir * R * 0.15, d.dir, R * 0.6, 0.3, hue(i / n, 0.7, 1), { travel = R * 0.7, dur = 0.38, endLen = 0.35, tr = 0.05 })
+		end
+		ring(x, y - 0.4, z, R * 0.4, R * 1.7, hue(0.5, 0.6, 1), 0.4, 6)
+	else
+		for _, d in ipairs(dirs) do
+			shard(origin + d.dir * R * 0.1, d.dir, R * 0.4, 0.16, P.glow, { travel = R * 0.7, dur = 0.26, endLen = 0.3, tr = 0.1 })
+		end
+	end
+end
+
+-- ============================================================ crescent (the core of every sword swing)
+-- Outer edge sits on a constant radius (a sharp cutting edge), the inner side tapers away.
+-- layers = { { col = Color3 | fn(p), wmul, wmin, tr, h, y, r, mat }, ... }
+local function crescent(o)
+	local half = math.rad(o.arc) / 2
+	local N = o.N
+	local segLen = (half * 2 / N) * o.R * 1.3
+	local dirS = o.dir or 1
+	local sweep = o.sweep or 0.1
+	local items = {}
+	for i = 0, N - 1 do
+		local a = (i + 0.5) / N
+		local phi = -half + a * half * 2
+		local c, s = cos(phi), sin(phi)
+		local rx, rz = o.dx * c - o.dz * s, o.dx * s + o.dz * c
+		local p = dirS == 1 and (1 - a) or a
+		local it = { rx = rx, rz = rz, tx = -rz, tz = rx, tR = p * sweep, w = sin(PI * p ^ 0.8) ^ 0.85, layers = {} }
+		for _, L in ipairs(o.layers) do
+			local col = type(L.col) == "function" and L.col(p) or L.col
+			local pt = part(B, V(0.2, L.h or 0.1, 0.2), CFrame.new(0, -50, 0), col, L.mat or NEON, 1)
+			table.insert(it.layers, { part = pt, L = L })
+		end
+		items[#items + 1] = it
+	end
+	local life = o.life or 0.26
+	run(sweep + life + 0.04, function(_, t)
+		local drift = o.drift or 0
+		for _, it in ipairs(items) do
+			local age = t - it.tR
+			if age >= 0 then
+				local k = clamp(age / life, 0, 1)
+				for _, ly in ipairs(it.layers) do
+					local L = ly.L
+					local w = ((L.wmin or 0) + (L.wmul or 1) * o.wmax * it.w) * (1 - 0.55 * k)
+					if w < 0.07 or k >= 1 then
+						ly.part.Transparency = 1
+					else
+						local r = o.R + (L.r or 0) + drift * k - w * 0.5
+						local pos = Vector3.new(o.x + it.rx * r, o.y + (L.y or 0), o.z + it.rz * r)
+						ly.part.CFrame = CFrame.lookAt(pos, pos + Vector3.new(it.tx, 0, it.tz))
+						ly.part.Size = Vector3.new(w, L.h or 0.1, segLen)
+						ly.part.Transparency = (L.tr or 0) + (1 - (L.tr or 0)) * k ^ 1.7
+					end
+				end
+			end
+		end
+	end, function()
+		for _, it in ipairs(items) do
+			for _, ly in ipairs(it.layers) do ly.part:Destroy() end
+		end
+	end, o.delay)
+end
+
+-- point on the swing arc for progress p (0 = start of the swing, 1 = head)
+local function arcDir(dx, dz, arc, dirS, p)
+	local half = math.rad(arc) / 2
+	local phi = dirS == 1 and (half - p * 2 * half) or (-half + p * 2 * half)
+	local c, s = cos(phi), sin(phi)
+	return dx * c - dz * s, dx * s + dz * c
+end
+
+-- ============================================================ SWORD SWING
+function FX.slash(TH, x, z, dx, dz, range, arc, crit, dirS)
+	local P = pal(TH)
+	local t, el = P.tier, P.elem
+	dirS = dirS or 1
+	local gold, cream = C3(255, 198, 84), C3(255, 238, 190)
+	local R = range * 0.97
+	local N = clamp(floor(arc / 9), 10, 30)
+	local wmax = (1.7 + 0.34 * t + range * 0.07) * (crit and 1.2 or 1)
+	local y = 2.2
+	local sweep = 0.1
+
+	local tail, head = P.acc, P.main
+	if el == "shock" or el == "holy" then tail, head = P.main, P.glow end
+	local function body(p)
+		local c
+		if el == "prism" then c = hue(p * 0.6, 0.72, 1)
+		elseif el == "void" then c = P.acc
+		else c = tail:Lerp(head, p ^ 0.8) end
+		if crit then c = c:Lerp(gold, 0.5) end
+		return c
+	end
+	local coreC = crit and cream or P.glow
+	local edgeC = crit and C3(255, 252, 235) or C3(255, 255, 255)
+
+	local layers = {}
+	if el == "void" then
+		layers[1] = { col = body, wmul = 1.0, tr = 0.08, h = 0.1 }
+		layers[2] = { col = P.main, wmul = 0.07, wmin = 0.14, tr = 0.0, h = 0.14, y = 0.06 }
+		layers[3] = { col = P.main, wmul = 0.42, tr = 0.8, h = 0.1, r = -0.2, y = 0.03 }
+	elseif el == "prism" then
+		layers[1] = { col = body, wmul = 1.0, tr = 0.3, h = 0.1 }
+		layers[2] = { col = function(p) return hue(p * 0.6 + 0.35, 0.3, 1) end, wmul = 0.4, tr = 0.04, h = 0.12, y = 0.04 }
+		layers[3] = { col = edgeC, wmul = 0.05, wmin = 0.14, tr = 0, h = 0.14, y = 0.08 }
+	else
+		layers[1] = { col = body, wmul = 1.0, tr = 0.36, h = 0.1 }
+		layers[2] = { col = coreC, wmul = 0.36, tr = 0.04, h = 0.12, y = 0.04 }
+		layers[3] = { col = edgeC, wmul = 0.05, wmin = 0.12, tr = 0, h = 0.14, y = 0.08 }
+		if el == "fire" and t >= 3 then
+			layers[4] = { col = P.acc, wmul = 0.55, tr = 0.6, h = 0.08, r = 1.1, y = -0.04 }
+		end
+	end
+	crescent({ x = x, y = y, z = z, dx = dx, dz = dz, R = R, arc = arc, dir = dirS, N = N, wmax = wmax, sweep = sweep, life = 0.26, layers = layers })
+
+	-- rare swords throw a second, fainter blade wave that keeps travelling outward
+	if t >= 5 then
+		crescent({
+			x = x, y = y - 0.05, z = z, dx = dx, dz = dz, R = R * 1.05, arc = arc * (t >= 6 and 0.8 or 0.88), dir = dirS,
+			N = N, wmax = wmax * 0.55, sweep = sweep, life = 0.34, delay = 0.045, drift = t >= 6 and 6.5 or 3.2,
+			layers = {
+				{ col = el == "prism" and function(p) return hue(p * 0.6 + 0.2, 0.7, 1) end or (el == "void" and P.main or head), wmul = 1, tr = 0.55, h = 0.08 },
+				{ col = edgeC, wmul = 0.05, wmin = 0.1, tr = 0.15, h = 0.1, y = 0.04 },
+			},
+		})
+	end
+
+	-- signature motif, a handful of pieces spread along the swing
+	local count = clamp(2 + t, 3, 7)
+	for j = 1, count do
+		local p = 0.2 + 0.75 * (j - 0.5) / count
+		local rx, rz = arcDir(dx, dz, arc, dirS, p)
+		local radial = Vector3.new(rx, 0, rz)
+		local tang = Vector3.new(-rz, 0, rx) * (dirS == 1 and -1 or 1)
+		local pos = Vector3.new(x + rx * R * 0.97, y, z + rz * R * 0.97)
+		task.delay(p * sweep, function()
+			if el == "nature" then
+				petal(pos, (radial * 0.8 + tang * 0.5).Unit, 0.7 + 0.08 * t, P.main:Lerp(P.glow, rand()), 0.55, 4 + t, 1.5 + rand() * 1.5)
+			elseif el == "frost" then
+				shard(pos, (radial + tang * 0.15).Unit, 1.6 + 0.22 * t, 0.28, P.glow, { travel = 3.4 + 0.3 * t, dur = 0.4, endLen = 0.7, tr = 0 })
+			elseif el == "fire" then
+				shard(pos, (radial * 0.9 + tang * 0.4).Unit, 0.55, 0.42, j % 2 == 0 and P.main or P.glow, { travel = 3 + rand() * 3, dur = 0.5, endLen = 1, h = 0.3, endW = 0.4 })
+				if t >= 5 and j % 2 == 1 then
+					shard(pos, radial, 3, 0.6, P.main, { travel = 2.4, dur = 0.3, endLen = 0.3, tr = 0.3, endW = 0.2 })
+				end
+			elseif el == "shock" then
+				if j <= clamp(1 + floor(t / 2), 2, 4) then
+					bolt(pos, pos + radial * (3 + t * 0.45) + tang * (rand() - 0.5) * 2, P.main, P.glow, 0.17, 4, 0.8, 0.14)
+				end
+			elseif el == "void" then
+				shard(pos + radial * R * 0.5, -radial, 2.4, 0.26, P.main, { travel = 4.2, dur = 0.34, endLen = 0.35, tr = 0.05 })
+			elseif el == "holy" then
+				local from = Vector3.new(x, y, z) + radial * R * 0.28
+				shard(from, radial, R * 0.8, 0.2, P.glow, { travel = R * 0.3, dur = 0.26, endLen = 0.4, tr = 0.1, endW = 0.2 })
+			elseif el == "prism" then
+				shard(pos, radial, 1.8 + 0.2 * t, 0.3, hue(p, 0.7, 1), { travel = 3.4, dur = 0.4, endLen = 0.5, tr = 0 })
+			end
+		end)
+	end
+	if el == "void" and t >= 4 then ring(x, 0.8, z, R * 2.0, R * 0.55, P.main, 0.34, 6, 0.4, 1) end
+	if el == "frost" and t >= 5 then ring(x, 0.8, z, R * 0.6, R * 1.9, P.glow, 0.38, 5, 0.2, 1) end
+
+	-- glint on the head of the blade
+	if t >= 3 or crit then
+		local rx, rz = arcDir(dx, dz, arc, dirS, 1)
+		task.delay(sweep, function()
+			flare(x + rx * R * 0.95, y + 0.3, z + rz * R * 0.95, 2.2 + 0.36 * t + (crit and 1.2 or 0), crit and gold or P.main, P.glow, 0.24)
+		end)
+	end
+	-- soft flash at the hero's hand
+	local fl = disc(3.4, x + dx * 1.6, 2.0, z + dz * 1.6, crit and cream or P.glow, 0.55, NEON, 0.1)
+	tw(fl, 0.16, { Size = V(0.1, 5.2, 5.2), Transparency = 1 })
+	Debris:AddItem(fl, 0.25)
+end
+
+-- ============================================================ HIT SPARK (melee)
+local lastMelee = 0
+function FX.markAttack() lastMelee = os.clock() end
+function FX.recentAttack() return os.clock() - lastMelee < 0.22 end
+
+function FX.hit(TH, x, z, crit)
+	local P = pal(TH)
+	local t = P.tier
+	local ang = rand() * PI
+	local d = Vector3.new(cos(ang), 0, sin(ang))
+	local col = crit and C3(255, 206, 96) or P.glow
+	local pos = Vector3.new(x, 2.4, z)
+	-- the cut: one bright line that stretches and fades
+	local ln = part(B, V(0.2, 0.12, 2.4 + 0.2 * t), CFrame.lookAt(pos, pos + d), col, NEON, 0)
+	tw(ln, 0.15, { Size = V(0.04, 0.12, 5 + 0.5 * t), Transparency = 1 })
+	Debris:AddItem(ln, 0.25)
+	if crit then
+		local ln2 = part(B, V(0.16, 0.12, 2), CFrame.lookAt(pos, pos + Vector3.new(-d.Z, 0, d.X)), C3(255, 250, 230), NEON, 0.1)
+		tw(ln2, 0.15, { Size = V(0.04, 0.12, 4.4), Transparency = 1 })
+		Debris:AddItem(ln2, 0.25)
+	end
+	if t >= 2 then accent(P.elem, x, 2.0, z, 1.7 + 0.12 * t, P, { small = true }) end
+	if t >= 4 or crit then flare(x, 2.6, z, 1.6 + 0.25 * t, col, P.glow, 0.2) end
+end
+
+-- ============================================================ IMPACTS
+local function arrowHit(P, x, z)
+	local t = P.tier
+	local fl = disc(2.2, x, 2.0, z, P.glow, 0.15, NEON, 0.2)
+	tw(fl, 0.18, { Size = V(0.2, 3.6 + 0.3 * t, 3.6 + 0.3 * t), Transparency = 1 })
+	Debris:AddItem(fl, 0.3)
+	ring(x, 1.0, z, 0.8, 3.6 + 0.4 * t, P.main, 0.3, 7)
+	accent(P.elem, x, 1.8, z, 2.6 + 0.25 * t, P, { small = true })
+	if t >= 4 then flare(x, 2.4, z, 3 + 0.3 * t, P.main, P.glow, 0.22) end
+end
+
+local function blast(P, x, z, R)
+	local t = P.tier
+	local el = P.elem
+	if el == "void" then
+		-- implosion: dark core + ring that closes in instead of opening
+		local d = disc(R * 1.5, x, 0.6, z, C3(10, 4, 20), 0.15, SMOOTH, 0.1)
+		tw(d, 0.45, { Size = V(0.1, R * 0.4, R * 0.4), Transparency = 0.7 }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+		Debris:AddItem(d, 0.55)
+		ring(x, 0.7, z, R * 2.6, R * 0.4, P.main, 0.42, 9, 0.1, 0.9)
+		task.delay(0.36, function()
+			ring(x, 0.8, z, R * 0.4, R * 2.2, P.glow, 0.34, 7)
+			local f = disc(R * 0.8, x, 1.6, z, P.main, 0.2, NEON, 0.2)
+			tw(f, 0.25, { Size = V(0.2, R * 1.8, R * 1.8), Transparency = 1 })
+			Debris:AddItem(f, 0.35)
+		end)
+	else
+		local f = disc(R * 0.8, x, 2.1, z, P.glow, 0.05, NEON, 0.3)
+		tw(f, 0.2, { Size = V(0.3, R * 1.6, R * 1.6), Transparency = 1 })
+		Debris:AddItem(f, 0.3)
+		local m = disc(R * 0.7, x, 1.8, z, P.main, 0.3, NEON, 0.3)
+		tw(m, 0.4, { Size = V(0.3, R * 2.0, R * 2.0), Transparency = 1 })
+		Debris:AddItem(m, 0.5)
+		ring(x, 0.7, z, R * 0.5, R * 2.3, P.main, 0.42, 9)
+		if t >= 4 then
+			task.delay(0.07, function() ring(x, 0.8, z, R * 0.3, R * 1.5, P.glow, 0.34, 6) end)
+		end
+	end
+	if el == "fire" or el == "void" then
+		local s = disc(R * 1.3, x, 0.28, z, el == "fire" and C3(34, 18, 10) or C3(14, 6, 24), 0.45, SMOOTH, 0.1)
+		tw(s, 1.1, { Transparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		Debris:AddItem(s, 1.2)
+	end
+	accent(el, x, 1.6, z, R, P, {})
+	if t >= 3 then flare(x, 2.6, z, R * 1.5, P.main, P.glow, 0.3) end
+end
+
+function FX.impact(kind, x, z, radius, TH, dx, dz)
+	local P = pal(TH)
+	if kind == "fireball" then blast(P, x, z, math.max(radius or 6, 4)) else arrowHit(P, x, z) end
+end
+
+-- status proc on an enemy (frost / nature / shock / void)
+function FX.proc(x, z, r, el)
+	local P = pal(Theme.current(), el)
+	ring(x, 0.9, z, r * 0.8, r * 2.4, P.main, 0.35, 6)
+	accent(el, x, 1.6, z, r * 1.3, P, { small = true })
+end
+
+-- ============================================================ PROJECTILES
+-- Builders fill pr.parts ({ part, localOffset } pairs, moved by GameClient) and may set pr.tick(pr, dt, age).
+local function add(pr, shape, size, off, color, mat, tr)
+	local p = part(shape, size, CFrame.new(), color, mat, tr)
+	local e = { p, off }
+	table.insert(pr.parts, e)
+	return e
+end
+local function dia(a) return CFrame.Angles(0, a or 0, 0) end
+
+function FX.muzzle(TH, x, z, dx, dz)
+	local P = pal(TH)
+	if P.tier < 3 then return end
+	flare(x + dx * 1.2, 2.2, z + dz * 1.2, 1.8 + 0.3 * P.tier, P.main, P.glow, 0.18)
+end
+
+local function arrow(pr, TH)
+	local P = pal(TH)
+	local t, el = P.tier, P.elem
+	local sc = 1 + 0.07 * (t - 1)
+	local main, acc, glow = P.main, P.acc, P.glow
+
+	local shaftCol, shaftMat = C3(232, 222, 188), Enum.Material.Wood
+	if el == "nature" then shaftCol = shaftCol:Lerp(main, 0.25)
+	elseif el == "fire" then shaftCol = C3(66, 38, 30)
+	elseif el == "frost" or el == "holy" then shaftCol, shaftMat = glow, NEON
+	elseif el == "shock" then shaftCol, shaftMat = P.acc, NEON
+	elseif el == "void" then shaftCol, shaftMat = acc, NEON
+	elseif el == "prism" then shaftCol, shaftMat = hue(0.3, 0.5, 1), NEON end
+
+	local shaft = add(pr, B, V(0.17, 0.13, 2.8 * sc), CFrame.new(), shaftCol, shaftMat)
+	local headE, coreE
+	if el == "frost" then
+		headE = add(pr, B, V(0.3, 0.16, 1.2 * sc), CFrame.new(0, 0, -1.6 * sc), glow, NEON)
+		add(pr, B, V(0.14, 0.12, 0.7), CFrame.new(-0.24, 0, -1.1 * sc) * dia(0.55), main, NEON, 0.1)
+		add(pr, B, V(0.14, 0.12, 0.7), CFrame.new(0.24, 0, -1.1 * sc) * dia(-0.55), main, NEON, 0.1)
+	elseif el == "fire" then
+		headE = add(pr, BALL, V(0.85, 0.85, 0.85), CFrame.new(0, 0, -1.55 * sc), main, NEON, 0.05)
+		coreE = add(pr, BALL, V(0.4, 0.4, 0.4), CFrame.new(0, 0, -1.55 * sc), glow, NEON)
+	elseif el == "void" then
+		headE = add(pr, BALL, V(0.7, 0.7, 0.7), CFrame.new(0, 0, -1.5 * sc), C3(10, 4, 20), SMOOTH)
+		coreE = add(pr, BALL, V(0.95, 0.95, 0.95), CFrame.new(0, 0, -1.5 * sc), main, NEON, 0.55)
+	else
+		headE = add(pr, B, V(0.62, 0.15, 0.62), CFrame.new(0, 0, -1.5 * sc) * dia(PI / 4), el == "prism" and hue(0, 0.7, 1) or glow, NEON)
+		coreE = add(pr, B, V(0.32, 0.2, 0.32), CFrame.new(0, 0, -1.5 * sc) * dia(PI / 4), C3(255, 255, 255), NEON)
+	end
+	-- fletching
+	if el == "nature" then
+		add(pr, B, V(0.4, 0.08, 0.4), CFrame.new(-0.28, 0, 1.15) * dia(PI / 4), main, NEON, 0.05)
+		add(pr, B, V(0.4, 0.08, 0.4), CFrame.new(0.28, 0, 1.15) * dia(PI / 4), glow, NEON, 0.05)
+	elseif el == "holy" then
+		add(pr, B, V(0.12, 0.1, 1.5), CFrame.new(-0.5, 0, 1.3) * dia(0.45), glow, NEON, 0.25)
+		add(pr, B, V(0.12, 0.1, 1.5), CFrame.new(0.5, 0, 1.3) * dia(-0.45), glow, NEON, 0.25)
+	else
+		add(pr, B, V(0.16, 0.12, 0.7), CFrame.new(-0.2, 0, 1.15) * dia(0.3), el == "none" and C3(196, 62, 62) or main, NEON, el == "none" and 0 or 0.1)
+		add(pr, B, V(0.16, 0.12, 0.7), CFrame.new(0.2, 0, 1.15) * dia(-0.3), el == "none" and C3(196, 62, 62) or main, NEON, el == "none" and 0 or 0.1)
+	end
+
+	-- trail: one tapered ribbon (+ one wide ghost ribbon on top tiers)
+	local tr
+	if el == "prism" then
+		tr = trail(shaft[1], main, acc, 0.6 + 0.08 * t, 0.2 + 0.02 * t, 1.3, { seq = rainbowSeq() })
+	elseif el == "void" then
+		tr = trail(shaft[1], main, acc, 0.6 + 0.08 * t, 0.2 + 0.02 * t, 1.3, { le = 0.35 })
+	else
+		tr = trail(shaft[1], glow, el == "none" and acc or main, 0.5 + 0.1 * t, 0.17 + 0.02 * t, 1.3)
+	end
+	if t >= 5 then
+		trail(shaft[1], main, acc, 1.6 + 0.12 * t, 0.26, 1.0, { tr0 = 0.6, le = 0.9, seq = el == "prism" and rainbowSeq() or nil })
+		local halo = add(pr, CY, V(0.3, 2.2 + 0.2 * t, 2.2 + 0.2 * t), CFrame.new(0, 0, -1.3) * CFrame.Angles(0, 0, PI / 2), main, NEON, 0.7)
+		pr._halo = halo
+	end
+	if el == "fire" and t >= 4 then
+		local em = Instance.new("ParticleEmitter")
+		em.Rate = 6 + t
+		em.Color = ColorSequence.new(glow, main)
+		em.LightEmission = 1
+		em.LightInfluence = 0
+		em.Lifetime = NumberRange.new(0.25, 0.4)
+		em.Speed = NumberRange.new(1, 3)
+		em.SpreadAngle = Vector2.new(25, 25)
+		em.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.5), NumberSequenceKeypoint.new(1, 0) })
+		em.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) })
+		em.Parent = shaft[1]
+	end
+
+	-- element motion
+	local fx = {}
+	if el == "fire" then
+		for k = 1, 2 do fx[k] = add(pr, B, V(0.5 - k * 0.1, 0.12, 1.4), CFrame.new(0, 0, 1.9), k == 1 and main or glow, NEON, 0.2) end
+	elseif el == "shock" then
+		for k = 1, 2 do fx[k] = add(pr, B, V(0.1, 0.1, 1.6), CFrame.new(), main, NEON, 0.1) end
+	elseif el == "void" then
+		for k = 1, 2 do fx[k] = add(pr, B, V(0.2, 0.12, 0.7), CFrame.new(), main, NEON, 0.1) end
+	elseif el == "holy" then
+		fx[1] = add(pr, B, V(2.0, 0.08, 0.1), CFrame.new(0, 0, -1.55 * sc), main, NEON, 0.1)
+		fx[2] = add(pr, B, V(0.1, 0.08, 2.0), CFrame.new(0, 0, -1.55 * sc), main, NEON, 0.1)
+	elseif el == "prism" and t >= 4 then
+		for k = 1, 2 do fx[k] = add(pr, BALL, V(0.34, 0.34, 0.34), CFrame.new(), main, NEON, 0.05) end
+	elseif t >= 6 and (el == "nature" or el == "frost") then
+		for k = 1, 2 do fx[k] = add(pr, B, V(0.3, 0.1, 0.3), CFrame.new(), glow, NEON, 0.05) end
+	end
+
+	local nextBolt = 0
+	pr.tick = function(p, dt, age)
+		if p._halo then
+			local s = 1 + 0.06 * sin(age * 16)
+			p._halo[2] = CFrame.new(0, 0, -1.3) * CFrame.Angles(0, 0, PI / 2) * CFrame.new(0, 0, 0)
+			p._halo[1].Size = Vector3.new(0.3, (2.2 + 0.2 * t) * s, (2.2 + 0.2 * t) * s)
+		end
+		if el == "prism" then
+			local c = hue(0, 0.7, 1)
+			headE[1].Color = c
+			if p._halo then p._halo[1].Color = c end
+			if fx[1] then
+				for k = 1, 2 do
+					local a = age * 9 + k * PI
+					fx[k][2] = CFrame.new(cos(a) * 0.75, 0, -1.2 + sin(a) * 0.5)
+					fx[k][1].Color = hue(k * 0.3, 0.7, 1)
+				end
+			end
+		elseif el == "fire" then
+			for k = 1, 2 do
+				fx[k][2] = CFrame.new(sin(age * 22 + k * 2.1) * 0.3, 0, 1.7 + k * 0.5)
+			end
+		elseif el == "shock" then
+			if age >= nextBolt then
+				nextBolt = age + 0.06
+				for k = 1, 2 do
+					fx[k][2] = CFrame.new((rand() - 0.5) * 0.7, 0, -0.4 + (rand() - 0.5) * 1.6) * dia((rand() - 0.5) * 1.6)
+					fx[k][1].Transparency = rand() < 0.3 and 1 or 0.05
+				end
+			end
+		elseif el == "void" then
+			for k = 1, 2 do
+				local a = age * 11 + k * PI
+				fx[k][2] = CFrame.new(cos(a) * 0.7, 0, -1.4 + sin(a) * 0.7)
+			end
+		elseif el == "holy" then
+			fx[1][2] = CFrame.new(0, 0, -1.55 * sc) * dia(age * 2.4)
+			fx[2][2] = CFrame.new(0, 0, -1.55 * sc) * dia(age * 2.4)
+		elseif fx[1] then
+			for k = 1, 2 do
+				local a = age * 8 + k * PI
+				fx[k][2] = CFrame.new(cos(a) * 0.7, 0, -0.6 + sin(a) * 0.8) * dia(a)
+			end
+		end
+	end
+end
+
+local function orb(pr, TH)
+	local P = pal(TH)
+	local t, el = P.tier, P.elem
+	local sc = 1 + 0.06 * (t - 1)
+	local main, acc, glow = P.main, P.acc, P.glow
+	local halo = add(pr, BALL, V(3.6 * sc, 3.6 * sc, 3.6 * sc), CFrame.new(), main, NEON, 0.8)
+	local bodyCol, bodyMat, bodyTr = main, NEON, 0.1
+	if el == "void" then bodyCol, bodyMat, bodyTr = C3(8, 3, 16), SMOOTH, 0 end
+	local body = add(pr, BALL, V(2.1 * sc, 2.1 * sc, 2.1 * sc), CFrame.new(), bodyCol, bodyMat, bodyTr)
+	local core
+	if el ~= "void" then core = add(pr, BALL, V(1.0 * sc, 1.0 * sc, 1.0 * sc), CFrame.new(), C3(255, 255, 255), NEON, 0) end
+	light(body[1], el == "void" and acc:Lerp(main, 0.5) or main, 14 + t, 1.2)
+
+	local tr
+	if el == "prism" then
+		tr = trail(halo[1], main, acc, 2.0 * sc, 0.3, 0, { seq = rainbowSeq() })
+	elseif el == "void" then
+		tr = trail(halo[1], acc, C3(10, 4, 20), 2.0 * sc, 0.32, 0, { le = 0.3 })
+	elseif el == "fire" then
+		tr = trail(halo[1], glow, P.acc, 2.4 * sc, 0.32, 0)
+	else
+		tr = trail(halo[1], glow, main, 2.0 * sc, 0.28, 0)
+	end
+
+	local fx = {}
+	if el == "fire" then
+		for k = 1, 3 do fx[k] = add(pr, B, V(0.8 - k * 0.15, 0.14, 2.0), CFrame.new(0, 0, 1.6), k == 1 and main or (k == 2 and glow or P.acc), NEON, 0.2) end
+	elseif el == "frost" then
+		for k = 0, 2 do fx[k + 1] = add(pr, B, V(0.3, 0.3, 3.2 * sc), CFrame.new(), glow, NEON, 0.1) end
+	elseif el == "void" then
+		for k = 1, 3 do fx[k] = add(pr, B, V(0.26, 0.12, 1.3), CFrame.new(), main, NEON, 0.05) end
+		for k = 4, 5 do fx[k] = add(pr, B, V(0.2, 0.12, 0.8), CFrame.new(), glow, NEON, 0.15) end
+	elseif el == "shock" then
+		-- lightning is spawned live in tick
+	elseif el == "holy" then
+		fx[1] = add(pr, B, V(5.0 * sc, 0.1, 0.16), CFrame.new(), glow, NEON, 0.1)
+		fx[2] = add(pr, B, V(0.16, 0.1, 5.0 * sc), CFrame.new(), glow, NEON, 0.1)
+		fx[3] = add(pr, B, V(3.4 * sc, 0.1, 0.1), CFrame.new(), main, NEON, 0.25)
+		fx[4] = add(pr, B, V(0.1, 0.1, 3.4 * sc), CFrame.new(), main, NEON, 0.25)
+	elseif el == "nature" then
+		for k = 1, 3 do fx[k] = add(pr, B, V(0.6, 0.1, 0.6), CFrame.new(), k == 2 and glow or main, NEON, 0.05) end
+	elseif el == "prism" then
+		for k = 1, 3 do fx[k] = add(pr, BALL, V(0.7, 0.7, 0.7), CFrame.new(), main, NEON, 0.05) end
+	end
+	if t >= 6 and (el == "fire" or el == "frost" or el == "nature" or el == "shock") then
+		for k = 1, 2 do table.insert(fx, add(pr, BALL, V(0.5, 0.5, 0.5), CFrame.new(), glow, NEON, 0.05)) end
+		fx.sat = #fx - 1
+	end
+	if t >= 4 and (el == "nature" or el == "prism" or el == "frost") then
+		local em = Instance.new("ParticleEmitter")
+		em.Rate = 5
+		em.Color = ColorSequence.new(glow, main)
+		em.LightEmission = 1
+		em.LightInfluence = 0
+		em.Lifetime = NumberRange.new(0.35, 0.55)
+		em.Speed = NumberRange.new(1, 3)
+		em.SpreadAngle = Vector2.new(180, 180)
+		em.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.5), NumberSequenceKeypoint.new(1, 0) })
+		em.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) })
+		em.Parent = core[1]
+	end
+
+	local nextBolt = 0
+	pr.tick = function(p, dt, age)
+		local pulse = 1 + 0.07 * sin(age * 14)
+		halo[1].Size = Vector3.new(3.6 * sc * pulse, 3.6 * sc * pulse, 3.6 * sc * pulse)
+		if el == "prism" then
+			local c = hue(0, 0.75, 1)
+			halo[1].Color = c
+			body[1].Color = c
+			for k = 1, 3 do
+				local a = age * 7 + k * TAU / 3
+				fx[k][2] = CFrame.new(cos(a) * 1.9, 0, sin(a) * 1.9)
+				fx[k][1].Color = hue(k / 3, 0.75, 1)
+			end
+		elseif el == "fire" then
+			for k = 1, 3 do fx[k][2] = CFrame.new(sin(age * 20 + k * 2.1) * 0.45, 0, 1.4 + k * 0.55) end
+		elseif el == "frost" then
+			for k = 0, 2 do fx[k + 1][2] = dia(k * PI / 3 + age * 2.4) end
+		elseif el == "void" then
+			for k = 1, 3 do
+				local a = age * 8 + k * TAU / 3
+				fx[k][2] = CFrame.new(cos(a) * 1.9, 0, sin(a) * 1.9) * dia(-a)
+			end
+			for k = 4, 5 do
+				local a = -age * 12 + k * PI
+				fx[k][2] = CFrame.new(cos(a) * 1.25, 0, sin(a) * 1.25) * dia(-a)
+			end
+		elseif el == "shock" then
+			if age >= nextBolt then
+				nextBolt = age + 0.07
+				local c = Vector3.new(p.x, 2.2, p.z)
+				local a = rand() * TAU
+				local len = 2.6 + rand() * 1.6 + 0.2 * t
+				bolt(c, c + Vector3.new(cos(a) * len, 0, sin(a) * len), main, glow, 0.15, 3, 0.7, 0.09)
+			end
+		elseif el == "holy" then
+			fx[1][2] = dia(age * 1.6)
+			fx[2][2] = dia(age * 1.6)
+			fx[3][2] = dia(PI / 4 - age * 1.1)
+			fx[4][2] = dia(PI / 4 - age * 1.1)
+		elseif el == "nature" then
+			for k = 1, 3 do
+				local a = age * 6 + k * TAU / 3
+				fx[k][2] = CFrame.new(cos(a) * 1.6, 0, sin(a) * 1.6) * dia(PI / 4 + a)
+			end
+		end
+		if fx.sat then
+			for k = 0, 1 do
+				local e = fx[fx.sat + k]
+				local a = age * 10 + k * PI
+				e[2] = CFrame.new(cos(a) * 2.5, 0, sin(a) * 2.5)
+			end
+		end
+	end
+end
+
+-- returns true when the weapon got a custom projectile
+function FX.projectile(pr, kind, TH)
+	if kind == "arrow" then arrow(pr, TH) elseif kind == "fireball" then orb(pr, TH) else return false end
+	FX.muzzle(TH, pr.x, pr.z, pr.dx, pr.dz)
+	return true
+end
+
+-- ============================================================ CAST SIGIL (replaces the stacked rings / bursts / spiral emitters)
+local SIDES = { none = { 4, 1 }, nature = { 6, 1 }, frost = { 6, 2 }, fire = { 5, 2 }, shock = { 3, 1 }, void = { 8, 3 }, holy = { 8, 1 }, prism = { 7, 2 } }
+
+function FX.sigil(x, z, tier, mult, TH)
+	if tier < 2 then return end
+	local P = pal(TH)
+	local el = P.elem
+	local m = mult or 1
+	local size = (6 + tier * 2.4) * m
+	local sd = SIDES[el] or SIDES.none
+	local n, k = sd[1], sd[2]
+	local dur = 0.55 + 0.05 * tier
+
+	local sets = {}
+	local function polygon(radius, spin, colorFn, w, y)
+		local lines = {}
+		for j = 0, n - 1 do
+			table.insert(lines, part(B, V(w, 0.1, 1), CFrame.new(0, -50, 0), colorFn(j), NEON, 1))
+		end
+		table.insert(sets, { lines = lines, r = radius, spin = spin, y = y, w = w, colorFn = colorFn })
+	end
+	polygon(size * 0.32, 1.7, function(j) return el == "prism" and hue(j / n, 0.7, 1) or P.main end, 0.26, 0.9)
+	if tier >= 4 then polygon(size * 0.2, -2.3, function(j) return el == "prism" and hue(j / n + 0.5, 0.5, 1) or P.glow end, 0.2, 0.95) end
+	if tier >= 6 then polygon(size * 0.44, -1.1, function() return P.acc end, 0.3, 0.85) end
+
+	local base = disc(size * 0.7, x, 0.75, z, P.main, 1, NEON, 0.08)
+	ring(x, 0.8, z, el == "void" and size * 1.2 or size * 0.35, el == "void" and size * 0.5 or size, P.main, dur, 8)
+	if tier >= 4 then
+		task.delay(0.06, function() ring(x, 0.9, z, size * 0.25, size * 0.72, P.glow, dur * 0.8, 5) end)
+	end
+	if tier >= 7 then
+		for i = 1, 2 do
+			task.delay(i * 0.12, function() ring(x, 1.0 + i * 0.1, z, size * 0.1, size * (1.5 + i * 0.4), hue(i * 0.3, 0.75, 1), 0.7, 9) end)
+		end
+	end
+	if tier >= 3 then
+		pillar(x, z, 1.4 + tier * 0.35, 20 + tier * 6, P.glow, 0.55 + 0.06 * tier, 0.5)
+	end
+	if tier >= 5 then flare(x, 2.4, z, size * 0.9, P.main, P.glow, 0.4, 0) end
+
+	run(dur, function(al, t)
+		local e = 1 - (1 - al) ^ 3
+		local scale = el == "void" and (1.35 - 0.4 * e) or (0.7 + 0.3 * e)
+		local fadeIn = math.min(1, al / 0.12)
+		local fadeOut = clamp((al - 0.45) / 0.55, 0, 1) ^ 1.5
+		base.Transparency = 1 - 0.14 * fadeIn * (1 - fadeOut)
+		for _, S in ipairs(sets) do
+			local r = S.r * scale
+			local len = 2 * r * sin(PI * k / n)
+			local mid = r * cos(PI * k / n)
+			for j, ln in ipairs(S.lines) do
+				local a = (j - 1 + k / 2) * TAU / n + S.spin * t
+				local pos = Vector3.new(x + cos(a) * mid, S.y, z + sin(a) * mid)
+				ln.CFrame = CFrame.lookAt(pos, pos + Vector3.new(-sin(a), 0, cos(a)))
+				ln.Size = Vector3.new(S.w, 0.1, len + S.w)
+				ln.Transparency = math.max(1 - fadeIn, fadeOut) * 0.9 + (1 - 0.9) * (1 - fadeIn)
+				if el == "prism" then ln.Color = S.colorFn(j - 1) end
+			end
+		end
+	end, function()
+		base:Destroy()
+		for _, S in ipairs(sets) do
+			for _, ln in ipairs(S.lines) do ln:Destroy() end
+		end
+	end)
+end
+
+return FX
+]]></ProtectedString>
+</Properties>
+</Item>
 </Item>
 <Item class="ServerScriptService" referent="RBX10">
 <Properties>
@@ -3057,6 +4015,10 @@ procElement = function(run, e, ks, killer, dmg)
 	if el == "prism" then el = ELEMS[math.random(#ELEMS)] end
 	if now < (e.procAt or 0) then return end
 	e.procAt = now + 0.35
+	if el ~= "fire" and now >= (e.procFxAt or 0) then
+		e.procFxAt = now + 1.0
+		runFx(run, "Proc", e.x, e.z, e.r, el)
+	end
 	if el == "fire" then
 		applyBurn(e, math.max(2, dmg * 0.3), 2 + tier * 0.3, killer)
 	elseif el == "frost" then
@@ -5375,6 +6337,7 @@ local Config = require(RS:WaitForChild("Config"))
 local cam = workspace.CurrentCamera
 local C3 = Color3.fromRGB
 local Theme = require(RS:WaitForChild("Theme"))
+local WeaponFX = require(RS:WaitForChild("WeaponFX"))
 local C3t = function(r, g, b) return Theme.tint(Color3.fromRGB(r, g, b)) end
 local projWid = {}
 
@@ -6337,6 +7300,9 @@ local H = {}
 
 -- sword arc: layered crescent that sweeps in the direction of the swing, with sparks
 H.Slash = function(x, z, dx, dz, range, arcDeg, crit, swingDir)
+	WeaponFX.markAttack()
+	-- new clean sword VFX (falls back to the old arc below if anything goes wrong)
+	if pcall(WeaponFX.slash, Theme.current(), x, z, dx, dz, range, arcDeg, crit, swingDir) then return end
 	local col = crit and C3(255, 196, 84) or C3t(150, 190, 235)
 	local core = crit and C3(255, 238, 190) or C3t(236, 246, 255)
 	local N = 14
@@ -6396,7 +7362,18 @@ H.Proj = function(id, kind, x, z, dx, dz, speed, range)
 	local pr = { kind = kind, x = x, z = z, dx = dx, dz = dz, speed = speed, left = range, parts = {}, acc = 0 }
 	local B, CY = Enum.PartType.Block, Enum.PartType.Cylinder
 	local flat = CFrame.Angles(0, 0, math.pi / 2)
-	if kind == "arrow" then
+	-- element / rarity projectiles (arrows + staff orbs); plain starter weapons keep the classic look
+	local built = false
+	if TH and (TH.tier > 1 or TH.elem ~= "none") and (kind == "arrow" or kind == "fireball") then
+		built = pcall(WeaponFX.projectile, pr, kind, TH)
+		if not built then
+			for _, e in ipairs(pr.parts) do e[1]:Destroy() end
+			pr.parts = {}
+		end
+	end
+	if built then
+		-- nothing: WeaponFX filled pr.parts
+	elseif kind == "arrow" then
 		local shaft = addProjPart(pr, B, Vector3.new(0.2, 0.14, 2.8), CFrame.new(), C3(232, 222, 188), Enum.Material.Wood)
 		addProjPart(pr, B, Vector3.new(0.6, 0.16, 0.6), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), (tinted and Theme.glow(TH) or C3(176, 188, 206)), Enum.Material.Metal)
 		addProjPart(pr, B, Vector3.new(0.34, 0.2, 0.34), CFrame.new(0, 0, -1.5) * CFrame.Angles(0, math.pi / 4, 0), (tinted and Theme.glow(TH) or C3(232, 238, 246)), tinted and NEON or Enum.Material.Metal)
@@ -6454,6 +7431,10 @@ H.ProjEnd = function(id, x, z, kind, radius)
 	local pw = projWid[id]
 	projWid[id] = nil
 	if pw then Theme.set(pw) end
+	local WTH = pw and Config.Weapons[pw]
+	if WTH and (WTH.tier > 1 or WTH.elem ~= "none") and (kind == "arrow" or kind == "fireball") then
+		if pcall(WeaponFX.impact, kind, x, z, radius, WTH, pr and pr.dx, pr and pr.dz) then return end
+	end
 	if kind == "fireball" then
 		local fl = fxDisc(radius * 0.7, x, 2.2, z, C3t(255, 238, 170), 0.05, NEON, 0.3)
 		tw(fl, 0.2, { Size = Vector3.new(0.3, radius * 1.5, radius * 1.5), Transparency = 1 })
@@ -6509,9 +7490,14 @@ H.Dmg = function(x, z, amount, crit, onPlayer)
 	end)
 	Debris:AddItem(a, 0.9)
 	if not onPlayer then
-		burst(x, 2.4, z, crit and C3(255, 214, 110) or C3(255, 255, 255), crit and 8 or 4, 8, 18, crit and 0.55 or 0.35, 0.25, nil, nil, nil, nil)
+		if not (WeaponFX.recentAttack() and pcall(WeaponFX.hit, Theme.current(), x, z, crit)) then
+			burst(x, 2.4, z, crit and C3(255, 214, 110) or C3(255, 255, 255), crit and 8 or 4, 8, 18, crit and 0.55 or 0.35, 0.25, nil, nil, nil, nil)
+		end
 	end
 end
+
+-- status proc visual (frost / nature / shock / void) on an enemy
+H.Proc = function(x, z, r, el) WeaponFX.proc(x, z, r, el) end
 
 H.Tele = function(x, z, r, dur)
 	local base = fxDisc(r * 2, x, 0.3, z, C3(210, 50, 50), 0.82, NEON, 0.05)
@@ -6606,6 +7592,8 @@ RunService.Heartbeat:Connect(function(dt)
 		pr.x = pr.x + pr.dx * step
 		pr.z = pr.z + pr.dz * step
 		pr.left = pr.left - step
+		pr.age = (pr.age or 0) + dt
+		if pr.tick then pcall(pr.tick, pr, dt, pr.age) end
 		local pos = Vector3.new(pr.x, 2.2, pr.z)
 		local base = CFrame.lookAt(pos, pos + Vector3.new(pr.dx, 0, pr.dz))
 		for _, e in ipairs(pr.parts) do e[1].CFrame = base * e[2] end
@@ -6748,6 +7736,7 @@ local C3 = Color3.fromRGB
 local Theme = require(RS:WaitForChild("Theme"))
 local WeaponModels = require(RS:WaitForChild("WeaponModels"))
 WeaponModels.startRainbow()
+local WeaponFX = require(RS:WaitForChild("WeaponFX"))
 
 -- ============================================================ SMALL UI HELPERS
 local function new(class, props, parent)
@@ -7303,7 +8292,7 @@ H.UltBanner = function(name, color, wid)
 		ringFx(x, 0.7, z, 3, 26, col, 0.55, 10)
 		ringFx(x, 0.8, z, 2, 16, C3(255, 255, 255), 0.4, 7)
 		pillar(x, z, 4, 70, col:Lerp(C3(255, 255, 255), 0.4), 0.6, 0.45)
-		burst(x, 1.5, z, col, 40, 14, 38, 1.0, 0.8, C3(255, 255, 255))
+		burst(x, 1.5, z, col, 10, 14, 30, 0.9, 0.6, C3(255, 255, 255))
 	end
 end
 
@@ -7316,45 +8305,16 @@ H.Aura = function(x, z, tier, mult, wid)
 	Theme.set(wid)
 	local w = wid and Config.Weapons[wid]
 	if not w or tier < 2 then return end
-	local col, glow, acc = Theme.main(w), Theme.glow(w), Theme.accent(w)
 	local m = mult or 1
-	local sz = (6 + tier * 2.4) * m
-	ringFx(x, 0.9, z, sz * 0.3, sz, col, 0.5, 8)
-	if tier >= 3 then
-		ringFx(x, 1.0, z, sz * 0.2, sz * 0.7, glow, 0.45, 6)
-		burst(x, 1.8, z, glow, 8 + tier * 3, 8, 22, 0.7, 0.6, col)
-	end
-	if tier >= 4 then
-		pillar(x, z, 2 + tier * 0.4, 28 + tier * 7, glow, 0.7, 0.5)
-		local d = fxDisc(sz * 0.8, x, 0.8, z, col, 0.7, NEON, 0.1)
-		tw(d, 0.7, { Size = Vector3.new(0.1, sz * 1.3, sz * 1.3), Transparency = 1 })
-		Debris:AddItem(d, 0.8)
+	-- one clean element sigil instead of stacked rings / bursts / spiral emitters
+	if not pcall(WeaponFX.sigil, x, z, tier, m, w) then
+		ringFx(x, 0.9, z, 3, 10 + tier * 2, Theme.main(w), 0.5, 8)
 	end
 	if tier >= 5 then
 		shakeAt(x, z, 0.45 * m, 0.3)
-		ringFx(x, 1.1, z, sz * 0.1, sz * 1.5, acc, 0.7, 12)
-		burst(x, 2.5, z, acc, 30, 14, 40, 0.9, 0.9, glow)
-		if m > 1 then screenFlash(glow, 0.82, 0.3) end
+		if m > 1 then screenFlash(Theme.glow(w), 0.82, 0.3) end
 	end
-	if tier >= 6 then
-		ringFx(x, 1.2, z, sz * 0.1, sz * 2, col, 0.9, 14)
-		animate(0.9, function(al, t)
-			for j = 1, 3 do
-				local a = t * 9 + j * 2.09
-				local r = sz * 0.55 * al
-				burst(x + math.cos(a) * r, 1.5 + al * 7, z + math.sin(a) * r, glow, 2, 2, 7, 0.6, 0.45, col)
-			end
-		end)
-	end
-	if tier >= 7 then
-		for i = 1, 3 do
-			task.delay(i * 0.12, function()
-				ringFx(x, 1.0 + i * 0.1, z, sz * 0.1, sz * (1.6 + i * 0.5), C3(255, 80, 80), 0.8, 12)
-			end)
-		end
-		pillar(x, z, 6, 90, glow, 1.0, 0.4)
-		shakeAt(x, z, 0.8 * m, 0.45)
-	end
+	if tier >= 7 then shakeAt(x, z, 0.8 * m, 0.45) end
 end
 
 H.Spark = function(x, z, r, g, b)
